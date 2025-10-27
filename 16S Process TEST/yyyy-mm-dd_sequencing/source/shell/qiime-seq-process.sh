@@ -2,7 +2,7 @@
 
 echo "activating qiime2 environment"
 # load qiime2 environment 
-source activate qiime2-amplicon-2024.5
+source activate qiime2-amplicon-2025.4
 
 #go to https://docs.qiime2.org/2024.5/ to install QIIME2 & learn more about it. 
 
