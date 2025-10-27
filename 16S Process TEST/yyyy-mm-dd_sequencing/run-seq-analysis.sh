@@ -14,7 +14,7 @@ echo "making manifest file"
 Rscript source/r/00_make_manifest_file.R
 
 echo "performing sequence processing"
-sh source/shell/qiime-seq-process.sh
+. source/shell/qiime-seq-process.sh
 
 echo "performing sequence analysis"
 Rscript source/r/01_making_relevant_files.R
