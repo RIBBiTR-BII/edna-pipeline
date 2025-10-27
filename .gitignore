@@ -1,0 +1,13 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+16S Process EDIT/*
+nf_test/*
+*.fastq
+*.fastq.gz
+*.qza
+*/taxonomic-classification/*
+*/output/*
+*/metadata/*
+*/analysis/*
