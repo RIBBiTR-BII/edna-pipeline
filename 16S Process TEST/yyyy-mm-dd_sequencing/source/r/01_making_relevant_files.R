@@ -4,14 +4,10 @@
 # Edited on: 4 November 2024
 
 ## Load in Libraries (install them in you need them.)
-librarian::shelf(tidyverse, helixcn/phylotools, readxl, openxlsx, here)
-# library(tidyverse)
-# library(phylotools)
-# library(readxl)
-# library(openxlsx)
-
-
-wddir = here("16S Process EDIT", "Sequence_Analysis_Folder")
+library(tidyverse)
+library(phylotools)
+library(readxl)
+library(openxlsx)
 
 ## Read in the .biom feature table. 
 feature_table <-
