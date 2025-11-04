@@ -6,10 +6,12 @@ trim-paired:              # trim primers
   p-error-rate: 0.3         # error rate for trimming of primers
 denoise-paired:           # denoise
   p-trunc-q: 2              # quality threshold at which to truncate reads
-  p-trunc-len: 0          # length at which to truncate reads (forward and reverse)
-clasify-consensus-blast:  # clasifiy
-  p-maxaccepts: 10          # maximum number of BLAST hits used
-  p-perc-identity: 0.98     # minimum identity for BLAST hit acceptance
-  p-query-cov: 0.95         # minimum query coverage for BLAST hit acceptance
-
-# leave a line break to close file
+  p-trunc-len: 0            # length at which to truncate reads (forward and reverse)
+# clasify-consensus-blast:  # clasifiy
+#   p-maxaccepts: 10          # maximum number of BLAST hits used
+#   p-perc-identity: 0.98     # minimum identity for BLAST hit acceptance
+#   p-query-cov: 0.95         # minimum query coverage for BLAST hit acceptance
+vsearch-global:
+  p-maxaccepts: 20          # maximum number of hits to accept
+  p-perc-identity: 0.7      # minimum identity for hit acceptance
+  p-query-cov: 0.7          # minimum query coverage hit acceptance

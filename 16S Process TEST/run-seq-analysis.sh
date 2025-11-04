@@ -20,6 +20,6 @@ echo "performing sequence processing"
 . source/shell/qiime-seq-process.sh
 
 echo "performing sequence analysis"
-Rscript source/r/01_making_relevant_files.R
+Rscript source/r/01_consolidate_outputs.R
 
 echo "sequence analysis complete.  please see output folder for relevant output"

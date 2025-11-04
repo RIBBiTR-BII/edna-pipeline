@@ -6,9 +6,9 @@ c_run_dir=$(yq e '.run-directory' config.yml)
 c_error_rate=$(yq e '.trim-paired.p-error-rate' config.yml)
 c_trunc_q=$(yq e '.denoise-paired.p-trunc-q' config.yml)
 c_trunc_len=$(yq e '.denoise-paired.p-trunc-len' config.yml)
-c_maxaccepts=$(yq e '.clasify-consensus-blast.p-maxaccepts' config.yml)
-c_perc_identity=$(yq e '.clasify-consensus-blast.p-perc-identity' config.yml)
-c_query_cov=$(yq e '.clasify-consensus-blast.p-query-cov' config.yml)
+c_maxaccepts=$(yq e '.vsearch-global.p-maxaccepts' config.yml)
+c_perc_identity=$(yq e '.vsearch-global.p-perc-identity' config.yml)
+c_query_cov=$(yq e '.vsearch-global.p-query-cov' config.yml)
 
 echo "activating qiime2 environment"
 # load qiime2 environment 
@@ -54,15 +54,15 @@ qiime tools extract --input-path analysis/denoised_16S_eDNA/representative_seque
 # before you classify your sequences, you'll need to run the code in 'taxonomic-classification' using the rescript plug-in in qiime. 
 
 echo "Classifying sequences"
-# Classify Sequences
-# consensus BLAST
-qiime feature-classifier classify-consensus-blast --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads $project_dir/taxonomic-classification/Vertebrata16S_derep1_seqs.qza --i-reference-taxonomy $project_dir/taxonomic-classification/Vertebrata16S_derep1_taxa.qza --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy
+# # Classify Sequences
+# # consensus BLAST
+# qiime feature-classifier classify-consensus-blast --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/taxonomic-classification/Vertebrata16S_derep1_seqs.qza" --i-reference-taxonomy "$project_dir/taxonomic-classification/Vertebrata16S_derep1_taxa.qza" --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy
 
 # vsearch global
-# qiime feature-classifier vsearch-global --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads taxonomic-classification/Vertebrata16S_derep1_seqs.qza --p-maxaccepts 20 --p-perc-identity 0.90 --p-query-cov 0.70 --output-dir analysis/denoised_16S_eDNA/classified_taxonomy_vsearch
+qiime feature-classifier vsearch-global --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads taxonomic-classification/Vertebrata16S_derep1_seqs.qza --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy_vsearch
 
 echo "Extracting classifications"
 # Extract out classifications. 
-qiime tools extract  --input-path $c_run_dir/analysis/denoised_16S_eDNA/classified_taxonomy/classification.qza --output-path $c_run_dir/analysis/denoised_16S_eDNA/classified_taxonomy/classified_taxonomy
+qiime tools extract  --input-path analysis/denoised_16S_eDNA/classified_taxonomy/classification.qza --output-path analysis/denoised_16S_eDNA/classified_taxonomy/classified_taxonomy
 
 echo "All finished! Proceeding to post sequencing analysis"
