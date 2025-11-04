@@ -59,4 +59,3 @@ qiime tools extract \
 --output-path Vertebrata16S_derep1_taxa 
 
 echo "done creating classifier"
-cd ../..

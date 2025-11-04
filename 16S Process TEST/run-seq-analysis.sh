@@ -1,11 +1,14 @@
 #!/bin/bash
 
+# read in config.yml for configuration parameters
+c_run_dir=$(yq e '.run-directory' config.yml)
+
 echo "clearing previous folders that will be created by this pipeline"
-rm -r output metadata analysis
+rm -r $c_run_dir/output $c_run_dir/metadata $c_run_dir/analysis
 
 
 echo "creating necessary directories"
-mkdir output metadata analysis
+mkdir $c_run_dir/output $c_run_dir/metadata $c_run_dir/analysis
 
 #echo "downloading and curating reference taxa list"
 #. source/shell/DownloadSeqs_And_TrainClassifier_Vertebrata16S.sh 
