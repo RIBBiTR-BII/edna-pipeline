@@ -35,7 +35,7 @@ qiime rescript dereplicate --verbose \
   --i-taxa ./Vertebrata16S/taxonomy.qza \
   --p-mode 'super' \
   --p-derep-prefix \
-  --p-rank-handles 'silva' \
+  --p-rank-handles ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] \
   --o-dereplicated-sequences Vertebrata16S_derep1_seqs.qza \
   --o-dereplicated-taxa Vertebrata16S_derep1_taxa.qza
 
