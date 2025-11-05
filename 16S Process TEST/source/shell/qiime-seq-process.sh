@@ -59,7 +59,7 @@ echo "Classifying sequences"
 # qiime feature-classifier classify-consensus-blast --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/taxonomic-classification/Vertebrata16S_derep1_seqs.qza" --i-reference-taxonomy "$project_dir/taxonomic-classification/Vertebrata16S_derep1_taxa.qza" --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy
 
 # vsearch global
-qiime feature-classifier vsearch-global --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads taxonomic-classification/Vertebrata16S_derep1_seqs.qza --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy_vsearch
+qiime feature-classifier vsearch-global --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads vertebrata16s-classifier/Vertebrata16S_derep1_seqs_extracted.qza --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy_vsearch
 
 echo "Extracting classifications"
 # Extract out classifications. 
