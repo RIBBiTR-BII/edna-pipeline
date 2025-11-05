@@ -6,7 +6,7 @@ source activate qiime2-amplicon-2025.4
 # make sure to have rescript installed within this environment
 # see details here: https://library.qiime2.org/plugins/rescript/27/
 
-if [ -d "taxonomic-classification" ]; then
+if [ -d "vertebrata16s-classifier" ]; then
   echo "The existing "vertebrata16s-classifier" folder will be deleted. Proceed? (y/n)"
   read confirm
   if [[ "$confirm" == [Yy] ]]; then
@@ -21,8 +21,6 @@ fi
 # make a new dirctory for the NCBI sequences
 mkdir vertebrata16s-classifier
 cd vertebrata16s-classifier
-
-mkdir temp
 
 # download all vertebrate (txid7742) 16S sequences from NCBI
 echo "downloading vertibrate 16S sequences from NCBI"

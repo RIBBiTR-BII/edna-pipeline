@@ -19,7 +19,10 @@ Rscript source/r/00_make_manifest_file.R
 echo "performing sequence processing"
 . source/shell/qiime-seq-process.sh
 
+echo "writing run metadata"
+Rscript source/r/01_scrape_run_metadata.R
+
 echo "performing sequence analysis"
-Rscript source/r/01_consolidate_outputs.R
+Rscript source/r/02_consolidate_outputs.R
 
 echo "sequence analysis complete.  please see output folder for relevant output"
