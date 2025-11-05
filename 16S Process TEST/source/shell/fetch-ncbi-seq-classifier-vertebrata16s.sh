@@ -24,13 +24,13 @@ cd vertebrata16s-classifier
 
 mkdir temp
 
-# Download all vertebrate (txid7742) 16S sequences from NCBI
+# download all vertebrate (txid7742) 16S sequences from NCBI
 echo "downloading vertibrate 16S sequences from NCBI"
 qiime rescript get-ncbi-data \
 --p-query "(txid7742[ORGN] AND (mitochondria[TITLE] OR mitochondrion[TITLE] OR mitochondrial[TITLE])) OR (txid7742[ORGN] AND (large subunit ribosomal RNA[TITLE] OR 16S rRNA[TITLE] OR 16S ribosomal RNA[TITLE] OR 16S[TITLE] OR 16S r RNA[TITLE] OR MT-RNR2[TITLE] OR MTRNR2[TITLE] OR RNR2[TITLE])) AND (biomol_genomic[PROP] AND ddbj_embl_genbank[filter] AND mitochondrion[filter])" \
 --output-dir temp
 
-#remove sequences with 5 or more degen sequences and homopolymers longer than 12
+# remove sequences with 5 or more degen sequences and homopolymers longer than 12
 echo "filtering sequences"
 qiime rescript cull-seqs \
     --i-sequences ./temp/sequences.qza \
@@ -63,5 +63,9 @@ qiime rescript filter-taxa \
     --i-taxonomy ./temp/Vertebrata16S_derep1_taxa.qza \
     --m-ids-to-keep-file Vertebrata16S_derep1_seqs_extracted.qza \
     --o-filtered-taxonomy Vertebrata16S_derep1_taxa_extracted.qza
+
+# # drop temp folder
+# echo "deleting temporary files"
+# rm -r "temp"
 
 echo "done creating classifier"
