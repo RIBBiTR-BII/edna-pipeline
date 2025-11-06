@@ -2,10 +2,10 @@ library(yaml)
 library(lubridate)
 library(here)
 
-# define emtadata
+# initiate classifier metadata
 metadata = list()
-metadata$classifier_name = "NCBI-Vertebrata16S"
-metadata$classifier_script = "./source/shell/fetch-ncbi-seq-classifier-vertebrata16s.sh"
-metadata$claddifier_build_timestamp = format(now(), '%Y-%m-%d %H:%M:%S')
-# write to fiel
-write_yaml(metadata, here("vertebrata16s-classification", "classifier_metadata.yml"))
+metadata$classifier$name = "NCBI_Vertebrata16S"
+metadata$classifier$buildScript = "./source/shell/fetch-ncbi-seq-classifier-vertebrata16s.sh"
+metadata$classifier$buildEndTimestamp = format(now(), '%Y-%m-%d %H:%M:%S')
+# write to file
+write_yaml(metadata, here("vertebrata16s_classification", "classifier_metadata.yml"))

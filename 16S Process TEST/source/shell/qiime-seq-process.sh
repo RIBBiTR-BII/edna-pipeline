@@ -2,17 +2,19 @@
 
 echo "reading config file"
 # read in config.yml for configuration parameters
-c_run_dir=$(yq e '.run-directory' config.yml)
-c_error_rate=$(yq e '.trim-paired.p-error-rate' config.yml)
-c_trunc_q=$(yq e '.denoise-paired.p-trunc-q' config.yml)
-c_trunc_len=$(yq e '.denoise-paired.p-trunc-len' config.yml)
-c_maxaccepts=$(yq e '.vsearch-global.p-maxaccepts' config.yml)
-c_perc_identity=$(yq e '.vsearch-global.p-perc-identity' config.yml)
-c_query_cov=$(yq e '.vsearch-global.p-query-cov' config.yml)
+c_run_dir=$(yq e '.run.runDir' config.yml)
+c_taxa_dir=$(yq e '.taxonomy.referenceDir' config.yml)
+c_qiime_env=$(yq e '.run.qiimeEnv' config.yml)
+c_error_rate=$(yq e '.trimPaired.errorRate' config.yml)
+c_trunc_q=$(yq e '.denoisePaired.truncQ' config.yml)
+c_trunc_len=$(yq e '.denoisePaired.truncLen' config.yml)
+c_maxaccepts=$(yq e '.vsearchGlobal.maxaccepts' config.yml)
+c_perc_identity=$(yq e '.vsearchGlobal.percIdentity' config.yml)
+c_query_cov=$(yq e '.vsearchGlobal.queryCov' config.yml)
 
 echo "activating qiime2 environment"
 # load qiime2 environment 
-source activate qiime2-amplicon-2025.4
+source activate $c_qiime_env
 
 #go to https://docs.qiime2.org/2024.5/ to install QIIME2 & learn more about it. 
 
@@ -59,7 +61,7 @@ echo "Classifying sequences"
 # qiime feature-classifier classify-consensus-blast --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/taxonomic-classification/Vertebrata16S_derep1_seqs.qza" --i-reference-taxonomy "$project_dir/taxonomic-classification/Vertebrata16S_derep1_taxa.qza" --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy
 
 # vsearch global
-qiime feature-classifier vsearch-global --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads vertebrata16s-classifier/Vertebrata16S_derep1_seqs_extracted.qza --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy_vsearch
+qiime feature-classifier vsearch-global --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads $c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy_vsearch
 
 echo "Extracting classifications"
 # Extract out classifications. 

@@ -1,16 +1,20 @@
 #!/bin/bash
 
+# read in config.yml for configuration parameters
+c_taxa_dir=$(yq e '.taxonomy.referenceDir' config.yml)
+c_qiime_env=$(yq e '.run.qiimeEnv' config.yml)
+
 # Activate the Qiime environment
-source activate qiime2-amplicon-2025.4
+source activate $c_qiime_env
 
 # make sure to have rescript installed within this environment
 # see details here: https://library.qiime2.org/plugins/rescript/27/
 
-if [ -d "vertebrata16s-classifier" ]; then
+if [ -d $c_taxa_dir ]; then
   echo "The existing "vertebrata16s-classifier" folder will be deleted. Proceed? (y/n)"
   read confirm
   if [[ "$confirm" == [Yy] ]]; then
-    rm -r "vertebrata16s-classifier"
+    rm -r $c_taxa_dir
     echo "Folder deleted."
   else
     echo "Process canceled."
@@ -19,8 +23,8 @@ if [ -d "vertebrata16s-classifier" ]; then
 fi
 
 # make a new dirctory for the NCBI sequences
-mkdir vertebrata16s-classifier
-cd vertebrata16s-classifier
+mkdir $c_taxa_dir
+cd $c_taxa_dir
 
 # download all vertebrate (txid7742) 16S sequences from NCBI
 echo "downloading vertibrate 16S sequences from NCBI"
@@ -43,7 +47,7 @@ qiime rescript dereplicate --verbose \
   --i-taxa ./temp/taxonomy.qza \
   --p-mode 'super' \
   --p-derep-prefix \
-  --p-rank-handles ['kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species'] \
+  --p-rank-handles kingdom phylum class order family genus species \
   --o-dereplicated-sequences ./temp/Vertebrata16S_derep1_seqs.qza \
   --o-dereplicated-taxa ./temp/Vertebrata16S_derep1_taxa.qza
 

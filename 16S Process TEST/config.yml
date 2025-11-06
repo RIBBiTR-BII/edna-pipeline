@@ -1,17 +1,19 @@
 ---
-# configuration file for 16S eDNA processing
-run-directory: "runs/2025-11-03_penn"
-
-trim-paired:              # trim primers
-  p-error-rate: 0.3         # error rate for trimming of primers
-denoise-paired:           # denoise
-  p-trunc-q: 2              # quality threshold at which to truncate reads
-  p-trunc-len: 0            # length at which to truncate reads (forward and reverse)
-# clasify-consensus-blast:  # clasifiy
-#   p-maxaccepts: 10          # maximum number of BLAST hits used
-#   p-perc-identity: 0.98     # minimum identity for BLAST hit acceptance
-#   p-query-cov: 0.95         # minimum query coverage for BLAST hit acceptance
-vsearch-global:
-  p-maxaccepts: 20          # maximum number of hits to accept
-  p-perc-identity: 0.7      # minimum identity for hit acceptance
-  p-query-cov: 0.7          # minimum query coverage hit acceptance
+run:
+  name: Pennsylvania_test_01
+  description: test run
+  technician: Cob Staines
+  runDir: runs/2025-11-03_penn
+  qiimeEnv: qiime2-amplicon-2025.4
+taxonomy:
+  referenceDir: vertebrata16s-classifier
+  updateBool: false
+trimPaired:              # trim primers
+  errorRate: 0.3         # error rate for trimming of primers
+denoisePaired:           # denoise
+  truncQ: 2              # quality threshold at which to truncate reads
+  truncLen: 0            # length at which to truncate reads (forward and reverse)
+vsearchGlobal:
+  maxaccepts: 20          # maximum number of hits to accept
+  percIdentity: 0.7      # minimum identity for hit acceptance
+  queryCov: 0.7          # minimum query coverage hit acceptance
