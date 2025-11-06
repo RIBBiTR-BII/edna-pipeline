@@ -1,12 +1,12 @@
 ---
 run:
-  name: Pennsylvania_test_01
-  description: test run
+  name: 2025-11-06_penn
+  description: full run of recent Pennsylvania samples
   technician: Cob Staines
-  runDir: runs/2025-11-03_penn
+  runDir: runs/2025-11-06_penn
   qiimeEnv: qiime2-amplicon-2025.4
 taxonomy:
-  referenceDir: vertebrata16s-classifier
+  classifierDir: vertebrata16s_classifier
   updateBool: false
 trimPaired:              # trim primers
   errorRate: 0.3         # error rate for trimming of primers

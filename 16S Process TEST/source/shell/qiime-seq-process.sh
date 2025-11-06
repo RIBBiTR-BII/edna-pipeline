@@ -3,7 +3,7 @@
 echo "reading config file"
 # read in config.yml for configuration parameters
 c_run_dir=$(yq e '.run.runDir' config.yml)
-c_taxa_dir=$(yq e '.taxonomy.referenceDir' config.yml)
+c_taxa_dir=$(yq e '.taxonomy.classifierDir' config.yml)
 c_qiime_env=$(yq e '.run.qiimeEnv' config.yml)
 c_error_rate=$(yq e '.trimPaired.errorRate' config.yml)
 c_trunc_q=$(yq e '.denoisePaired.truncQ' config.yml)
@@ -12,59 +12,55 @@ c_maxaccepts=$(yq e '.vsearchGlobal.maxaccepts' config.yml)
 c_perc_identity=$(yq e '.vsearchGlobal.percIdentity' config.yml)
 c_query_cov=$(yq e '.vsearchGlobal.queryCov' config.yml)
 
-echo "activating qiime2 environment"
+# bookmark project folder for later reference
+project_dir=$(pwd)
+
+echo "Activating qiime2 environment"
 # load qiime2 environment 
 source activate $c_qiime_env
+# visit https://docs.qiime2.org/2024.5/ to install QIIME2 & learn more about it.
 
-#go to https://docs.qiime2.org/2024.5/ to install QIIME2 & learn more about it. 
-
-# use ls navigate to Example_eDNA_Pipeline and cd to set it as working directory
-project_dir=$(pwd)
+# navigate to run folder
 cd $c_run_dir
-
-# make sure you have folders named 'metadata', 'output', 'sequences', and 'taxonomic-classification' in this folder 
 
 echo "Importing Sequences as .qza file"
 # Import Sequences into qiime2 as .qza file. 
-qiime tools import --type 'SampleData[PairedEndSequencesWithQuality]' --input-path metadata/manifest.csv --output-path analysis/16S_eDNA_Demux.qza  --input-format PairedEndFastqManifestPhred33
+qiime tools import --type 'SampleData[PairedEndSequencesWithQuality]' --input-path metadata/manifest.csv --output-path analysis/s01_16S_eDNA_Demux.qza  --input-format PairedEndFastqManifestPhred33
 
 echo "Summarizing qzv for viewing on QIIME2View"
 # Summarize into a qzv file for viewing on QIIME2View
-qiime demux summarize --i-data analysis/16S_eDNA_Demux.qza --o-visualization analysis/16S_eDNA_Demux.qzv 
+qiime demux summarize --i-data analysis/s01_16S_eDNA_Demux.qza --o-visualization analysis/s02_16S_eDNA_Demux.qzv 
 
 echo "Trimming primers"
 # Trim primers from paired-end demux 
-qiime cutadapt trim-paired --i-demultiplexed-sequences analysis/16S_eDNA_Demux.qza --p-front-f ACGAGAAGACCCYRTGGARCTT --p-front-r ATCCAACATCGAGGTCGTAA --p-error-rate $c_error_rate --p-match-adapter-wildcards True --p-match-read-wildcards True --p-discard-untrimmed True --p-times 10 --o-trimmed-sequences analysis/lead_primertrimmed_16S_eDNA_Demux.qza
+qiime cutadapt trim-paired --i-demultiplexed-sequences analysis/s01_16S_eDNA_Demux.qza --p-front-f ACGAGAAGACCCYRTGGARCTT --p-front-r ATCCAACATCGAGGTCGTAA --p-error-rate $c_error_rate --p-match-adapter-wildcards True --p-match-read-wildcards True --p-discard-untrimmed True --p-times 10 --o-trimmed-sequences analysis/s03_lead_primertrimmed_16S_eDNA_Demux_1.qza
 
 # Trim primers from paired-end demux 
-qiime cutadapt trim-paired --i-demultiplexed-sequences analysis/lead_primertrimmed_16S_eDNA_Demux.qza --p-adapter-f TTACGACCTCGATGTTGGAT --p-adapter-r AAGYTCCAYRGGGTCTTCTCGT --p-error-rate 0.3 --p-match-adapter-wildcards True  --p-match-read-wildcards True  --p-discard-untrimmed False  --p-times 10  --o-trimmed-sequences analysis/primertrimmed_16S_eDNA_Demux.qza
+qiime cutadapt trim-paired --i-demultiplexed-sequences analysis/s03_lead_primertrimmed_16S_eDNA_Demux_1.qza --p-adapter-f TTACGACCTCGATGTTGGAT --p-adapter-r AAGYTCCAYRGGGTCTTCTCGT --p-error-rate 0.3 --p-match-adapter-wildcards True  --p-match-read-wildcards True  --p-discard-untrimmed False  --p-times 10  --o-trimmed-sequences analysis/s04_primertrimmed_16S_eDNA_Demux_2.qza
 
 echo "Summarizing qzv for viewing of trimmed primers on QIIME2View"
 # Summarize into a qzv file for viewing on QIIME2View
-qiime demux summarize  --i-data analysis/primertrimmed_16S_eDNA_Demux.qza  --o-visualization analysis/primertrimmed_16S_eDNA_Demux.qzv 
+qiime demux summarize  --i-data analysis/s04_primertrimmed_16S_eDNA_Demux_2.qza  --o-visualization analysis/s05_primertrimmed_16S_eDNA_Demux.qzv 
 
 echo "Denoising sequences with dada2"
 # Denoise paired sequences with dada2
-qiime dada2 denoise-paired --i-demultiplexed-seqs analysis/primertrimmed_16S_eDNA_Demux.qza --p-trunc-q $c_trunc_q --p-trunc-len-f $c_trunc_len --p-trunc-len-r $c_trunc_len --p-n-threads 0 --output-dir analysis/denoised_16S_eDNA
+qiime dada2 denoise-paired --i-demultiplexed-seqs analysis/s04_primertrimmed_16S_eDNA_Demux_2.qza --p-trunc-q $c_trunc_q --p-trunc-len-f $c_trunc_len --p-trunc-len-r $c_trunc_len --p-n-threads 0 --output-dir analysis/s05_denoised_16S_eDNA
 
-qiime tools extract --input-path analysis/denoised_16S_eDNA/table.qza --output-path analysis/denoised_16S_eDNA/sample_table
+qiime tools extract --input-path analysis/s05_denoised_16S_eDNA/table.qza --output-path analysis/s05_denoised_16S_eDNA/sample_table
 
-biom convert -i analysis/denoised_16S_eDNA/sample_table/*/data/feature-table.biom -o analysis/denoised_16S_eDNA/sample_table/feature-table.tsv --to-tsv
+biom convert -i analysis/s05_denoised_16S_eDNA/sample_table/*/data/feature-table.biom -o analysis/s05_denoised_16S_eDNA/sample_table/feature-table.tsv --to-tsv
 
-qiime tools extract --input-path analysis/denoised_16S_eDNA/representative_sequences.qza --output-path analysis/denoised_16S_eDNA/representative_sequences
+qiime tools extract --input-path analysis/s05_denoised_16S_eDNA/representative_sequences.qza --output-path analysis/s05_denoised_16S_eDNA/representative_sequences
 
 # before you classify your sequences, you'll need to run the code in 'taxonomic-classification' using the rescript plug-in in qiime. 
 
 echo "Classifying sequences"
-# # Classify Sequences
-# # consensus BLAST
-# qiime feature-classifier classify-consensus-blast --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/taxonomic-classification/Vertebrata16S_derep1_seqs.qza" --i-reference-taxonomy "$project_dir/taxonomic-classification/Vertebrata16S_derep1_taxa.qza" --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy
-
-# vsearch global
-qiime feature-classifier vsearch-global --i-query analysis/denoised_16S_eDNA/representative_sequences.qza --i-reference-reads $c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/denoised_16S_eDNA/classified_taxonomy_vsearch
+# Classify Sequences vsearch global
+qiime feature-classifier vsearch-global --i-query analysis/s05_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza" --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/s06_classified_taxonomy_vsearch
 
 echo "Extracting classifications"
 # Extract out classifications. 
-qiime tools extract  --input-path analysis/denoised_16S_eDNA/classified_taxonomy/classification.qza --output-path analysis/denoised_16S_eDNA/classified_taxonomy/classified_taxonomy
+qiime tools extract  --input-path analysis/s06_classified_taxonomy_vsearch/search_results.qza --output-path analysis/s06_classified_taxonomy_vsearch/search_results
 
+# return to project folder
 echo "All finished! Proceeding to post sequencing analysis"

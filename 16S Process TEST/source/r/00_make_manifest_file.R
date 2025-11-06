@@ -5,7 +5,7 @@ library(yaml)
 config = read_yaml("config.yml")
 
 # create manifest file in tabular form
-tibble(`absolute-filepath` = c(list.files(paste0(config$`run-directory`, "/sequences"), recursive = TRUE))) %>%
+tibble(`absolute-filepath` = c(list.files(paste0(config$run$runDir, "/sequences"), recursive = TRUE))) %>%
   filter(str_detect(`absolute-filepath`, "\\.fastq(\\.gz)?$")) %>%
   mutate(`seq_id` = str_match(basename(`absolute-filepath`), "([A-Z]{2}[0-9]{3})-[0-9A-Za-z-]+_S[0-9]+_L[0-9]+_R[12]")[,2],
          `sample-id` = str_match(basename(`absolute-filepath`), "-([A-Za-z]+-[0-9A-Z-]*)_S[0-9]+_L[0-9]+_R[12]")[,2],
@@ -15,4 +15,4 @@ tibble(`absolute-filepath` = c(list.files(paste0(config$`run-directory`, "/seque
          `sample-id` = str_replace(`sample-id`, "-", "_")) %>%
   select(`sample-id`, `absolute-filepath`, `direction`) %>%
   # write as a csv and place in metadata folder
-  write_csv(., paste0(config$`run-directory`, "/metadata/manifest.csv"))
+  write_csv(., paste0(config$run$runDir, "/metadata/manifest.csv"))
