@@ -10,34 +10,70 @@ library(readxl)
 library(openxlsx)
 library(yaml)
 
+env_config_path = "runs/2025-11-06_penn/metadata/config.yml"
+
+# inherit env_config_path
+args = commandArgs(trailingOnly = TRUE)
+env_config_path = args[1]
+
 # read in config file
-config = read_yaml("config.yml")
+config = read_yaml(env_config_path)
 
 ## Read in the .biom feature table. 
-feature_table <-
-  read_tsv(paste0(config$`run-directory`, "/analysis/denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+feature_table =
+  read_tsv(paste0(config$run$runDir, "/analysis/s05_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
   as.data.frame() %>%
-  rename("ASV_ID" = "#OTU ID")
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
 
-## Read in taxonomic classifications 
-taxonomy_table <-
-  read.table(paste0(config$`run-directory`, "/analysis/denoised_16S_eDNA/classified_taxonomy/classified_taxonomy/", 
-                    list.files(paste0(config$`run-directory`, '/analysis/denoised_16S_eDNA/classified_taxonomy/classified_taxonomy')), 
+## Read in taxonomic classifications (vsearch global results)
+classification_table =
+  read.table(paste0(config$run$runDir, "/analysis/s06_classified_taxonomy_vsearch/search_results/", 
+                    list.files(paste0(config$run$runDir, '/analysis/s06_classified_taxonomy_vsearch/search_results')), 
+                    "/data/blast6.tsv"),
+             header = FALSE, 
+             sep = '\t') %>%
+  rename(asv_id = V1,
+         taxon_id = V2,
+         percent_identical = V3,
+         seq_overlap = V4,
+         seq_mismatch = V5,
+         gapopen_count = V6,
+         q_start = V7,
+         q_end = V8,
+         s_start = V9,
+         s_end = V10,
+         e_value = V11,
+         bitscore = V12) %>%
+  arrange(asv_id)
+
+taxonomy_table =
+  read.table(paste0(config$taxonomy$classifierDir, "/Vertebrata16S_derep1_taxa_extracted/", 
+                    list.files(paste0(config$taxonomy$classifierDir, '/Vertebrata16S_derep1_taxa_extracted')), 
                     "/data/taxonomy.tsv"),
-             header = T, 
-             sep = '\t')
+             header = TRUE, 
+             sep = '\t',
+             quote = '') %>%
+  rename(taxon_id = Feature.ID,
+         taxon = Taxon) %>%
+  filter(taxon_id %in% unique(classification_table$taxon_id)) %>%
+  separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  arrange(taxon_id)
 
 # Read in DNA sequences 
-sequence_table <-
-  read.fasta(file = paste0(config$`run-directory`, "/analysis/denoised_16S_eDNA/representative_sequences/", 
-                           list.files(paste0(config$`run-directory`, '/analysis/denoised_16S_eDNA/representative_sequences')), 
+sequence_table =
+  read.fasta(file = paste0(config$run$runDir, "/analysis/s05_denoised_16S_eDNA/representative_sequences/", 
+                           list.files(paste0(config$run$runDir, '/analysis/s05_denoised_16S_eDNA/representative_sequences')), 
                            "/data/dna-sequences.fasta"))%>%
-  rename(ASV_ID = seq.name, 
-         sequence = seq.text)
+  rename(asv_id = seq.name, 
+         sequence = seq.text) %>%
+  arrange(asv_id)
 
-## Write each table for documentation.  Proceed with analysis in R or in Excel. 
+## Write each table for documentation.  Proceed with analysis in R or in Excel.
 list_of_datasets <- list("Feature Table" = feature_table, 
-                         "Taxonomy Table" = taxonomy_table, 
+                         "Taxonomy Table" = taxonomy_table,
+                         "Classification Table" = classification_table,
                          "Sequence Table" = sequence_table)
 
-write.xlsx(list_of_datasets, file = paste0(config$`run-directory`, "/output/collated_eDNA_data.xlsx"))
+write.xlsx(list_of_datasets, file = paste0(config$run$runDir, "/output/collated_eDNA_data.xlsx"))
