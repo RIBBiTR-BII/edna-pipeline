@@ -10,7 +10,8 @@ library(readxl)
 library(openxlsx)
 library(yaml)
 
-env_config_path = "runs/2025-11-06_penn/metadata/config.yml"
+# # manual runs
+# env_config_path = "runs/2025-11-06_panama/metadata/config.yml"
 
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)
@@ -25,6 +26,21 @@ feature_table =
   as.data.frame() %>%
   rename("asv_id" = "#OTU ID") %>%
   arrange(asv_id)
+
+feature_long = feature_table %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "sample_id",
+               values_to = "asv_count") %>%
+  filter(asv_count != 0) %>%
+  arrange(sample_id) %>%
+  select(sample_id,
+         asv_id,
+         asv_count)
+
+asv_total_count = feature_long %>%
+  group_by(asv_id) %>%
+  summarise(asv_total_count = sum(asv_count)) %>%
+  arrange(desc(asv_total_count))
 
 ## Read in taxonomic classifications (vsearch global results)
 classification_table =
@@ -47,6 +63,7 @@ classification_table =
          bitscore = V12) %>%
   arrange(asv_id)
 
+# Read in taxonomies and filter to flagged taxa
 taxonomy_table =
   read.table(paste0(config$taxonomy$classifierDir, "/Vertebrata16S_derep1_taxa_extracted/", 
                     list.files(paste0(config$taxonomy$classifierDir, '/Vertebrata16S_derep1_taxa_extracted')), 
@@ -70,10 +87,17 @@ sequence_table =
          sequence = seq.text) %>%
   arrange(asv_id)
 
+wide_table = asv_total_count %>%
+  left_join(sequence_table, by = "asv_id") %>%
+  left_join(classification_table, by = "asv_id") %>%
+  left_join(taxonomy_table, by = "taxon_id")
+
+write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"))
+
 ## Write each table for documentation.  Proceed with analysis in R or in Excel.
 list_of_datasets <- list("Feature Table" = feature_table, 
                          "Taxonomy Table" = taxonomy_table,
                          "Classification Table" = classification_table,
                          "Sequence Table" = sequence_table)
 
-write.xlsx(list_of_datasets, file = paste0(config$run$runDir, "/output/collated_eDNA_data.xlsx"))
+write.xlsx(list_of_datasets, file = paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_result_tables.xlsx"))

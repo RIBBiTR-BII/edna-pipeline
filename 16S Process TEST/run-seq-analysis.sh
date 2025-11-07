@@ -47,7 +47,7 @@ bash source/shell/qiime-seq-process.sh
 echo "Finalizing run metadata"
 Rscript source/r/02_final_run_metadata.R "$env_config_path"
 
-# echo "performing sequence analysis"
-# Rscript source/r/03_consolidate_outputs.R
+echo "Consolidating outputs"
+Rscript source/r/03_consolidate_outputs.R
 
 echo "Sequence analysis complete for $c_run_name! See output folder for relevant outputs."
