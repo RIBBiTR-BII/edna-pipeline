@@ -1,8 +1,11 @@
 #!/bin/bash
 
 # read in config.yml for configuration parameters
+c_run_name=$(yq e '.run.name' config.yml)
 c_run_dir=$(yq e '.run.runDir' config.yml)
 c_update_taxa=$(yq e '.taxonomy.updateBool' config.yml)
+
+echo "Initiating run: $c_run_name"
 
 # prompt user to drop folders if preexisting
 if [ -d $c_run_dir/metadata ]; then
@@ -20,6 +23,12 @@ fi
 echo "Creating run directories"
 mkdir "$c_run_dir/metadata" "$c_run_dir/analysis" "$c_run_dir/output"
 
+# copy config file to metadata
+cp config.yml "$c_run_dir/metadata"
+# save and export config path (copy) as environmental variable
+env_config_path="$c_run_dir/metadata/config.yml"
+export env_config_path
+
 # update reference taxonomy
 if [ "$c_update_taxa" = "true" ]; then
   echo "Downloading and curating reference taxa list"
@@ -27,22 +36,18 @@ if [ "$c_update_taxa" = "true" ]; then
 fi
 
 echo "Making manifest file"
-Rscript source/r/00_make_manifest_file.R
+Rscript source/r/00_make_manifest_file.R "$env_config_path"
 
 echo "Initiating run metadata"
-Rscript source/r/01_init_run_metadata.R
+Rscript source/r/01_init_run_metadata.R "$env_config_path"
 
-pwd
-
-echo "performing sequence processing"
+echo "Performing sequence processing"
 bash source/shell/qiime-seq-process.sh
 
-pwd
-
 echo "Finalizing run metadata"
-Rscript source/r/02_final_run_metadata.R
+Rscript source/r/02_final_run_metadata.R "$env_config_path"
 
 # echo "performing sequence analysis"
 # Rscript source/r/03_consolidate_outputs.R
 
-echo "Sequence analysis complete! See output folder for relevant outputs"
+echo "Sequence analysis complete for $c_run_name! See output folder for relevant outputs."

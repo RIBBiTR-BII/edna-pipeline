@@ -1,9 +1,9 @@
 ---
 run:
-  name: 2025-11-06_penn
-  description: full run of recent Pennsylvania samples
+  name: 2025-11-06_panama
+  description: full run of recent Panama samples
   technician: Cob Staines
-  runDir: runs/2025-11-06_penn
+  runDir: runs/2025-11-06_panama
   qiimeEnv: qiime2-amplicon-2025.4
 taxonomy:
   classifierDir: vertebrata16s_classifier

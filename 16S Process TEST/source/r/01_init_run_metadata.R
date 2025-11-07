@@ -1,8 +1,12 @@
 library(yaml)
 
+# inherit env_config_path
+args = commandArgs(trailingOnly = TRUE)
+env_config_path = args[1]
+
 metadata = list()
 # read in config file, use as basis for metadata
-metadata$config = read_yaml("config.yml")
+metadata$config = read_yaml(env_config_path)
 # scrape classifier metadata
 classifier_md = read_yaml(paste0(metadata$config$taxonomy$classifierDir, "/classifier_metadata.yml"))
 metadata$post$classifier = classifier_md$classifier

@@ -1,7 +1,11 @@
 library(yaml)
 
+# inherit env_config_path
+args = commandArgs(trailingOnly = TRUE)
+env_config_path = args[1]
+
 # read in config
-config = read_yaml("config.yml")
+config = read_yaml(env_config_path)
 
 # initiate classifier metadata
 metadata = list()

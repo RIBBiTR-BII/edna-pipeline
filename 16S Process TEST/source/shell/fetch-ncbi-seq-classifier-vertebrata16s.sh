@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# read in config.yml for configuration parameters
-c_taxa_dir=$(yq e '.taxonomy.classifierDir' config.yml)
-c_qiime_env=$(yq e '.run.qiimeEnv' config.yml)
+# read in config.yml (from $env_config_path) for configuration parameters
+c_taxa_dir=$(yq e '.taxonomy.classifierDir' "$env_config_path")
+c_qiime_env=$(yq e '.run.qiimeEnv' "$env_config_path")
 
 # Activate the Qiime environment
 source activate $c_qiime_env
@@ -61,10 +61,16 @@ qiime feature-classifier extract-reads \
 --p-max-length 450 \
 --o-reads Vertebrata16S_derep1_seqs_extracted.qza
 
+# filter taxa to filtered sequences
 qiime rescript filter-taxa \
     --i-taxonomy ./temp/Vertebrata16S_derep1_taxa.qza \
     --m-ids-to-keep-file Vertebrata16S_derep1_seqs_extracted.qza \
     --o-filtered-taxonomy Vertebrata16S_derep1_taxa_extracted.qza
+
+# extract taxa
+qiime tools extract \
+    --input-path Vertebrata16S_derep1_taxa_extracted.qza \
+    --output-path Vertebrata16S_derep1_taxa_extracted
 
 # # drop temp folder
 # echo "deleting temporary files"

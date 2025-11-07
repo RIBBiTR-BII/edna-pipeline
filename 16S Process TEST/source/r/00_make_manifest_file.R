@@ -1,8 +1,12 @@
 library(tidyverse)
 library(yaml)
 
+# inherit env_config_path
+args = commandArgs(trailingOnly = TRUE)
+env_config_path = args[1]
+
 # read in config file
-config = read_yaml("config.yml")
+config = read_yaml(env_config_path)
 
 # create manifest file in tabular form
 tibble(`absolute-filepath` = c(list.files(paste0(config$run$runDir, "/sequences"), recursive = TRUE))) %>%

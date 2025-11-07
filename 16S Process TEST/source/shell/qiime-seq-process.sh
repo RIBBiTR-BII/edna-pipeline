@@ -1,16 +1,16 @@
 #!/bin/bash
 
-echo "reading config file"
-# read in config.yml for configuration parameters
-c_run_dir=$(yq e '.run.runDir' config.yml)
-c_taxa_dir=$(yq e '.taxonomy.classifierDir' config.yml)
-c_qiime_env=$(yq e '.run.qiimeEnv' config.yml)
-c_error_rate=$(yq e '.trimPaired.errorRate' config.yml)
-c_trunc_q=$(yq e '.denoisePaired.truncQ' config.yml)
-c_trunc_len=$(yq e '.denoisePaired.truncLen' config.yml)
-c_maxaccepts=$(yq e '.vsearchGlobal.maxaccepts' config.yml)
-c_perc_identity=$(yq e '.vsearchGlobal.percIdentity' config.yml)
-c_query_cov=$(yq e '.vsearchGlobal.queryCov' config.yml)
+echo "Reading config file"
+# read in config.yml (from $env_config_path) for configuration parameters
+c_run_dir=$(yq e '.run.runDir' "$env_config_path")
+c_taxa_dir=$(yq e '.taxonomy.classifierDir' "$env_config_path")
+c_qiime_env=$(yq e '.run.qiimeEnv' "$env_config_path")
+c_error_rate=$(yq e '.trimPaired.errorRate' "$env_config_path")
+c_trunc_q=$(yq e '.denoisePaired.truncQ' "$env_config_path")
+c_trunc_len=$(yq e '.denoisePaired.truncLen' "$env_config_path")
+c_maxaccepts=$(yq e '.vsearchGlobal.maxaccepts' "$env_config_path")
+c_perc_identity=$(yq e '.vsearchGlobal.percIdentity' "$env_config_path")
+c_query_cov=$(yq e '.vsearchGlobal.queryCov' "$env_config_path")
 
 # bookmark project folder for later reference
 project_dir=$(pwd)
