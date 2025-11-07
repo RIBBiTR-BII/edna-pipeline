@@ -11,7 +11,7 @@ library(openxlsx)
 library(yaml)
 
 # # manual runs
-# env_config_path = "runs/2025-11-06_panama/metadata/config.yml"
+# env_config_path = "runs/2025-11-06_penn/metadata/config.yml"
 
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)

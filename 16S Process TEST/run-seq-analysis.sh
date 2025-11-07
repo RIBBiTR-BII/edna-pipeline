@@ -48,6 +48,6 @@ echo "Finalizing run metadata"
 Rscript source/r/02_final_run_metadata.R "$env_config_path"
 
 echo "Consolidating outputs"
-Rscript source/r/03_consolidate_outputs.R
+Rscript source/r/03_consolidate_outputs.R "$env_config_path"
 
 echo "Sequence analysis complete for $c_run_name! See output folder for relevant outputs."
