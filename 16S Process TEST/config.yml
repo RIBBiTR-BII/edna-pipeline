@@ -1,9 +1,9 @@
 ---
 run:
-  name: 2025-11-06_penn
-  description: full run of recent Pennsylvania samples
+  name: 2025-11-07_panama
+  runDir: runs/2025-11-07_panama
+  description: Panama 2022 - 2023 samples
   technician: Cob Staines
-  runDir: runs/2025-11-06_penn
   qiimeEnv: qiime2-amplicon-2025.4
 taxonomy:
   classifierDir: vertebrata16s_classifier
@@ -15,5 +15,5 @@ denoisePaired:           # denoise
   truncLen: 0            # length at which to truncate reads (forward and reverse)
 vsearchGlobal:
   maxaccepts: 20          # maximum number of hits to accept
-  percIdentity: 0.7      # minimum identity for hit acceptance
-  queryCov: 0.7          # minimum query coverage hit acceptance
+  percIdentity: 0.5      # minimum identity for hit acceptance
+  queryCov: 0.5          # minimum query coverage hit acceptance
