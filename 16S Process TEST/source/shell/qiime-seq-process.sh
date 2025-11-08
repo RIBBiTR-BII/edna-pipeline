@@ -58,15 +58,15 @@ biom convert -i analysis/s06_denoised_16S_eDNA/sample_table/*/data/feature-table
 
 qiime tools extract --input-path analysis/s06_denoised_16S_eDNA/representative_sequences.qza --output-path analysis/s06_denoised_16S_eDNA/representative_sequences
 
-# s07
+# s07-a
 # Classify Sequences vsearch global
 echo "Classifying sequences"
 qiime feature-classifier vsearch-global --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza" --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/s07_classified_taxonomy_vsearch
 
-echo "Extracting classifications"
+# s07-b
 # Extract out classifications. 
+echo "Extracting classifications"
 qiime tools extract  --input-path analysis/s07_classified_taxonomy_vsearch/search_results.qza --output-path analysis/s07_classified_taxonomy_vsearch/search_results
 
-# complete
 # return to project folder
 echo "All finished! Proceeding to post sequencing analysis"
