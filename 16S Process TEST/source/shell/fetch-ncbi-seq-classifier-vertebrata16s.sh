@@ -72,8 +72,8 @@ qiime tools extract \
     --input-path Vertebrata16S_derep1_taxa_extracted.qza \
     --output-path Vertebrata16S_derep1_taxa_extracted
 
-# # drop temp folder
-# echo "deleting temporary files"
-# rm -r "temp"
+# drop temp folder
+echo "deleting temporary files"
+rm -r "temp"
 
 echo "Done creating classifier"
