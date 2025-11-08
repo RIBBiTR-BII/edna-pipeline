@@ -2,12 +2,13 @@
 .Rhistory
 .RData
 .Ruserdata
-16S Process EDIT/*
 nf_test/*
 *.fastq
 *.fastq.gz
 *.qza
+*.qzv
 */taxonomic-classification/*
+*/classified_taxonomy/*
 */output/*
 */metadata/*
 */analysis/*
