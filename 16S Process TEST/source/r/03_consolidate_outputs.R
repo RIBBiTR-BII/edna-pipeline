@@ -10,8 +10,10 @@ library(readxl)
 library(openxlsx)
 library(yaml)
 
-# # manual runs
-# env_config_path = "runs/2025-11-06_penn/metadata/config.yml"
+# 
+# # # manual runs
+# env_config_path = "runs/2025-11-06_panama/metadata/config.yml"
+# setwd("16S Process TEST")
 
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)
@@ -22,7 +24,7 @@ config = read_yaml(env_config_path)
 
 ## Read in the .biom feature table. 
 feature_table =
-  read_tsv(paste0(config$run$runDir, "/analysis/s05_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  read_tsv(paste0(config$run$runDir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
   as.data.frame() %>%
   rename("asv_id" = "#OTU ID") %>%
   arrange(asv_id)
@@ -37,15 +39,17 @@ feature_long = feature_table %>%
          asv_id,
          asv_count)
 
-asv_total_count = feature_long %>%
+asv_totals = feature_long %>%
   group_by(asv_id) %>%
-  summarise(asv_total_count = sum(asv_count)) %>%
+  summarise(asv_total_count = sum(asv_count),
+            sample_count = n_distinct(sample_id),
+            samples = paste(sort(unique(sample_id)), collapse = ", ")) %>%
   arrange(desc(asv_total_count))
 
 ## Read in taxonomic classifications (vsearch global results)
 classification_table =
-  read.table(paste0(config$run$runDir, "/analysis/s06_classified_taxonomy_vsearch/search_results/", 
-                    list.files(paste0(config$run$runDir, '/analysis/s06_classified_taxonomy_vsearch/search_results')), 
+  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/", 
+                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_vsearch/search_results')), 
                     "/data/blast6.tsv"),
              header = FALSE, 
              sep = '\t') %>%
@@ -76,23 +80,38 @@ taxonomy_table =
   filter(taxon_id %in% unique(classification_table$taxon_id)) %>%
   separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
   mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  rename(kingdom = k,
+         phylum = p,
+         class = c,
+         order = o,
+         family = f,
+         genus = g,
+         species = s) %>%
   arrange(taxon_id)
 
 # Read in DNA sequences 
 sequence_table =
-  read.fasta(file = paste0(config$run$runDir, "/analysis/s05_denoised_16S_eDNA/representative_sequences/", 
-                           list.files(paste0(config$run$runDir, '/analysis/s05_denoised_16S_eDNA/representative_sequences')), 
+  read.fasta(file = paste0(config$run$runDir, "/analysis/s06_denoised_16S_eDNA/representative_sequences/", 
+                           list.files(paste0(config$run$runDir, '/analysis/s06_denoised_16S_eDNA/representative_sequences')), 
                            "/data/dna-sequences.fasta"))%>%
   rename(asv_id = seq.name, 
          sequence = seq.text) %>%
   arrange(asv_id)
 
-wide_table = asv_total_count %>%
+wide_table = asv_totals %>%
   left_join(sequence_table, by = "asv_id") %>%
   left_join(classification_table, by = "asv_id") %>%
-  left_join(taxonomy_table, by = "taxon_id")
+  left_join(taxonomy_table, by = "taxon_id") %>%
+  select(any_of(colnames(asv_totals)),
+         any_of(colnames(sequence_table)),
+         any_of(colnames(taxonomy_table)),
+         any_of(colnames(classification_table)),
+         -kingdom,
+         -phylum,
+         -e_value,
+         -bitscore)
 
-write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"))
+write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"), row.names = FALSE)
 
 ## Write each table for documentation.  Proceed with analysis in R or in Excel.
 list_of_datasets <- list("Feature Table" = feature_table, 

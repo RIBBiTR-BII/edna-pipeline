@@ -19,4 +19,4 @@ tibble(`absolute-filepath` = c(list.files(paste0(config$run$runDir, "/sequences"
          `sample-id` = str_replace(`sample-id`, "-", "_")) %>%
   select(`sample-id`, `absolute-filepath`, `direction`) %>%
   # write as a csv and place in metadata folder
-  write_csv(., paste0(config$run$runDir, "/metadata/manifest.csv"))
+  write_csv(., paste0(config$run$runDir, "/output/metadata/manifest.csv"))
