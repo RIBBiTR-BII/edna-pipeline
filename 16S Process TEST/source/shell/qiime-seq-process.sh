@@ -8,9 +8,12 @@ c_qiime_env=$(yq e '.run.qiimeEnv' "$env_config_path")
 c_error_rate=$(yq e '.trimPaired.errorRate' "$env_config_path")
 c_trunc_q=$(yq e '.denoisePaired.truncQ' "$env_config_path")
 c_trunc_len=$(yq e '.denoisePaired.truncLen' "$env_config_path")
-c_maxaccepts=$(yq e '.vsearchGlobal.maxaccepts' "$env_config_path")
-c_perc_identity=$(yq e '.vsearchGlobal.percIdentity' "$env_config_path")
-c_query_cov=$(yq e '.vsearchGlobal.queryCov' "$env_config_path")
+c_b_maxaccepts=$(yq e '.consensusBlast.maxaccepts' "$env_config_path")
+c_b_perc_identity=$(yq e '.consensusBlast.percIdentity' "$env_config_path")
+c_b_query_cov=$(yq e '.consensusBlast.queryCov' "$env_config_path")
+c_v_maxaccepts=$(yq e '.vsearchGlobal.maxaccepts' "$env_config_path")
+c_v_perc_identity=$(yq e '.vsearchGlobal.percIdentity' "$env_config_path")
+c_v_query_cov=$(yq e '.vsearchGlobal.queryCov' "$env_config_path")
 
 # bookmark project folder for later reference
 project_dir=$(pwd)\
@@ -58,14 +61,20 @@ biom convert -i analysis/s06_denoised_16S_eDNA/sample_table/*/data/feature-table
 
 qiime tools extract --input-path analysis/s06_denoised_16S_eDNA/representative_sequences.qza --output-path analysis/s06_denoised_16S_eDNA/representative_sequences
 
-# s07-a
-# Classify Sequences vsearch global
+
 echo "Classifying sequences"
-qiime feature-classifier vsearch-global --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza" --p-maxaccepts $c_maxaccepts --p-perc-identity $c_perc_identity --p-query-cov $c_query_cov --output-dir analysis/s07_classified_taxonomy_vsearch
+
+# s07-a
+# Classify Sequences consensus blast
+qiime feature-classifier classify-consensus-blast --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza" --i-reference-taxonomy "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_taxa_extracted.qza" --p-maxaccepts $c_b_maxaccepts --p-perc-identity $c_b_perc_identity --p-query-cov $c_b_query_cov --output-dir analysis/s07_classified_taxonomy_blast
+# Extract out classifications.
+qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/classification.qza --output-path analysis/s07_classified_taxonomy_blast/classification
+qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/search_results.qza --output-path analysis/s07_classified_taxonomy_blast/search_results
 
 # s07-b
+# Classify Sequences vsearch global
+qiime feature-classifier vsearch-global --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza" --p-maxaccepts $c_v_maxaccepts --p-perc-identity $c_v_perc_identity --p-query-cov $c_v_query_cov --output-dir analysis/s07_classified_taxonomy_vsearch
 # Extract out classifications. 
-echo "Extracting classifications"
 qiime tools extract  --input-path analysis/s07_classified_taxonomy_vsearch/search_results.qza --output-path analysis/s07_classified_taxonomy_vsearch/search_results
 
 # return to project folder

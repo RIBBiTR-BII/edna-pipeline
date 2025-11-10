@@ -12,7 +12,7 @@ library(yaml)
 
 # 
 # # # manual runs
-# env_config_path = "runs/2025-11-06_panama/metadata/config.yml"
+# env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
 # setwd("16S Process TEST")
 
 # inherit env_config_path
@@ -47,7 +47,7 @@ asv_totals = feature_long %>%
   arrange(desc(asv_total_count))
 
 ## Read in taxonomic classifications (vsearch global results)
-classification_table =
+hit_table_vsearch =
   read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/", 
                     list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_vsearch/search_results')), 
                     "/data/blast6.tsv"),
@@ -65,7 +65,48 @@ classification_table =
          s_end = V10,
          e_value = V11,
          bitscore = V12) %>%
-  arrange(asv_id)
+  arrange(asv_id) %>%
+  mutate(method = "vsearch")
+
+hit_table_blast =
+  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/search_results/", 
+                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/search_results')), 
+                    "/data/blast6.tsv"),
+             header = FALSE, 
+             sep = '\t') %>%
+  rename(asv_id = V1,
+         taxon_id = V2,
+         percent_identical = V3,
+         seq_overlap = V4,
+         seq_mismatch = V5,
+         gapopen_count = V6,
+         q_start = V7,
+         q_end = V8,
+         s_start = V9,
+         s_end = V10,
+         e_value = V11,
+         bitscore = V12) %>%
+  arrange(asv_id) %>%
+  mutate(method = "blast")
+
+consensus_table_blast =
+  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/", 
+                                          list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')), 
+                                          "/data/taxonomy.tsv"),
+             header = TRUE,
+             sep = '\t') %>%
+  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(method = "blast",
+         across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  rename(asv_id = Feature.ID,
+         kingdom = k,
+         phylum = p,
+         class = c,
+         order = o,
+         family = f,
+         genus = g,
+         species = s,
+         consensus = Consensus)
 
 # Read in taxonomies and filter to flagged taxa
 taxonomy_table =
@@ -77,7 +118,7 @@ taxonomy_table =
              quote = '') %>%
   rename(taxon_id = Feature.ID,
          taxon = Taxon) %>%
-  filter(taxon_id %in% unique(classification_table$taxon_id)) %>%
+  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id)) %>%
   separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
   mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
   rename(kingdom = k,
@@ -100,23 +141,30 @@ sequence_table =
 
 wide_table = asv_totals %>%
   left_join(sequence_table, by = "asv_id") %>%
-  left_join(classification_table, by = "asv_id") %>%
+  left_join(bind_rows(hit_table_blast,
+                      hit_table_vsearch), by = "asv_id") %>%
   left_join(taxonomy_table, by = "taxon_id") %>%
+  left_join(consensus_table_blast, by = c("asv_id", "method", "kingdom", "phylum", "class", "order", "family", "genus", "species")) %>%
   select(any_of(colnames(asv_totals)),
          any_of(colnames(sequence_table)),
+         method,
+         consensus,
          any_of(colnames(taxonomy_table)),
-         any_of(colnames(classification_table)),
+         any_of(colnames(hit_table_vsearch)),
          -kingdom,
          -phylum,
          -e_value,
-         -bitscore)
+         -bitscore) %>%
+  arrange(desc(asv_total_count), asv_id, method)
 
 write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"), row.names = FALSE)
 
 ## Write each table for documentation.  Proceed with analysis in R or in Excel.
 list_of_datasets <- list("Feature Table" = feature_table, 
                          "Taxonomy Table" = taxonomy_table,
-                         "Classification Table" = classification_table,
-                         "Sequence Table" = sequence_table)
+                         "Sequence Table" = sequence_table,
+                         "Hits vsearch" = hit_table_vsearch,
+                         "Hits BLAST" = hit_table_blast,
+                         "Consensus BLAST" = consensus_table_blast)
 
 write.xlsx(list_of_datasets, file = paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_result_tables.xlsx"))

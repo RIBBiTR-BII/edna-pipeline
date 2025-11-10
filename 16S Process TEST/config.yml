@@ -2,7 +2,7 @@
 run:
   name: 2025-11-07_panama
   runDir: runs/2025-11-07_panama
-  description: Panama 2022 - 2023 samples
+  description: Panama 2022-2023
   technician: Cob Staines
   qiimeEnv: qiime2-amplicon-2025.4
 taxonomy:
@@ -13,6 +13,10 @@ trimPaired:              # trim primers
 denoisePaired:           # denoise
   truncQ: 2              # quality threshold at which to truncate reads
   truncLen: 0            # length at which to truncate reads (forward and reverse)
+consensusBlast:
+  maxaccepts: 10          # maximum number of hits to accept
+  percIdentity: 0.98      # minimum identity for hit acceptance
+  queryCov: 0.95          # minimum query coverage hit acceptance
 vsearchGlobal:
   maxaccepts: 20          # maximum number of hits to accept
   percIdentity: 0.5      # minimum identity for hit acceptance

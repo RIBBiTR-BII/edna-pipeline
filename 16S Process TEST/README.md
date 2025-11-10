@@ -1,20 +1,24 @@
-Title: Example_eDNA_Pipeline
-Created by: Brandon Hoenig (brandonhoenig@gmail.com)
+# eDNA Sequence Analaysis Pipeline
 
+*Created by: Brandon Hoenig & [Cob Staines](cobstainesconsulting@gmail.com)*
+A 16S eDNA amplicon sequence processing workflow
 
-This folder will walk you through all of the steps required for analyzing eDNA in the RZ Lab. Do not use this file for bioinformatics - use Sequence_Processing_Protocol.rtf or something like it.  
+## Description
 
+This repository contains bash and R scripts (for UNIX-like opperating systems) to process and analyzing eDNA results in the [Richards-Zawacki Lab](https://www.rzlab.pitt.edu/), optimized for characterization of amphibian communities from 16S ribosomal RNA in water samples across the Americas.
 
-NOTE: The specifics of the bioinformatics steps are *_still in development_* as options for bioninformatic processing are quite subjective.  Therefore, you may find that other bioinformatic pipelines in the data that I have passed off may not match 100% with those found here.  However, it should be noted that each of these are valid methods for processing the data and the resulting data is to be trusted.  
+This workflow makes assumptions and choices which substantially influence the outputs, some of which are set up as configuration parameters and some of which are scripted. We encourage you to read this documentation, get to know the scripts, and critically observe the workflow parameters and asumptions to ensure that it is appropriate for your application. Suggestions and contributions are welcome!
 
-I do encourage the user of this file to critically observe each decision that I made to ensure that it is sound and to make updates as necessary. 
+## Getting Started
 
-Now the guide:
+### Dependencies
 
-First, make sure you have QIIME2 installed on your machine
-  - https://docs.qiime2.org/2024.5/install/
+  1.  Bash shell environment; compatible with Unix-like systems (Linux, macOS) and Windows with Bash support (e.g., WSL, Git Bash).
+
+First, make sure you have the following installed on your machine:
+  - [QIIME2](https://library.qiime2.org/quickstart/amplicon)
   
-You'll also want to have worked your way through the Moving Pictures Tutorial to learn more about this process. 
+You'll may want to have worked your way through the Moving Pictures Tutorial to learn more about this process. 
   - https://docs.qiime2.org/2024.5/tutorials/moving-pictures/
   
 You'll also need to have R installed and have these libraries on your machine:
