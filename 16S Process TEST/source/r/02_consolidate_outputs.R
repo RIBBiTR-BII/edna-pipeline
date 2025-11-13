@@ -118,7 +118,8 @@ taxonomy_table =
              quote = '') %>%
   rename(taxon_id = Feature.ID,
          taxon = Taxon) %>%
-  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id)) %>%
+  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id) |
+           taxon_id %in% unique(hit_table_blast$taxon_id)) %>%
   separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
   mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
   rename(kingdom = k,
