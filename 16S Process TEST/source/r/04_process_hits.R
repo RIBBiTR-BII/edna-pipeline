@@ -31,7 +31,9 @@ hit_table_clean = hit_table_raw %>%
     scientific_name = case_when(
       !is.na(genus) & !is.na(species_simple) ~ paste0(genus, " ", species_simple),
       !is.na(genus) & is.na(species_simple) ~ genus,
-      .default = NA)
+      .default = NA),
+    p_overlap = seq_overlap / s_end,
+    p_identical = percent_identical / 100
   )
 
 species_unique = hit_table_clean %>%
@@ -167,6 +169,123 @@ hit_panama = hit_table_clean %>%
          panama_occ_count,
          found_in_panama)
 
+# consensus blast results
+consensus_table_blast =
+  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/", 
+                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')), 
+                    "/data/taxonomy.tsv"),
+             header = TRUE,
+             sep = '\t') %>%
+  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(method = "blast",
+         across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  rename(asv_id = Feature.ID,
+         kingdom = k,
+         phylum = p,
+         class = c,
+         order = o,
+         family = f,
+         genus = g,
+         species = s,
+         consensus = Consensus) %>%
+  select(-kingdom,
+         -phylum)
+
+consensus_table = hit_table_clean %>%
+  filter(FALSE) %>%
+  select(asv_id,
+         asv_total_count,
+         sample_count,
+         samples,
+         sequence,
+         method,
+         class,
+         order,
+         family,
+         genus,
+         species,
+         species_simple,
+         scientific_name)
+
+find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_th = 0, consensus_ratio = 0.5, min_consensus_hits = 1, tie_handling = "error") {
+  
+  if (!(tie_handling %in% c("error", "pass", "drop"))) {
+    stop('Invalid value for tie_handling. Must be in c("error", "pass", "drop")')
+  }
+  
+  hit_table_filtered = hit_table %>%
+    filter(p_identical >= identity_th,
+           p_overlap >= overlap_th)
+  
+  if (consensus_ratio < 0.5) {
+    warning("Using a consensus < 0.5 may result in multiple consensus classification. In such cases, the consensus will be selected with the greatest consensus_ratio, p_identity, and p_overlap (in that order). In the case of a true tie, only one is returned.")
+  }
+  
+  if (!(taxonomic_level %in% c("class", "order", "family", "genus", "species"))) {
+    stop('taxonnomic_level not recognized, must be one of c("class", "order", "family", "genus", "species")')
+  }
+  
+  taxon_groups_list = list(
+    species = c("asv_id", "method", "class", "order", "family", "genus", "species"),
+    genus = c("asv_id", "method", "class", "order", "family", "genus"),
+    family = c("asv_id", "method", "class", "order", "family"),
+    order = c("asv_id", "method", "class", "order"),
+    class = c("asv_id", "method", "class")
+  )
+  
+  taxon_group = taxon_groups_list[[taxonomic_level]]
+  
+  consensus_table = hit_table_filtered %>%
+    group_by(asv_id, method) %>%
+    mutate(hits_n = n()) %>%
+    ungroup() %>%
+    group_by_at(taxon_group) %>%
+    mutate(taxon_hits_n = n()) %>%
+    ungroup() %>%
+    mutate(consensus_value = taxon_hits_n / hits_n) %>%
+    filter(taxon_hits_n >= min_consensus_hits,
+           consensus_value >= consensus_ratio) %>%
+    arrange(desc(asv_total_count),
+            asv_id,
+            method,
+            desc(consensus_value),
+            desc(p_identical),
+            (p_overlap)) %>%
+    select(all_of(c(taxon_group,
+             "consensus_value",
+             "p_identical",
+             "p_overlap"))) %>%
+    distinct() %>%
+    group_by_at(taxon_group) %>%
+    slice_max(order_by = consensus_value, n = 1, with_ties = TRUE) %>%
+    slice_max(order_by = p_identical, n = 1, with_ties = TRUE) %>%
+    slice_max(order_by = p_overlap, n = 1, with_ties = TRUE) %>%
+    mutate(consensus_n = n()) %>%
+    ungroup()
+  
+  tie_ids = consensus_table %>%
+    filter(consensus_n > 1) %>%
+    select(asv_id) %>%
+    distinct() %>%
+    pull(asv_id)
+  
+  if (length(tie_ids) > 0) {
+    if (tie_handling == "error") {
+      stop(paste0("Ties found for the following asv_ids:\n\t", paste(collapse = "\n\t"), "\nAborting."))
+    } else if (tie_handling == "pass") {
+      warning(paste0("Ties found for the following asv_ids:\n\t", paste(collapse = "\n\t"), "\nPassing to output."))
+    } else if (tie_handling == "drop") {
+      warning(paste0("Ties found for the following asv_ids:\n\t", paste(collapse = "\n\t"), "\nDropping from output."))
+      consensus_table = consensus_table %>%
+        filter(consensus <= 1)
+    }
+  }
+  
+  return(consensus_table)
+}
+
+my_first_consensus = find_consensus(hit_panama, "species")
+
 # here we need a function which takes in percentIdentical, min hits, and taxonomic level and generates a consensus, to run an itterative consensus across various criteria.
 
 hit_panama_consensus_value = hit_panama %>%
@@ -194,28 +313,6 @@ hit_panama_consensus_value = hit_panama %>%
 hit_panama_vsearch_consensus = hit_panama_consensus %>%
   filter(method == "vsearch",
          consensus_value >= 0.5)
-
-# consensus blast results
-consensus_table_blast =
-  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/", 
-                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')), 
-                    "/data/taxonomy.tsv"),
-             header = TRUE,
-             sep = '\t') %>%
-  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
-  mutate(method = "blast",
-         across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
-  rename(asv_id = Feature.ID,
-         kingdom = k,
-         phylum = p,
-         class = c,
-         order = o,
-         family = f,
-         genus = g,
-         species = s,
-         consensus = Consensus) %>%
-  select(-kingdom,
-         -phylum)
 
 # decision tree
 accept_vsearch = hit_table_raw %>%
