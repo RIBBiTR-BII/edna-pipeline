@@ -6,6 +6,7 @@
 ## Load in Libraries (install them in you need them.)
 library(tidyverse)
 library(iucnredlist)
+library(rgbif)
 library(yaml)
 
 # 
@@ -40,45 +41,83 @@ species_unique = hit_table_clean %>%
   arrange(scientific_name) %>%
   mutate()
 
-# IUCN search for thos in Panama
+# pull from gbif
+gbif_backbone = name_backbone_checklist(species_unique %>%
+                                  rename(scientificName = scientific_name,
+                                         species = species_simple) %>%
+                                  mutate(kingsom = "Animalia"))
 
+rownames(gbif_backbone) = NULL
+rownames(species_unique) = NULL
+
+gbif_backbone_key = bind_cols(species_unique %>%
+                                rename(species_q = species_simple,
+                                       genus_q = genus,
+                                       scientific_name_q = scientific_name),
+                              gbif_backbone) %>%
+  mutate(panama_occ_count = NA)
+
+print("Searching GBIF for species occurences in Panama")
+pb = txtProgressBar(min = 1, max = nrow(gbif_backbone_key), style = 3)
+for (ii in 1:nrow(gbif_backbone_key)) {
+  if (!is.na(gbif_backbone_key$usageKey[ii])) {
+    gbif_backbone_key$panama_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
+                                                   country = "PA")
+    Sys.sleep(0.1)
+    setTxtProgressBar(pb, ii)
+  }
+}
+close(pb)
+
+write_csv(gbif_backbone_key, paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
+# gbif_backbone_key = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
+
+gbif_scarce = gbif_backbone_key %>%
+  filter(panama_occ_count != 0,
+         panama_occ_count < 20,
+         !is.na(panama_occ_count))
+
+# cross-reference with IUCN
 api = init_api(Sys.getenv("iucn_token"))
 
 # init empty df
-abn = assessments_by_name(api, genus = species_unique$genus[1], species = species_unique$species_simple[1]) %>%
-  mutate(genus = species_unique$genus[1],
-         species = species_unique$species_simple[1]) %>%
+abn = assessments_by_name(api, genus = gbif_scarce$genus_q[1], species = gbif_scarce$species_q[1]) %>%
+  mutate(genus_q = gbif_scarce$genus_q[1],
+         species_q = gbif_scarce$species_q[1]) %>%
   filter(FALSE) %>%
-  select(genus,
-         species,
+  select(genus_q,
+         species_q,
          everything())
 
-for (ii in 112:nrow(species_unique)) {
-  print(ii)
-  ii_genus = species_unique$genus[ii]
-  ii_species = species_unique$species_simple[ii]
+print("Cross-referencing with IUCN for scarce species")
+pb = txtProgressBar(min = 1, max = nrow(gbif_scarce), style = 3)
+for (ii in 1:nrow(gbif_scarce)) {
+  ii_genus = gbif_scarce$genus_q[ii]
+  ii_species = gbif_scarce$species_q[ii]
+  setTxtProgressBar(pb, ii)
   
   # pull data
   new_row <- tryCatch({
     # Your main code block
     assessments_by_name(api, genus = ii_genus, species = ii_species) %>%
-      mutate(genus = ii_genus,
-             species = ii_species) %>%
+      mutate(genus_q = ii_genus,
+             species_q = ii_species) %>%
       arrange(desc(year_published)) %>%
       slice_head(n = 1)
   }, error = function(e) {
-    message("Error occurred, skipping this row.")
+    # fail silently
     NULL
   })
   
   
   # bind
   if (!is.null(new_row) && nrow(new_row) > 0) {
-    abn <- bind_rows(abn, new_row)
+    abn = bind_rows(abn, new_row)
   }
   # sleep
   Sys.sleep(0.5)
 }
+close(pb)
 
 write_csv(abn, paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments.csv"))
 # abn = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments.csv"))
@@ -90,15 +129,10 @@ a_data = assessment_data_many(api,
 saveRDS(a_data, file = paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments_pulled.RData"))
 # load(paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments_pulled.RData"))
 
-assessment = a_data[[285]]
-
 found_in_panama = function(assessment) {
   locations = assessment$locations %>%
     filter(code == "PA")
-    
 }
-
-assessment$assessment_id$value
 
 loc_panama = map_dfr(a_data, function(x) {
   x$location %>%
@@ -107,17 +141,33 @@ loc_panama = map_dfr(a_data, function(x) {
            seasonality = as.character(seasonality),
            formerlyBred = as.character(formerlyBred))
 }) %>%
-  mutate(found_in_panama = TRUE)
+  mutate(iucn_panama = TRUE)
+
+abn_panama
+
+gbif_iucn_panama = gbif_backbone_key %>%
+  left_join(abn, by = c("genus_q", "species_q")) %>%
+  left_join(loc_panama, by = "assessment_id") %>%
+  mutate(iucn_panama = if_else(is.na(iucn_panama) & !is.na(assessment_id), FALSE, iucn_panama)) %>%
+  select(any_of(colnames(gbif_backbone_key)),
+         assessment_id,
+         iucn_panama) %>%
+  mutate(found_in_panama = (panama_occ_count > 0) & !(iucn_panama %in% FALSE))
+
 
 hit_panama = hit_table_clean %>%
-  left_join(abn, by = c("genus", "species_simple" = "species")) %>%
-  left_join(loc_panama, by = "assessment_id") %>%
-  mutate(found_in_panama = if_else(is.na(found_in_panama) & !is.na(assessment_id),
-                                   FALSE,
-                                   found_in_panama)) %>%
+  left_join(gbif_iucn_panama %>%
+              select(genus_q,
+                     species_q,
+                     panama_occ_count,
+                     iucn_panama,
+                     found_in_panama), by = c("genus" = "genus_q", "species_simple" = "species_q")) %>%
   filter(found_in_panama | is.na(found_in_panama)) %>%
   select(any_of(colnames(hit_table_clean)),
+         panama_occ_count,
          found_in_panama)
+
+# here we need a function which takes in percentIdentical, min hits, and taxonomic level and generates a consensus, to run an itterative consensus across various criteria.
 
 hit_panama_consensus_value = hit_panama %>%
   filter(percent_identical >= 0.75) %>%
