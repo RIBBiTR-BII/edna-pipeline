@@ -367,37 +367,33 @@ rolling_consensus = function(hit_table, taxonomic_level, identity_th_ub = 1, ide
     arrange(asv_id, method, desc(identity_th)) %>%
     group_by(asv_id, method, class, order, family, genus, species, taxon_hits_n) %>%
     slice_max(identity_th, n = 1, with_ties = FALSE) %>%
-    ungroup()
+    ungroup() %>%
+    group_by(asv_id, method, class, order, family, genus, species) %>%
+    slice_max(taxon_hits_n, n = 1) %>%
+    ungroup() %>%
+    group_by(asv_id, method) %>%
+    mutate(n = n()) %>%
+    ungroup() %>%
+    filter(n < 2) %>%
+    select(-n)
 }
 
-consensus_roll_75 = rolling_consensus(hits_panama %>%
-                                        filter(!(found_in_panama_species %in% FALSE)), "species", identity_th_ub = 1, identity_th_lb = .5, idenity_th_increment = 0.05, overlap_th = 0.7, consensus_th = 0.66, tie_handling = "pass")
 
-consensus_table_100 = find_consensus(hits_panama %>%
-                                       filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = 1, overlap_th = 1, consensus_th = 0.70, tie_handling = "pass") %>%
+consensus_table_100 = find_consensus(hits_panama, "species", identity_th = 1, overlap_th = 1, consensus_th = 0.70, tie_handling = "pass") %>%
   mutate(priority = 1)
-consensus_table_100_nonlocal = find_consensus(hits_panama, "species", identity_th = 1, overlap_th = 1, consensus_th = .70, tie_handling = "pass") %>%
+consensus_roll_70 = rolling_consensus(hits_panama %>%
+                                        filter(!(found_in_panama_species %in% FALSE)), "species", identity_th_ub = 1, identity_th_lb = .7, idenity_th_increment = 0.01, overlap_th = 0.7, consensus_th = 0.66, min_consensus_hits = 2, tie_handling = "pass") %>%
+  distinct() %>%
   mutate(priority = 2)
-consensus_table_97 = find_consensus(hits_panama %>%
-                                      filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = .97, overlap_th = .97, consensus_th = .66, tie_handling = "pass") %>%
-  mutate(priority = 3)
-consensus_table_95 = find_consensus(hits_panama %>%
-                                      filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = .95, overlap_th = .95, consensus_th = .66, tie_handling = "pass") %>%
-  mutate(priority = 4)
-consensus_table_90 = find_consensus(hits_panama %>%
-                                      filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = .90, overlap_th = .90, consensus_th = .50, tie_handling = "pass") %>%
-  mutate(priority = 5)
-consensus_table_75 = find_consensus(hits_panama %>%
-                                      filter(!(found_in_panama_species %in% FALSE)), "genus", identity_th = .75, overlap_th = .75, consensus_th = .66, tie_handling = "pass") %>%
-  mutate(priority = 6)
 consensus_table_70_genus = find_consensus(hits_panama %>%
                                             filter(!(found_in_panama_genus %in% FALSE)), "genus", identity_th = .70, overlap_th = .70, consensus_th = .66, tie_handling = "pass") %>%
-  mutate(priority = 7)
+  mutate(priority = 3)
 consensus_table_60_family = find_consensus(hits_panama %>%
                                              filter(!(found_in_panama_family %in% FALSE)), "family", identity_th = .60, overlap_th = .50, consensus_th = .66, tie_handling = "pass") %>%
-  mutate(priority = 8)
+  mutate(priority = 4)
 consensus_table_50_order = find_consensus(hits_panama, "order", identity_th = .50, overlap_th = .50, consensus_th = .5001, tie_handling = "pass") %>%
-  mutate(priority = 9)
+  mutate(priority = 5)
+
 
 consensus_table_all = hits_panama %>%
   select(asv_id,
@@ -407,11 +403,7 @@ consensus_table_all = hits_panama %>%
          sequence) %>%
   distinct() %>%
   left_join(bind_rows(consensus_table_100,
-                      consensus_table_100_nonlocal,
-                      consensus_table_97,
-                      consensus_table_95,
-                      consensus_table_90,
-                      consensus_table_75,
+                      consensus_roll_70,
                       consensus_table_70_genus,
                       consensus_table_60_family,
                       consensus_table_50_order), by = "asv_id") %>%
@@ -455,4 +447,5 @@ no_consensus_vsearch = hit_table_raw %>%
   filter(method == "vsearch") %>%
   anti_join(consensus_table_vsearch, by = "asv_id")
 
-
+write.csv(consensus_table_vsearch_all, paste0(config$run$runDir, "/output/", config$run$name, "_vsearch_consensus_classification.csv"), row.names = FALSE)
+write.csv(consensus_table_vsearch_blast, paste0(config$run$runDir, "/output/", config$run$name, "_vsearch_blast_consensus_classification.csv"), row.names = FALSE)
