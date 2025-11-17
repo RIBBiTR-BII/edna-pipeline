@@ -32,34 +32,101 @@ hit_table_clean = hit_table_raw %>%
       !is.na(genus) & !is.na(species_simple) ~ paste0(genus, " ", species_simple),
       !is.na(genus) & is.na(species_simple) ~ genus,
       .default = NA),
-    p_overlap = seq_overlap / s_end,
+    p_overlap = seq_overlap / q_end,
     p_identical = percent_identical / 100
   )
 
 species_unique = hit_table_clean %>%
-  select(genus, species_simple, scientific_name) %>%
-  filter(!is.na(species_simple)) %>%
+  select(family, genus, species_simple, scientific_name) %>%
   distinct() %>%
-  arrange(scientific_name) %>%
+  arrange(family, genus, scientific_name) %>%
   mutate()
 
+# consensus blast results
+consensus_table_blast =
+  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/",
+                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')),
+                    "/data/taxonomy.tsv"),
+             header = TRUE,
+             sep = '\t') %>%
+  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(method = "blast",
+         across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  rename(asv_id = Feature.ID,
+         kingdom = k,
+         phylum = p,
+         class = c,
+         order = o,
+         family = f,
+         genus = g,
+         species = s,
+         consensus = Consensus) %>%
+  select(-kingdom,
+         -phylum)
+
 # pull from gbif
-gbif_backbone = name_backbone_checklist(species_unique %>%
-                                  rename(scientificName = scientific_name,
-                                         species = species_simple) %>%
-                                  mutate(kingsom = "Animalia"))
+## species
+gbif_query_species = species_unique %>%
+  filter(!is.na(species_simple)) %>%
+  mutate(kingdom = "Animalia")
+gbif_backbone_species = name_backbone_checklist(gbif_query_species %>%
+                                                  rename(scientificName = scientific_name))
+rownames(gbif_query_species) = NULL
+rownames(gbif_backbone_species) = NULL
 
-rownames(gbif_backbone) = NULL
-rownames(species_unique) = NULL
-
-gbif_backbone_key = bind_cols(species_unique %>%
-                                rename(species_q = species_simple,
-                                       genus_q = genus,
-                                       scientific_name_q = scientific_name),
-                              gbif_backbone) %>%
+gbif_backbone_key_species = bind_cols(gbif_query_species %>%
+                                        select(-kingdom) %>%
+                                        rename(family_q = family,
+                                               genus_q = genus,
+                                               species_q = species_simple,
+                                               scientific_name_q = scientific_name),
+                                      gbif_backbone_species) %>%
   mutate(panama_occ_count = NA)
 
-print("Searching GBIF for species occurences in Panama")
+## genus
+gbif_query_genus = species_unique %>%
+  select(family, genus) %>%
+  filter(!is.na(genus)) %>%
+  distinct() %>%
+  mutate(kingdom = "Animalia")
+gbif_backbone_genus = name_backbone_checklist(gbif_query_genus %>%
+                                                rename(scientificName = genus))
+
+rownames(gbif_query_genus) = NULL
+rownames(gbif_backbone_genus) = NULL
+
+gbif_backbone_key_genus = bind_cols(gbif_query_genus %>%
+                                      select(-kingdom) %>%
+                                      rename(family_q = family,
+                                             genus_q = genus),
+                                    gbif_backbone_genus) %>%
+  mutate(panama_occ_count = NA)
+
+## family
+gbif_query_family = species_unique %>%
+  select(family) %>%
+  filter(!is.na(family)) %>%
+  distinct() %>%
+  mutate(kingdom = "Animalia")
+gbif_backbone_family = name_backbone_checklist(gbif_query_family %>%
+                                                 rename(scientificName = family))
+
+rownames(gbif_query_family) = NULL
+rownames(gbif_backbone_family) = NULL
+
+gbif_backbone_key_family = bind_cols(gbif_query_family %>%
+                                       select(-kingdom) %>%
+                                       rename(family_q = family),
+                                     gbif_backbone_family) %>%
+  mutate(panama_occ_count = NA)
+
+gbif_backbone_key = bind_rows(gbif_backbone_key_species,
+                              gbif_backbone_key_genus,
+                              gbif_backbone_key_family) %>%
+  filter(rank %in% c("FAMILY", "GENUS", "SPECIES"))
+
+
+print("Searching GBIF for local species occurences")
 pb = txtProgressBar(min = 1, max = nrow(gbif_backbone_key), style = 3)
 for (ii in 1:nrow(gbif_backbone_key)) {
   if (!is.na(gbif_backbone_key$usageKey[ii])) {
@@ -74,28 +141,28 @@ close(pb)
 write_csv(gbif_backbone_key, paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
 # gbif_backbone_key = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
 
-gbif_scarce = gbif_backbone_key %>%
-  filter(panama_occ_count != 0,
-         panama_occ_count < 20,
-         !is.na(panama_occ_count))
+gbif_scarce_species = gbif_backbone_key %>%
+  filter(rank == "SPECIES",
+         !is.na(panama_occ_count),
+         panama_occ_count < 20,)
 
 # cross-reference with IUCN
 api = init_api(Sys.getenv("iucn_token"))
 
 # init empty df
-abn = assessments_by_name(api, genus = gbif_scarce$genus_q[1], species = gbif_scarce$species_q[1]) %>%
-  mutate(genus_q = gbif_scarce$genus_q[1],
-         species_q = gbif_scarce$species_q[1]) %>%
+abn = assessments_by_name(api, genus = gbif_scarce_species$genus_q[1], species = gbif_scarce_species$species_q[1]) %>%
+  mutate(genus_q = gbif_scarce_species$genus_q[1],
+         species_q = gbif_scarce_species$species_q[1]) %>%
   filter(FALSE) %>%
   select(genus_q,
          species_q,
          everything())
 
-print("Cross-referencing with IUCN for scarce species")
-pb = txtProgressBar(min = 1, max = nrow(gbif_scarce), style = 3)
-for (ii in 1:nrow(gbif_scarce)) {
-  ii_genus = gbif_scarce$genus_q[ii]
-  ii_species = gbif_scarce$species_q[ii]
+print("Cross-referencing with IUCN for GBIF-scarce species")
+pb = txtProgressBar(min = 1, max = nrow(gbif_scarce_species), style = 3)
+for (ii in 1:nrow(gbif_scarce_species)) {
+  ii_genus = gbif_scarce_species$genus_q[ii]
+  ii_species = gbif_scarce_species$species_q[ii]
   setTxtProgressBar(pb, ii)
   
   # pull data
@@ -145,8 +212,6 @@ loc_panama = map_dfr(a_data, function(x) {
 }) %>%
   mutate(iucn_panama = TRUE)
 
-abn_panama
-
 gbif_iucn_panama = gbif_backbone_key %>%
   left_join(abn, by = c("genus_q", "species_q")) %>%
   left_join(loc_panama, by = "assessment_id") %>%
@@ -154,60 +219,67 @@ gbif_iucn_panama = gbif_backbone_key %>%
   select(any_of(colnames(gbif_backbone_key)),
          assessment_id,
          iucn_panama) %>%
-  mutate(found_in_panama = (panama_occ_count > 0) & !(iucn_panama %in% FALSE))
+  mutate(found_in_panama = case_when(
+    rank == "SPECIES" ~ iucn_panama %in% TRUE | ((panama_occ_count > 0) & !(iucn_panama %in% FALSE)),
+    rank == "GENUS" ~ panama_occ_count > 100,
+    rank == "FAMILY" ~ panama_occ_count > 200))
 
-
-hit_panama = hit_table_clean %>%
+hits_panama = hit_table_clean %>%
   left_join(gbif_iucn_panama %>%
-              select(genus_q,
+              filter(rank == "SPECIES") %>%
+              select(family_q,
+                     genus_q,
                      species_q,
                      panama_occ_count,
                      iucn_panama,
-                     found_in_panama), by = c("genus" = "genus_q", "species_simple" = "species_q")) %>%
-  filter(found_in_panama | is.na(found_in_panama)) %>%
+                     found_in_panama) %>%
+              rename(panama_occ_count_species = panama_occ_count,
+                     iucn_panama_species = iucn_panama,
+                     found_in_panama_species = found_in_panama), by = c("family" = "family_q", "genus" = "genus_q", "species_simple" = "species_q")) %>%
+  left_join(gbif_iucn_panama %>%
+              filter(rank == "GENUS") %>%
+              select(family_q,
+                     genus_q,
+                     panama_occ_count,
+                     found_in_panama) %>%
+              distinct() %>%
+              rename(panama_occ_count_genus = panama_occ_count,
+                     found_in_panama_genus = found_in_panama), by = c("family" = "family_q", "genus" = "genus_q")) %>%
+  left_join(gbif_iucn_panama %>%
+              filter(rank == "FAMILY") %>%
+              select(family_q,
+                     panama_occ_count,
+                     found_in_panama) %>%
+              distinct() %>%
+              rename(panama_occ_count_family = panama_occ_count,
+                     found_in_panama_family = found_in_panama), by = c("family" = "family_q")) %>%
+  mutate(found_in_panama_genus = if_else(found_in_panama_species, TRUE, found_in_panama_genus),
+         found_in_panama_family = if_else(found_in_panama_genus, TRUE, found_in_panama_family)) %>%
   select(any_of(colnames(hit_table_clean)),
-         panama_occ_count,
-         found_in_panama)
+         panama_occ_count_family,
+         found_in_panama_family,
+         panama_occ_count_genus,
+         found_in_panama_genus,
+         panama_occ_count_species,
+         iucn_panama_species,
+         found_in_panama_species)
 
-# consensus blast results
-consensus_table_blast =
-  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/", 
-                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')), 
-                    "/data/taxonomy.tsv"),
-             header = TRUE,
-             sep = '\t') %>%
-  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
-  mutate(method = "blast",
-         across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
-  rename(asv_id = Feature.ID,
-         kingdom = k,
-         phylum = p,
-         class = c,
-         order = o,
-         family = f,
-         genus = g,
-         species = s,
-         consensus = Consensus) %>%
-  select(-kingdom,
-         -phylum)
+# filter(found_in_panama | is.na(found_in_panama)) %>%
+# 
+# 
+# hits_not_panama = hit_table_clean %>%
+#   left_join(gbif_iucn_panama %>%
+#               select(genus_q,
+#                      species_q,
+#                      panama_occ_count,
+#                      iucn_panama,
+#                      found_in_panama), by = c("genus" = "genus_q", "species_simple" = "species_q")) %>%
+#   filter(!found_in_panama) %>%
+#   select(any_of(colnames(hit_table_clean)),
+#          panama_occ_count,
+#          found_in_panama)
 
-consensus_table = hit_table_clean %>%
-  filter(FALSE) %>%
-  select(asv_id,
-         asv_total_count,
-         sample_count,
-         samples,
-         sequence,
-         method,
-         class,
-         order,
-         family,
-         genus,
-         species,
-         species_simple,
-         scientific_name)
-
-find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_th = 0, consensus_ratio = 0.5, min_consensus_hits = 1, tie_handling = "error") {
+find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_th = 0, consensus_th = 0.5, min_consensus_hits = 1, tie_handling = "error") {
   
   if (!(tie_handling %in% c("error", "pass", "drop"))) {
     stop('Invalid value for tie_handling. Must be in c("error", "pass", "drop")')
@@ -217,8 +289,8 @@ find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_t
     filter(p_identical >= identity_th,
            p_overlap >= overlap_th)
   
-  if (consensus_ratio < 0.5) {
-    warning("Using a consensus < 0.5 may result in multiple consensus classification. In such cases, the consensus will be selected with the greatest consensus_ratio, p_identity, and p_overlap (in that order). In the case of a true tie, only one is returned.")
+  if (consensus_th <= 0.5) {
+    warning("Using a consensus_th <= 0.5 may result in multiple consensus classification. Consensus classification(s) will be selected with the greatest consensus value, with ties handled according to tie_handling ('error', 'pass', 'drop')")
   }
   
   if (!(taxonomic_level %in% c("class", "order", "family", "genus", "species"))) {
@@ -244,24 +316,28 @@ find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_t
     ungroup() %>%
     mutate(consensus_value = taxon_hits_n / hits_n) %>%
     filter(taxon_hits_n >= min_consensus_hits,
-           consensus_value >= consensus_ratio) %>%
+           consensus_value >= consensus_th) %>%
     arrange(desc(asv_total_count),
             asv_id,
             method,
             desc(consensus_value),
             desc(p_identical),
             (p_overlap)) %>%
-    select(all_of(c(taxon_group,
-             "consensus_value",
-             "p_identical",
-             "p_overlap"))) %>%
-    distinct() %>%
-    group_by_at(taxon_group) %>%
+    group_by_at(c(taxon_group,
+                  "consensus_value")) %>%
+    summarise(taxon_hits_n = first(taxon_hits_n),
+              p_identical_mean = mean(p_identical),
+              p_overlap_mean = mean(p_overlap),
+              .groups = "drop") %>%
+    group_by(asv_id, method) %>%
     slice_max(order_by = consensus_value, n = 1, with_ties = TRUE) %>%
-    slice_max(order_by = p_identical, n = 1, with_ties = TRUE) %>%
-    slice_max(order_by = p_overlap, n = 1, with_ties = TRUE) %>%
     mutate(consensus_n = n()) %>%
-    ungroup()
+    ungroup() %>%
+    mutate(identity_th = identity_th,
+           overlap_th = overlap_th,
+           consensus_th = consensus_th,
+           min_consensus_hits = min_consensus_hits,
+           taxonomic_level = taxonomic_level)
   
   tie_ids = consensus_table %>%
     filter(consensus_n > 1) %>%
@@ -271,11 +347,11 @@ find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_t
   
   if (length(tie_ids) > 0) {
     if (tie_handling == "error") {
-      stop(paste0("Ties found for the following asv_ids:\n\t", paste(collapse = "\n\t"), "\nAborting."))
+      stop(paste0("Ties found for the following asv_ids:\n\t", paste(tie_ids, collapse = "\n\t"), "\nAborting."))
     } else if (tie_handling == "pass") {
-      warning(paste0("Ties found for the following asv_ids:\n\t", paste(collapse = "\n\t"), "\nPassing to output."))
+      warning(paste0("Ties found for the following asv_ids:\n\t", paste(tie_ids, collapse = "\n\t"), "\nPassing to output."))
     } else if (tie_handling == "drop") {
-      warning(paste0("Ties found for the following asv_ids:\n\t", paste(collapse = "\n\t"), "\nDropping from output."))
+      warning(paste0("Ties found for the following asv_ids:\n\t", paste(tie_ids, collapse = "\n\t"), "\nDropping from output."))
       consensus_table = consensus_table %>%
         filter(consensus <= 1)
     }
@@ -284,78 +360,99 @@ find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_t
   return(consensus_table)
 }
 
-my_first_consensus = find_consensus(hit_panama, "species")
+rolling_consensus = function(hit_table, taxonomic_level, identity_th_ub = 1, identity_th_lb = .5, idenity_th_increment = 0.05, overlap_th = 0, consensus_th = 0.5, min_consensus_hits = 1, tie_handling = "pass") {
+  identity_th_seq = seq(identity_th_ub, identity_th_lb, by = -idenity_th_increment)
+  
+  consensus_roll = map_dfr(identity_th_seq, ~ find_consensus(hit_table, taxonomic_level, identity_th = .x, overlap_th, consensus_th, min_consensus_hits, tie_handling)) %>%
+    arrange(asv_id, method, desc(identity_th)) %>%
+    group_by(asv_id, method, class, order, family, genus, species, taxon_hits_n) %>%
+    slice_max(identity_th, n = 1, with_ties = FALSE) %>%
+    ungroup()
+}
 
-# here we need a function which takes in percentIdentical, min hits, and taxonomic level and generates a consensus, to run an itterative consensus across various criteria.
+consensus_roll_75 = rolling_consensus(hits_panama %>%
+                                        filter(!(found_in_panama_species %in% FALSE)), "species", identity_th_ub = 1, identity_th_lb = .5, idenity_th_increment = 0.05, overlap_th = 0.7, consensus_th = 0.66, tie_handling = "pass")
 
-hit_panama_consensus_value = hit_panama %>%
-  filter(percent_identical >= 0.75) %>%
+consensus_table_100 = find_consensus(hits_panama %>%
+                                       filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = 1, overlap_th = 1, consensus_th = 0.70, tie_handling = "pass") %>%
+  mutate(priority = 1)
+consensus_table_100_nonlocal = find_consensus(hits_panama, "species", identity_th = 1, overlap_th = 1, consensus_th = .70, tie_handling = "pass") %>%
+  mutate(priority = 2)
+consensus_table_97 = find_consensus(hits_panama %>%
+                                      filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = .97, overlap_th = .97, consensus_th = .66, tie_handling = "pass") %>%
+  mutate(priority = 3)
+consensus_table_95 = find_consensus(hits_panama %>%
+                                      filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = .95, overlap_th = .95, consensus_th = .66, tie_handling = "pass") %>%
+  mutate(priority = 4)
+consensus_table_90 = find_consensus(hits_panama %>%
+                                      filter(!(found_in_panama_species %in% FALSE)), "species", identity_th = .90, overlap_th = .90, consensus_th = .50, tie_handling = "pass") %>%
+  mutate(priority = 5)
+consensus_table_75 = find_consensus(hits_panama %>%
+                                      filter(!(found_in_panama_species %in% FALSE)), "genus", identity_th = .75, overlap_th = .75, consensus_th = .66, tie_handling = "pass") %>%
+  mutate(priority = 6)
+consensus_table_70_genus = find_consensus(hits_panama %>%
+                                            filter(!(found_in_panama_genus %in% FALSE)), "genus", identity_th = .70, overlap_th = .70, consensus_th = .66, tie_handling = "pass") %>%
+  mutate(priority = 7)
+consensus_table_60_family = find_consensus(hits_panama %>%
+                                             filter(!(found_in_panama_family %in% FALSE)), "family", identity_th = .60, overlap_th = .50, consensus_th = .66, tie_handling = "pass") %>%
+  mutate(priority = 8)
+consensus_table_50_order = find_consensus(hits_panama, "order", identity_th = .50, overlap_th = .50, consensus_th = .5001, tie_handling = "pass") %>%
+  mutate(priority = 9)
+
+consensus_table_all = hits_panama %>%
+  select(asv_id,
+         asv_total_count,
+         sample_count,
+         samples,
+         sequence) %>%
+  distinct() %>%
+  left_join(bind_rows(consensus_table_100,
+                      consensus_table_100_nonlocal,
+                      consensus_table_97,
+                      consensus_table_95,
+                      consensus_table_90,
+                      consensus_table_75,
+                      consensus_table_70_genus,
+                      consensus_table_60_family,
+                      consensus_table_50_order), by = "asv_id") %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(identity_th))
+
+consensus_table = consensus_table_all %>%
   group_by(asv_id, method) %>%
-  mutate(hits = n()) %>%
-  ungroup() %>%
-  group_by(asv_id, method, class, order, family, genus, species) %>%
-  mutate(taxon_hits = n()) %>%
-  ungroup() %>%
-  mutate(consensus_value = taxon_hits / hits) %>%
-  arrange(desc(asv_total_count),
-          asv_id,
-          method,
-          desc(consensus_value),
-          percent_identical,
-          seq_overlap) %>%
-  group_by(asv_id, method, class, order, family, genus, species) %>%
-  slice_head(n = 1) %>%
-  ungroup() %>%
-  arrange(desc(asv_total_count),
-          asv_id,
-          method)
+  slice_min(priority, n = 1)
 
-hit_panama_vsearch_consensus = hit_panama_consensus %>%
-  filter(method == "vsearch",
-         consensus_value >= 0.5)
+consensus_table_vsearch = consensus_table %>%
+  filter(method == "vsearch")
 
-# decision tree
-accept_vsearch = hit_table_raw %>%
-  select(asv_id,
-         asv_total_count,
-         sample_count,
-         samples,
-         sequence) %>%
-  distinct() %>%
-  left_join(hit_panama_vsearch_consensus %>%
-              select(-asv_total_count,
-                     -sample_count,
-                     -samples,
-                     -sequence), by = "asv_id") %>%
-  select(-consensus) %>%
-  rename(consensus = consensus_value)
+vsearch_classification_ratio = nrow(consensus_table_vsearch) / length(unique(hit_table_clean$asv_id))
+blast_classification_ratio = nrow(consensus_table_blast %>%
+                                    filter(!is.na(class))) / length(unique(hit_table_clean$asv_id))
 
-vsearch_assigned = sum(!is.na(accept_vsearch$class)) / nrow(accept_vsearch)
+consensus_table_vsearch_all = bind_rows(consensus_table_vsearch,
+                                        hit_table_raw %>%
+                                          select(asv_id,
+                                                 asv_total_count,
+                                                 sample_count,
+                                                 samples,
+                                                 sequence) %>%
+                                          distinct() %>%
+                                          mutate(method = "vsearch") %>%
+                                          anti_join(consensus_table_vsearch, by = "asv_id")) %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(identity_th))
 
-accept_cblast = hit_table_raw %>%
-  select(asv_id,
-         asv_total_count,
-         sample_count,
-         samples,
-         sequence) %>%
-  distinct() %>%
-  left_join(consensus_table_blast, by = "asv_id")
+consensus_table_vsearch_blast = bind_rows(consensus_table_vsearch_all,
+                                          peace = consensus_table_blast %>%
+                                            left_join(hit_table_raw %>%
+                                                        select(asv_id,
+                                                               asv_total_count,
+                                                               sample_count,
+                                                               samples,
+                                                               sequence) %>%
+                                                        distinct(), by = "asv_id")) %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(identity_th))
 
-cblast_assigned = sum(!is.na(accept_cblast$class)) / nrow(accept_cblast)
-
-discrepancies = accept_vsearch %>%
-  select(any_of(colnames(accept_cblast))) %>%
-  left_join(accept_cblast %>%
-              select(-asv_total_count,
-                     -sample_count,
-                     -samples,
-                     -sequence), by = "asv_id") %>%
-  filter((species.x != species.y) | (genus.x != genus.y)) 
-
-unassigned = hit_panama_consensus_value %>%
-  anti_join(accept_vsearch %>%
-              filter(!is.na(class)), by = "asv_id")
+no_consensus_vsearch = hit_table_raw %>%
+  filter(method == "vsearch") %>%
+  anti_join(consensus_table_vsearch, by = "asv_id")
 
 
-
-# limit to amphibean hits
