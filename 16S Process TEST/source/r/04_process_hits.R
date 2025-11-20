@@ -1,7 +1,5 @@
-# Title: Organizing data from NGS for further analysis. 
-# Created by: Brandon Hoenig (brandonhoenig@gmail.com)
-# Created on: 12 August 2024
-# Edited on: 4 November 2024
+# Title: Process taxonomic hits to identify species likely found in Panama
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
 
 ## Load in Libraries (install them in you need them.)
 library(tidyverse)
@@ -33,7 +31,7 @@ hit_table_clean = hit_table_raw %>%
       !is.na(genus) & is.na(species_simple) ~ genus,
       .default = NA),
     p_overlap = seq_overlap / q_end,
-    p_identical = percent_identical / 100
+    p_identical = percent_identical / 100 
   )
 
 species_unique = hit_table_clean %>%
@@ -378,6 +376,60 @@ rolling_consensus = function(hit_table, taxonomic_level, identity_th_ub = 1, ide
     select(-n)
 }
 
+hits_panama_grouped = hits_panama %>%
+  group_by(asv_id,
+           asv_total_count,
+           sample_count,
+           samples,
+           sequence,
+           method,
+           class,
+           order,
+           family,
+           genus,
+           species,
+           species_simple,
+           scientific_name,
+           panama_occ_count_family,
+           panama_occ_count_genus,
+           panama_occ_count_species,
+           iucn_panama_species) %>%
+  summarize(
+    hits_n = n(),
+    p_identical_mean = mean(p_identical),
+    p_identical_max = max(p_identical),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(p_identical_max)) %>%
+  filter(method == "vsearch") %>%
+  select(asv_id,
+         asv_total_count,
+         sample_count,
+         samples,
+         sequence,
+         method,
+         class,
+         order,
+         family,
+         genus,
+         species,
+         species_simple,
+         scientific_name,
+         hits_n,
+         p_identical_max,
+         p_identical_mean,
+         everything())
+
+vsearch_unanimous = hits_panama_grouped %>%
+  group_by(asv_id,
+           asv_total_count,
+           sample_count,
+           samples,
+           sequence,
+           method) %>%
+  mutate(taxa_n = n()) %>%
+  ungroup() %>%
+  filter(taxa_n == 1)
 
 consensus_table_100 = find_consensus(hits_panama, "species", identity_th = 1, overlap_th = 1, consensus_th = 0.70, tie_handling = "pass") %>%
   mutate(priority = 1)
