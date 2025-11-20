@@ -21,3 +21,8 @@ vsearchGlobal:
   maxaccepts: 20          # maximum number of hits to accept
   percIdentity: 0.5      # minimum identity for hit acceptance
   queryCov: 0.5          # minimum query coverage hit acceptance
+geography:
+  run_gbif_lookup: true
+  run_iucn_lookup: true
+  country_codes:
+    - "PA"
