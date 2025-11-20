@@ -1,11 +1,9 @@
 # Title: Organizing data from NGS for further analysis. 
-# Created by: Brandon Hoenig (brandonhoenig@gmail.com)
-# Created on: 12 August 2024
-# Edited on: 4 November 2024
+# Created by: Brandon Hoenig (brandonhoenig@gmail.com) & Cob Staines (cobstainesconsulting@gmail.com)
 
-## Load in Libraries (install them in you need them.)
+## Load in Libraries (install as needed)
 library(tidyverse)
-library(phylotools)
+# library(phylotools)
 library(readxl)
 library(openxlsx)
 library(yaml)
@@ -159,6 +157,7 @@ wide_table = asv_totals %>%
   arrange(desc(asv_total_count), asv_id, method)
 
 write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"), row.names = FALSE)
+write.csv(taxonomy_table, paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered.csv"), row.names = FALSE)
 
 ## Write each table for documentation.  Proceed with analysis in R or in Excel.
 list_of_datasets <- list("Feature Table" = feature_table, 
