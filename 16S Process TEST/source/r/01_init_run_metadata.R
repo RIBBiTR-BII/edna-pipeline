@@ -1,3 +1,6 @@
+# Title: Initiate metadata for amplicon sequence processing
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
 library(yaml)
 
 # inherit env_config_path

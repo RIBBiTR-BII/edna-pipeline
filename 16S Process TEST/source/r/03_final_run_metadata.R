@@ -1,9 +1,12 @@
+# Title: Finalize metadata for amplicon sequence processing
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
 library(yaml)
 
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)
 env_config_path = args[1]
-# env_config_path = "runs/2025-11-03_test/output/metadata/config.yml"
+#  env_config_path = "runs/2025-11-03_test/output/metadata/config.yml"
 
 # read in config for runDir
 config = read_yaml(env_config_path)
