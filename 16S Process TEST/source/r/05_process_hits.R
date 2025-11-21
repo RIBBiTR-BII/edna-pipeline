@@ -7,18 +7,19 @@ library(iucnredlist)
 library(rgbif)
 library(yaml)
 
-# 
-# # # manual runs
+
+# manual runs
 setwd("16S Process TEST")
 env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
 
 # read in config file
 config = read_yaml(env_config_path)
 
-hit_table_raw = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"))
+hits_raw = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"))
 
-hit_table_clean = hit_table_raw %>%
-  filter(!is.na(class)) %>%
+hits_vsearch_clean = hits_raw %>%
+  filter(!is.na(class),
+         method == "vsearch") %>%
   mutate(
     species_simple = gsub(" .*", "", species),
     species_simple = if_else(species_simple %in% c("sp.",
@@ -29,198 +30,93 @@ hit_table_clean = hit_table_raw %>%
     scientific_name = case_when(
       !is.na(genus) & !is.na(species_simple) ~ paste0(genus, " ", species_simple),
       !is.na(genus) & is.na(species_simple) ~ genus,
-      .default = NA),
-    p_overlap = seq_overlap / q_end,
-    p_identical = percent_identical / 100 
+      .default = NA)
   )
 
-species_unique = hit_table_clean %>%
-  select(family, genus, species_simple, scientific_name) %>%
-  distinct() %>%
-  arrange(family, genus, scientific_name) %>%
-  mutate()
+taxa_geography = read.csv(paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered_geography.csv"))
 
-# consensus blast results
-consensus_table_blast =
-  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/",
-                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')),
-                    "/data/taxonomy.tsv"),
-             header = TRUE,
-             sep = '\t') %>%
-  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
-  mutate(method = "blast",
-         across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
-  rename(asv_id = Feature.ID,
-         kingdom = k,
-         phylum = p,
-         class = c,
-         order = o,
-         family = f,
-         genus = g,
-         species = s,
-         consensus = Consensus) %>%
-  select(-kingdom,
-         -phylum)
+hits_vsearch_geography = hits_vsearch_clean %>%
+  left_join(taxa_geography %>%
+              select(taxon_id,
+                     any_of(c("local_gbif_count_family",
+                              "local_gbif_count_genus",
+                              "local_gbif_count_species",
+                              "iucn_reported_locally_species"))), by = "taxon_id")
 
-# pull from gbif
-## species
-gbif_query_species = species_unique %>%
-  filter(!is.na(species_simple)) %>%
-  mutate(kingdom = "Animalia")
-gbif_backbone_species = name_backbone_checklist(gbif_query_species %>%
-                                                  rename(scientificName = scientific_name))
-rownames(gbif_query_species) = NULL
-rownames(gbif_backbone_species) = NULL
+hits_vsearch_distinct = hits_vsearch_geography %>%
+  group_by(asv_id,
+           asv_total_count,
+           sample_count,
+           samples,
+           sequence,
+           method,
+           class,
+           order,
+           family,
+           genus,
+           species,
+           species_simple,
+           scientific_name,
+           local_gbif_count_family,
+           local_gbif_count_genus,
+           local_gbif_count_species,
+           iucn_reported_locally_species) %>%
+  summarize(
+    hits_n = n(),
+    p_identical_mean = mean(percent_identical) / 100,
+    p_identical_max = max(percent_identical) / 100,
+    p_identical_min = min(percent_identical) / 100,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(p_identical_max)) %>%
+  group_by(asv_id, method) %>%
+  mutate(next_pimax = lead(p_identical_max),
+         drop_to_next_pimax = p_identical_max - next_pimax) %>%
+  ungroup() %>%
+  select(asv_id,
+         asv_total_count,
+         sample_count,
+         samples,
+         sequence,
+         method,
+         class,
+         order,
+         family,
+         genus,
+         species,
+         species_simple,
+         scientific_name,
+         hits_n,
+         p_identical_max,
+         p_identical_mean,
+         p_identical_min,
+         drop_to_next_pimax,
+         everything()) %>%
+  mutate(local_species = case_when(
+    iucn_reported_locally_species %in% TRUE ~ TRUE,
+    iucn_reported_locally_species %in% FALSE ~ FALSE,
+    local_gbif_count_species > 0 ~ TRUE,
+    local_gbif_count_species == 0 ~ FALSE,
+    local_gbif_count_genus == 0 ~ FALSE,
+    local_gbif_count_family == 0 ~ FALSE,
+    .default = NA))
 
-gbif_backbone_key_species = bind_cols(gbif_query_species %>%
-                                        select(-kingdom) %>%
-                                        rename(family_q = family,
-                                               genus_q = genus,
-                                               species_q = species_simple,
-                                               scientific_name_q = scientific_name),
-                                      gbif_backbone_species) %>%
-  mutate(panama_occ_count = NA)
+unanimous = hits_vsearch_distinct %>%
+  group_by(asv_id,
+           asv_total_count,
+           sample_count,
+           samples,
+           sequence,
+           method) %>%
+  mutate(taxa_n = n()) %>%
+  ungroup() %>%
+  filter(taxa_n == 1)
 
-## genus
-gbif_query_genus = species_unique %>%
-  select(family, genus) %>%
-  filter(!is.na(genus)) %>%
-  distinct() %>%
-  mutate(kingdom = "Animalia")
-gbif_backbone_genus = name_backbone_checklist(gbif_query_genus %>%
-                                                rename(scientificName = genus))
+accept_unanimous_local = unanimous %>%
+  filter(local_species %in% TRUE)
 
-rownames(gbif_query_genus) = NULL
-rownames(gbif_backbone_genus) = NULL
-
-gbif_backbone_key_genus = bind_cols(gbif_query_genus %>%
-                                      select(-kingdom) %>%
-                                      rename(family_q = family,
-                                             genus_q = genus),
-                                    gbif_backbone_genus) %>%
-  mutate(panama_occ_count = NA)
-
-## family
-gbif_query_family = species_unique %>%
-  select(family) %>%
-  filter(!is.na(family)) %>%
-  distinct() %>%
-  mutate(kingdom = "Animalia")
-gbif_backbone_family = name_backbone_checklist(gbif_query_family %>%
-                                                 rename(scientificName = family))
-
-rownames(gbif_query_family) = NULL
-rownames(gbif_backbone_family) = NULL
-
-gbif_backbone_key_family = bind_cols(gbif_query_family %>%
-                                       select(-kingdom) %>%
-                                       rename(family_q = family),
-                                     gbif_backbone_family) %>%
-  mutate(panama_occ_count = NA)
-
-gbif_backbone_key = bind_rows(gbif_backbone_key_species,
-                              gbif_backbone_key_genus,
-                              gbif_backbone_key_family) %>%
-  filter(rank %in% c("FAMILY", "GENUS", "SPECIES"))
-
-
-print("Searching GBIF for local species occurences")
-pb = txtProgressBar(min = 1, max = nrow(gbif_backbone_key), style = 3)
-for (ii in 1:nrow(gbif_backbone_key)) {
-  if (!is.na(gbif_backbone_key$usageKey[ii])) {
-    gbif_backbone_key$panama_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
-                                                   country = "PA")
-    Sys.sleep(0.1)
-    setTxtProgressBar(pb, ii)
-  }
-}
-close(pb)
-
-write_csv(gbif_backbone_key, paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
-# gbif_backbone_key = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
-
-gbif_scarce_species = gbif_backbone_key %>%
-  filter(rank == "SPECIES",
-         !is.na(panama_occ_count),
-         panama_occ_count < 20,)
-
-# cross-reference with IUCN
-api = init_api(Sys.getenv("iucn_token"))
-
-# init empty df
-abn = assessments_by_name(api, genus = gbif_scarce_species$genus_q[1], species = gbif_scarce_species$species_q[1]) %>%
-  mutate(genus_q = gbif_scarce_species$genus_q[1],
-         species_q = gbif_scarce_species$species_q[1]) %>%
-  filter(FALSE) %>%
-  select(genus_q,
-         species_q,
-         everything())
-
-print("Cross-referencing with IUCN for GBIF-scarce species")
-pb = txtProgressBar(min = 1, max = nrow(gbif_scarce_species), style = 3)
-for (ii in 1:nrow(gbif_scarce_species)) {
-  ii_genus = gbif_scarce_species$genus_q[ii]
-  ii_species = gbif_scarce_species$species_q[ii]
-  setTxtProgressBar(pb, ii)
-  
-  # pull data
-  new_row <- tryCatch({
-    # Your main code block
-    assessments_by_name(api, genus = ii_genus, species = ii_species) %>%
-      mutate(genus_q = ii_genus,
-             species_q = ii_species) %>%
-      arrange(desc(year_published)) %>%
-      slice_head(n = 1)
-  }, error = function(e) {
-    # fail silently
-    NULL
-  })
-  
-  
-  # bind
-  if (!is.null(new_row) && nrow(new_row) > 0) {
-    abn = bind_rows(abn, new_row)
-  }
-  # sleep
-  Sys.sleep(0.5)
-}
-close(pb)
-
-write_csv(abn, paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments.csv"))
-# abn = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments.csv"))
-
-
-a_data = assessment_data_many(api,
-                              abn$assessment_id,
-                              wait_time = 0.5)
-saveRDS(a_data, file = paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments_pulled.RData"))
-# load(paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments_pulled.RData"))
-
-found_in_panama = function(assessment) {
-  locations = assessment$locations %>%
-    filter(code == "PA")
-}
-
-loc_panama = map_dfr(a_data, function(x) {
-  x$location %>%
-    filter(code == "PA") %>%
-    mutate(assessment_id = x$assessment_id$value,
-           seasonality = as.character(seasonality),
-           formerlyBred = as.character(formerlyBred))
-}) %>%
-  mutate(iucn_panama = TRUE)
-
-gbif_iucn_panama = gbif_backbone_key %>%
-  left_join(abn, by = c("genus_q", "species_q")) %>%
-  left_join(loc_panama, by = "assessment_id") %>%
-  mutate(iucn_panama = if_else(is.na(iucn_panama) & !is.na(assessment_id), FALSE, iucn_panama)) %>%
-  select(any_of(colnames(gbif_backbone_key)),
-         assessment_id,
-         iucn_panama) %>%
-  mutate(found_in_panama = case_when(
-    rank == "SPECIES" ~ iucn_panama %in% TRUE | ((panama_occ_count > 0) & !(iucn_panama %in% FALSE)),
-    rank == "GENUS" ~ panama_occ_count > 100,
-    rank == "FAMILY" ~ panama_occ_count > 200))
+check_unanimous_nonlocal = unanimous %>%
+  filter(!(local_species %in% TRUE))
 
 hits_panama = hit_table_clean %>%
   left_join(gbif_iucn_panama %>%
@@ -261,21 +157,6 @@ hits_panama = hit_table_clean %>%
          panama_occ_count_species,
          iucn_panama_species,
          found_in_panama_species)
-
-# filter(found_in_panama | is.na(found_in_panama)) %>%
-# 
-# 
-# hits_not_panama = hit_table_clean %>%
-#   left_join(gbif_iucn_panama %>%
-#               select(genus_q,
-#                      species_q,
-#                      panama_occ_count,
-#                      iucn_panama,
-#                      found_in_panama), by = c("genus" = "genus_q", "species_simple" = "species_q")) %>%
-#   filter(!found_in_panama) %>%
-#   select(any_of(colnames(hit_table_clean)),
-#          panama_occ_count,
-#          found_in_panama)
 
 find_consensus = function(hit_table, taxonomic_level, identity_th = 0, overlap_th = 0, consensus_th = 0.5, min_consensus_hits = 1, tie_handling = "error") {
   
