@@ -88,12 +88,12 @@ if (gbif_bool) {
            genus,
            specificEpithet,
            scientificName) %>%
-    distinct() %>%
     anti_join(gbif_backbone_key_species_sn, by = c("class" = "class_q",
                                                "order" = "order_q",
                                                "family" = "family_q",
                                                "scientificName" = "scientific_name_q")) %>%
-    select(-scientificName)
+    select(-scientificName) %>%
+    distinct()
   
   gbif_backbone_species_e = name_backbone_checklist(gbif_query_species_e, bucket_size = 100)
   
@@ -112,22 +112,20 @@ if (gbif_bool) {
   
   # combine specific results
   gbif_backbone_key_species = bind_rows(gbif_backbone_key_species_sn,
-                                       gbif_backbone_key_species_e)
+                                        gbif_backbone_key_species_e)
   
   ## genus
   cat("\tLooking up genus IDs\n")
   
   gbif_query_genus = taxa_unique %>%
-    select(-species_simple) %>%
+    select(class,
+           order,
+           family,
+           genus) %>%
     filter(!is.na(genus)) %>%
-    distinct() %>%
-    mutate(scientificName = genus)
+    distinct()
   
-  gbif_backbone_genus = name_backbone_checklist(gbif_query_genus %>%
-                                                  select(class,
-                                                         order,
-                                                         family,
-                                                         genus), bucket_size = 100)
+  gbif_backbone_genus = name_backbone_checklist(gbif_query_genus, bucket_size = 100)
   
   rownames(gbif_query_genus) = NULL
   rownames(gbif_backbone_genus) = NULL
@@ -136,8 +134,7 @@ if (gbif_bool) {
                                         rename(class_q = class,
                                                order_q = order,
                                                family_q = family,
-                                               genus_q = genus,
-                                               scientific_name_q = scientificName),
+                                               genus_q = genus),
                                       gbif_backbone_genus) %>%
     mutate(local_occ_count = NA) %>%
     filter(rank == "GENUS")
@@ -146,16 +143,13 @@ if (gbif_bool) {
   cat("\tLooking up family IDs\n")
   
   gbif_query_family = taxa_unique %>%
-    select(-genus,
-           -species_simple) %>%
+    select(class,
+           order,
+           family) %>%
     filter(!is.na(family)) %>%
-    distinct() %>%
-    mutate(scientificName = family)
+    distinct()
   
-  gbif_backbone_family = name_backbone_checklist(gbif_query_family %>%
-                                                   select(class,
-                                                          order,
-                                                          family), bucket_size = 100)
+  gbif_backbone_family = name_backbone_checklist(gbif_query_family, bucket_size = 100)
   
   rownames(gbif_query_family) = NULL
   rownames(gbif_backbone_family) = NULL
@@ -163,8 +157,7 @@ if (gbif_bool) {
   gbif_backbone_key_family = bind_cols(gbif_query_family %>%
                                          rename(class_q = class,
                                                 order_q = order,
-                                                family_q = family,
-                                                scientific_name_q = scientificName),
+                                                family_q = family),
                                        gbif_backbone_family) %>%
     mutate(local_occ_count = NA) %>%
     filter(rank == "FAMILY")
@@ -217,21 +210,49 @@ if (gbif_bool) {
                      "family" = "family_q",
                      "genus" = "genus_q")) %>%
     left_join(gbif_backbone_key %>%
-                filter(rank == "SPECIES") %>%
+                filter(rank %in% c("SPECIES", "SUBSPECIES"),
+                       !is.na(scientific_name_q)) %>%
                 rename(local_gbif_count_species = local_occ_count,
                        gbif_speciesKey = speciesKey) %>%
                 select(class_q,
                        order_q,
                        family_q,
-                       genus_q,
-                       species_q,
+                       scientific_name_q,
                        gbif_speciesKey,
-                       local_gbif_count_species),
+                       local_gbif_count_species) %>%
+                rename(gbif_speciesKey_s = gbif_speciesKey,
+                       local_gbif_count_species_s = local_gbif_count_species),
               by = c("class" = "class_q",
                      "order" = "order_q",
                      "family" = "family_q",
-                     "genus" = "genus_q",
-                     "species_simple" = "species_q"))
+                     "scientificName" = "scientific_name_q")) %>%
+      left_join(gbif_backbone_key %>%
+                  filter(rank %in% c("SPECIES", "SUBSPECIES"),
+                         !is.na(specific_epithet_q)) %>%
+                  rename(local_gbif_count_species = local_occ_count,
+                         gbif_speciesKey = speciesKey) %>%
+                  select(class_q,
+                         order_q,
+                         family_q,
+                         genus_q,
+                         specific_epithet_q,
+                         gbif_speciesKey,
+                         local_gbif_count_species) %>%
+                  rename(gbif_speciesKey_e = gbif_speciesKey,
+                         local_gbif_count_species_e = local_gbif_count_species) %>%
+                  distinct(),
+                by = c("class" = "class_q",
+                       "order" = "order_q",
+                       "family" = "family_q",
+                       "genus" = "genus_q",
+                       "specificEpithet" = "specific_epithet_q")) %>%
+      mutate(gbif_speciesKey = coalesce(gbif_speciesKey_s, gbif_speciesKey_e),
+             local_gbif_count_species = coalesce(local_gbif_count_species_s, local_gbif_count_species_e)) %>%
+      select(-gbif_speciesKey_s,
+             -gbif_speciesKey_e,
+             -local_gbif_count_species_s,
+             -local_gbif_count_species_e)
+    
   cat("Done.\n")
 }
 
@@ -304,9 +325,6 @@ if (iucn_bool) {
   iucn_assessment_species_e = fetch_iucn_assessments(api, iucn_query_species_e) %>%
     rename(specific_epithet_q = species_q)
   
-  peace = janitor::get_dupes(iucn_assessment_species, genus_q, species_q)
-  peace = janitor::get_dupes(iucn_assessment_species_e, genus_q, species_q)
-  
   # combine specific results
   iucn_assessment_raw = bind_rows(iucn_assessment_species,
                               iucn_assessment_species_e) %>%
@@ -349,14 +367,34 @@ if (iucn_bool) {
   iucn_assessment_local = iucn_assessment %>%
     left_join(local_assessments, by = "assessment_id") %>%
     rename(iucn_taxon_id = sis_taxon_id) %>%
-    group_by(genus_q, species_q, iucn_taxon_id) %>%
+    group_by(genus_q, species_q, specific_epithet_q, iucn_taxon_id) %>%
     summarize(iucn_reported_locally_species = if_else(any(!is.na(code)), TRUE, FALSE),
               .groups = "drop")
   
+  iucn_assessment_local_species = iucn_assessment_local %>%
+    filter(!is.na(species_q)) %>%
+    select(-specific_epithet_q)
+  
+  iucn_assessment_local_species_e = iucn_assessment_local %>%
+    filter(!is.na(specific_epithet_q)) %>%
+    select(-species_q)
+  
   # join with taxa_out
   taxa_out = taxa_out %>%
-    left_join(iucn_assessment_local, by = c("genus" = "genus_q",
-                                           "species_simple" = "species_q"))
+    left_join(iucn_assessment_local_species %>%
+                rename(iucn_taxon_id_s = iucn_taxon_id,
+                       iucn_reported_locally_species_s = iucn_reported_locally_species), by = c("genus" = "genus_q",
+                                                                                                "species_simple" = "species_q")) %>%
+    left_join(iucn_assessment_local_species_e %>%
+                rename(iucn_taxon_id_e = iucn_taxon_id,
+                       iucn_reported_locally_species_e = iucn_reported_locally_species), by = c("genus" = "genus_q",
+                                                      "specificEpithet" = "specific_epithet_q")) %>%
+    mutate(iucn_taxon_id = coalesce(iucn_taxon_id_s, iucn_taxon_id_e),
+           iucn_reported_locally_species = coalesce(iucn_reported_locally_species_s, iucn_reported_locally_species_e)) %>%
+    select(-iucn_taxon_id_s,
+           -iucn_taxon_id_e,
+           -iucn_reported_locally_species_s,
+           -iucn_reported_locally_species_e)
   
   cat("Done.\n")
 }
