@@ -8,7 +8,8 @@ library(rgbif)
 library(yaml)
 
 # config
-setwd("16S Process TEST")
+# setwd("16S Process TEST")
+print(getwd())
 env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
 iucn_api_token = Sys.getenv("iucn_token")
 
@@ -22,17 +23,14 @@ country_codes = config$geography$country_codes
 taxa_raw = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered.csv"))
 
 taxa_clean = taxa_raw %>%
-  mutate(
-    species_simple = gsub(" .*", "", species),
-    species_simple = if_else(species_simple %in% c("sp.",
-                                                   "aff.",
-                                                   "cf."),
-                             NA,
-                             species_simple)
-  )
+  mutate(species_simple = species,
+         species_simple = if_else(species_simple %in% c("sp.",
+                                                        "aff.",
+                                                        "cf."), NA, species_simple))
 
 # copy for output
-taxa_out = taxa_clean
+taxa_out = taxa_clean %>%
+  mutate(country_codes = paste(country_codes, collapse = ", "))
 
 # get unique for querying
 taxa_unique = taxa_clean %>%
@@ -42,7 +40,7 @@ taxa_unique = taxa_clean %>%
 
 # pull from gbif
 if (gbif_bool) {
-  cat("Query GBIF for occurences in target countries (families, genuses & species)...\n")
+  cat("\nQuery GBIF for occurences in target countries (families, genuses & species)...\n")
   
   ## species
   cat("\tLooking up species IDs\n")
@@ -56,7 +54,11 @@ if (gbif_bool) {
     filter(!is.na(species)) %>%
     distinct()
   
-  gbif_backbone_species = name_backbone_checklist(gbif_query_species)
+  gbif_backbone_species = name_backbone_checklist(gbif_query_species %>%
+                                                    select(class,
+                                                           order,
+                                                           family,
+                                                           scientificName), bucket_size = 100)
   
   rownames(gbif_query_species) = NULL
   rownames(gbif_backbone_species) = NULL
@@ -81,7 +83,11 @@ if (gbif_bool) {
     distinct() %>%
     mutate(scientificName = genus)
   
-  gbif_backbone_genus = name_backbone_checklist(gbif_query_genus)
+  gbif_backbone_genus = name_backbone_checklist(gbif_query_genus %>%
+                                                  select(class,
+                                                         order,
+                                                         family,
+                                                         genus), bucket_size = 100)
   
   rownames(gbif_query_genus) = NULL
   rownames(gbif_backbone_genus) = NULL
@@ -106,7 +112,10 @@ if (gbif_bool) {
     distinct() %>%
     mutate(scientificName = family)
   
-  gbif_backbone_family = name_backbone_checklist(gbif_query_family)
+  gbif_backbone_family = name_backbone_checklist(gbif_query_family %>%
+                                                   select(class,
+                                                          order,
+                                                          family), bucket_size = 100)
   
   rownames(gbif_query_family) = NULL
   rownames(gbif_backbone_family) = NULL
@@ -125,14 +134,14 @@ if (gbif_bool) {
                                 gbif_backbone_key_genus,
                                 gbif_backbone_key_family)
   
-  occ_search
-  
   cat("\tQuerying local taxa occurences\n")
+  country_codes_gbif = paste0(country_codes, collapse = ";")
+  
   pb = txtProgressBar(min = 1, max = nrow(gbif_backbone_key), style = 3)
   for (ii in 1:nrow(gbif_backbone_key)) {
     if (!is.na(gbif_backbone_key$usageKey[ii])) {
       gbif_backbone_key$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
-                                                         country = country_codes)
+                                                         country = country_codes_gbif)
       Sys.sleep(0.1)
       setTxtProgressBar(pb, ii)
     }
@@ -185,13 +194,10 @@ if (gbif_bool) {
                      "genus" = "genus_q",
                      "species_simple" = "species_q"))
   
-  
-  # write_csv(gbif_backbone_key, paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
-  # gbif_backbone_key = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_GBIF_panama_occurence.csv"))
 }
 
 if (iucn_bool) {
-  cat("Query IUCN for occurences in target countries (species only)...\n")
+  cat("\nQuery IUCN for occurences in target countries (species only)...\n")
   
   # cross-reference with IUCN
   api = init_api(iucn_api_token)
@@ -255,13 +261,13 @@ if (iucn_bool) {
              formerlyBred = as.character(formerlyBred))
   }
   
-  local_assessments = map_dfr(iucn_assessment_data, found_locally)
+  local_assessments = map_dfr(iucn_assessment_data, f_found_locally)
   
   iucn_assessment_local = iucn_assessment %>%
     left_join(local_assessments, by = "assessment_id") %>%
     rename(iucn_taxon_id = sis_taxon_id) %>%
     group_by(genus_q, species_q, iucn_taxon_id) %>%
-    summarize(iucn_reported_locally = if_else(any(!is.na(code)), TRUE, FALSE),
+    summarize(iucn_reported_locally_species = if_else(any(!is.na(code)), TRUE, FALSE),
               .groups = "drop")
   
   # join with taxa_out
