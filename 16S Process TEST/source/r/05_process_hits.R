@@ -3,13 +3,11 @@
 
 ## Load in Libraries (install them in you need them.)
 library(tidyverse)
-library(iucnredlist)
-library(rgbif)
 library(yaml)
 
 
 # manual runs
-setwd("16S Process TEST")
+# setwd("16S Process TEST")
 env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
 
 # read in config file
@@ -43,7 +41,64 @@ hits_vsearch_geography = hits_vsearch_clean %>%
                               "local_gbif_count_species",
                               "iucn_reported_locally_species"))), by = "taxon_id")
 
-hits_vsearch_distinct = hits_vsearch_geography %>%
+hits_group_calc = function(hits_df, group_cols) {
+  hits_df %>%
+    group_by_at(group_cols) %>%
+    summarize(
+      hits_n = n(),
+      p_identical_mean = mean(percent_identical) / 100,
+      p_identical_max = max(percent_identical) / 100,
+      p_identical_min = min(percent_identical) / 100,
+      .groups = "drop"
+    ) %>%
+    arrange(desc(asv_total_count), asv_id, method, desc(p_identical_max)) %>%
+    group_by(asv_id, method) %>%
+    mutate(next_pimax = lead(p_identical_max),
+           drop_to_next_pimax = p_identical_max - next_pimax,
+           pimax_rank = row_number()) %>%
+    ungroup() %>%
+    select(all_of(group_cols),
+           hits_n,
+           p_identical_max,
+           p_identical_mean,
+           p_identical_min,
+           drop_to_next_pimax,
+           everything())
+}
+
+hits_vsearch_local = hits_vsearch_geography %>%
+  mutate(local_species = case_when(
+    iucn_reported_locally_species %in% TRUE ~ TRUE,
+    iucn_reported_locally_species %in% FALSE ~ FALSE,
+    local_gbif_count_species > 0 ~ TRUE,
+    local_gbif_count_species == 0 ~ FALSE,
+    local_gbif_count_genus == 0 ~ FALSE,
+    local_gbif_count_family == 0 ~ FALSE,
+    .default = NA)) %>%
+  filter(!(local_species %in% FALSE))
+
+hits_vsearch_local_species = hits_group_calc(hits_vsearch_local,
+                                             c("asv_id",
+                                               "asv_total_count",
+                                               "sample_count",
+                                               "samples",
+                                               "sequence",
+                                               "method",
+                                               "class",
+                                               "order",
+                                               "family",
+                                               "genus",
+                                               "species",
+                                               "species_simple",
+                                               "scientific_name",
+                                               "local_gbif_count_family",
+                                               "local_gbif_count_genus",
+                                               "local_gbif_count_species",
+                                               "iucn_reported_locally_species"))
+
+#### resume
+
+hits_vsearch_species = hits_vsearch_geography %>%
   group_by(asv_id,
            asv_total_count,
            sample_count,
@@ -71,7 +126,8 @@ hits_vsearch_distinct = hits_vsearch_geography %>%
   arrange(desc(asv_total_count), asv_id, method, desc(p_identical_max)) %>%
   group_by(asv_id, method) %>%
   mutate(next_pimax = lead(p_identical_max),
-         drop_to_next_pimax = p_identical_max - next_pimax) %>%
+         drop_to_next_pimax = p_identical_max - next_pimax,
+         pimax_rank = row_number()) %>%
   ungroup() %>%
   select(asv_id,
          asv_total_count,
@@ -101,23 +157,104 @@ hits_vsearch_distinct = hits_vsearch_geography %>%
     local_gbif_count_family == 0 ~ FALSE,
     .default = NA))
 
-unanimous = hits_vsearch_distinct %>%
+# # unanimous
+# unanimous_species = hits_vsearch_species %>%
+#   group_by(asv_id,
+#            asv_total_count,
+#            sample_count,
+#            samples,
+#            sequence,
+#            method) %>%
+#   mutate(taxa_n = n()) %>%
+#   ungroup() %>%
+#   filter(taxa_n == 1)
+# 
+# accept_unanimous_species_local = unanimous_species %>%
+#   filter(local_species %in% TRUE)
+# 
+# check_unanimous_species_nonlocal = unanimous_species %>%
+#   filter(!(local_species %in% TRUE))
+
+# unambiguous species
+unambiguous_species = hits_vsearch_species %>%
+  filter(pimax_rank == 1,
+         p_identical_max >= 0.95,
+         is.na(drop_to_next_pimax) | drop_to_next_pimax >= 0.03)
+
+accept_unambiguous_species_local = unambiguous_species %>%
+  filter(local_species %in% TRUE)
+
+check_unambiguous_species_nonlocal = unambiguous_species %>%
+  filter(!(local_species %in% TRUE))
+
+remainder = hits_vsearch_species %>%
+  anti_join(unambiguous_species, by = c("asv_id", "method"))
+
+# unambiguous genus
+hits_vsearch_genus = hits_vsearch_geography %>%
+  anti_join(unambiguous_species, by = c("asv_id", "method")) %>%
   group_by(asv_id,
            asv_total_count,
            sample_count,
            samples,
            sequence,
-           method) %>%
-  mutate(taxa_n = n()) %>%
+           method,
+           class,
+           order,
+           family,
+           genus,
+           local_gbif_count_family,
+           local_gbif_count_genus) %>%
+  summarize(
+    hits_n = n(),
+    p_identical_mean = mean(percent_identical) / 100,
+    p_identical_max = max(percent_identical) / 100,
+    p_identical_min = min(percent_identical) / 100,
+    .groups = "drop"
+  ) %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(p_identical_max)) %>%
+  group_by(asv_id, method) %>%
+  mutate(next_pimax = lead(p_identical_max),
+         drop_to_next_pimax = p_identical_max - next_pimax,
+         pimax_rank = row_number()) %>%
   ungroup() %>%
-  filter(taxa_n == 1)
+  select(asv_id,
+         asv_total_count,
+         sample_count,
+         samples,
+         sequence,
+         method,
+         class,
+         order,
+         family,
+         genus,
+         hits_n,
+         p_identical_max,
+         p_identical_mean,
+         p_identical_min,
+         drop_to_next_pimax,
+         everything()) %>%
+  mutate(local_genus = local_gbif_count_genus > 50)
 
-accept_unanimous_local = unanimous %>%
-  filter(local_species %in% TRUE)
+unambiguous_genus = hits_vsearch_genus %>%
+  filter(pimax_rank == 1,
+         p_identical_max >= 0.90,
+         is.na(drop_to_next_pimax) | drop_to_next_pimax >= 0.03)
 
-check_unanimous_nonlocal = unanimous %>%
-  filter(!(local_species %in% TRUE))
+accept_unambiguous_genus_local = unambiguous_genus %>%
+  filter(local_genus %in% TRUE)
 
+check_unambiguous_genus_nonlocal = unambiguous_genus %>%
+  filter(!(local_genus %in% TRUE))
+
+remainder = hits_vsearch_species %>%
+  anti_join(unambiguous_species, by = c("asv_id", "method")) %>%
+  anti_join(unambiguous_genus, by = c("asv_id", "method"))
+
+
+
+
+#############
 hits_panama = hit_table_clean %>%
   left_join(gbif_iucn_panama %>%
               filter(rank == "SPECIES") %>%
