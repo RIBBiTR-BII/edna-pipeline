@@ -23,10 +23,19 @@ country_codes = config$geography$country_codes
 taxa_raw = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered.csv"))
 
 taxa_clean = taxa_raw %>%
-  mutate(species_simple = species,
-         species_simple = if_else(species_simple %in% c("sp.",
-                                                        "aff.",
-                                                        "cf."), NA, species_simple))
+  mutate(
+         scientificName = case_when(
+           !is.na(genus) & !is.na(species) ~ paste0(genus, " ", species),
+           !is.na(genus) & is.na(species) ~ genus,
+           .default = NA),
+         species_simple = species,
+         species_simple = if_else(grepl("^sp\\.", species_simple), NA, species_simple),
+         species_simple = gsub(" x .*", "", species_simple),
+         species_simple = gsub("^cf\\. *", "", species_simple),
+         species_simple = gsub("^aff\\. *", "", species_simple),
+         specificEpithet = gsub(" .*", "", species_simple),
+         intraspecificEpithet = gsub("^[^ ]+ ?", "", species_simple),
+         intraspecificEpithet = if_else(intraspecificEpithet == "", NA, intraspecificEpithet))
 
 # copy for output
 taxa_out = taxa_clean %>%
@@ -34,9 +43,11 @@ taxa_out = taxa_clean %>%
 
 # get unique for querying
 taxa_unique = taxa_clean %>%
-  select(class, order, family, genus, species_simple) %>%
+  select(-taxon_id,
+         -kingdom,
+         -phylum) %>%
   distinct() %>%
-  arrange(class, order, family, genus, species_simple)
+  arrange(class, order, family, genus, species)
 
 # pull from gbif
 if (gbif_bool) {
@@ -45,34 +56,63 @@ if (gbif_bool) {
   ## species
   cat("\tLooking up species IDs\n")
   
-  gbif_query_species = taxa_unique %>%
-    mutate(scientificName = case_when(
-      !is.na(genus) & !is.na(species_simple) ~ paste0(genus, " ", species_simple),
-      !is.na(genus) & is.na(species_simple) ~ genus,
-      .default = NA)) %>%
-    rename(species = species_simple) %>%
+  # by full scientific name
+  gbif_query_species_sn = taxa_unique %>%
     filter(!is.na(species)) %>%
+    select(class,
+           order,
+           family,
+           scientificName) %>%
     distinct()
   
-  gbif_backbone_species = name_backbone_checklist(gbif_query_species %>%
-                                                    select(class,
-                                                           order,
-                                                           family,
-                                                           scientificName), bucket_size = 100)
+  gbif_backbone_species_sn = name_backbone_checklist(gbif_query_species_sn, bucket_size = 100)
   
   rownames(gbif_query_species) = NULL
   rownames(gbif_backbone_species) = NULL
   
-  gbif_backbone_key_species = bind_cols(gbif_query_species %>%
+  gbif_backbone_key_species_sn = bind_cols(gbif_query_species_sn %>%
                                           rename(class_q = class,
                                                  order_q = order,
                                                  family_q = family,
-                                                 genus_q = genus,
-                                                 species_q = species,
                                                  scientific_name_q = scientificName),
-                                        gbif_backbone_species) %>%
+                                        gbif_backbone_species_sn) %>%
     mutate(local_occ_count = NA) %>%
-    filter(rank == "SPECIES")
+    filter(rank %in% c("SPECIES", "SUBSPECIES"))
+  
+  # by specific epithet, for those which returned NA
+  gbif_query_species_e = taxa_unique %>%
+    filter(!is.na(specificEpithet)) %>%
+    select(class,
+           order,
+           family,
+           genus,
+           specificEpithet,
+           scientificName) %>%
+    distinct() %>%
+    anti_join(gbif_backbone_key_species_sn, by = c("class" = "class_q",
+                                               "order" = "order_q",
+                                               "family" = "family_q",
+                                               "scientificName" = "scientific_name_q")) %>%
+    select(-scientificName)
+  
+  gbif_backbone_species_e = name_backbone_checklist(gbif_query_species_e, bucket_size = 100)
+  
+  rownames(gbif_query_species_e) = NULL
+  rownames(gbif_backbone_species_e) = NULL
+  
+  gbif_backbone_key_species_e = bind_cols(gbif_query_species_e %>%
+                                            rename(class_q = class,
+                                                   order_q = order,
+                                                   family_q = family,
+                                                   genus_q = genus,
+                                                   specific_epithet_q = specificEpithet),
+                                          gbif_backbone_species_e) %>%
+    mutate(local_occ_count = NA) %>%
+    filter(rank %in% c("SPECIES", "SUBSPECIES"))
+  
+  # combine specific results
+  gbif_backbone_key_species = bind_rows(gbif_backbone_key_species_sn,
+                                       gbif_backbone_key_species_e)
   
   ## genus
   cat("\tLooking up genus IDs\n")
@@ -147,7 +187,6 @@ if (gbif_bool) {
     }
   }
   close(pb)
-  cat("Done.\n")
   
   # join with taxa_out
   taxa_out = taxa_out %>%
@@ -193,59 +232,103 @@ if (gbif_bool) {
                      "family" = "family_q",
                      "genus" = "genus_q",
                      "species_simple" = "species_q"))
-  
+  cat("Done.\n")
 }
 
 if (iucn_bool) {
   cat("\nQuery IUCN for occurences in target countries (species only)...\n")
   
-  # cross-reference with IUCN
   api = init_api(iucn_api_token)
   
+  # define assessment function
+  fetch_iucn_assessments = function(api, query_df, sleep_s = 0.5) {
+    # init empty assessment df
+    iucn_assessment = assessments_by_name(api, genus = query_df$genus[1], species = query_df$species[1]) %>%
+      mutate(genus_q = query_df$genus[1],
+             species_q = query_df$species[1]) %>%
+      filter(FALSE) %>%
+      select(genus_q,
+             species_q,
+             everything())
+    
+    cat("\tLooking up species IDs\n")
+    pb = txtProgressBar(min = 1, max = nrow(query_df), style = 3)
+    for (ii in 1:nrow(query_df)) {
+      ii_genus = query_df$genus[ii]
+      ii_species = query_df$species[ii]
+      setTxtProgressBar(pb, ii)
+      
+      # pull data
+      new_row <- tryCatch({
+        assessments_by_name(api, genus = ii_genus, species = ii_species) %>%
+          mutate(genus_q = ii_genus,
+                 species_q = ii_species) %>%
+          slice_max(order_by = year_published, n = 1)
+      }, error = function(e) {
+        # fail silently
+        NULL
+      })
+      
+      # bind
+      if (!is.null(new_row) && nrow(new_row) > 0) {
+        iucn_assessment = bind_rows(iucn_assessment, new_row)
+      }
+      # sleep to avoid rate limiting
+      Sys.sleep(sleep_s)
+    }
+    close(pb)
+    
+    return(iucn_assessment)
+  }
+  
+  
+  ## species
   iucn_query_species = taxa_unique %>%
-    rename(species = species_simple) %>%
+    select(genus, species) %>%
     filter(!is.na(genus) & !is.na(species)) %>%
     distinct()
+
+  iucn_assessment_species = fetch_iucn_assessments(api, iucn_query_species)
   
-  # init empty assessment df
-  iucn_assessment = assessments_by_name(api, genus = iucn_query_species$genus[1], species = iucn_query_species$species[1]) %>%
-    mutate(genus_q = iucn_query_species$genus[1],
-           species_q = iucn_query_species$species[1]) %>%
-    filter(FALSE) %>%
+  ## specific epithet for species returned as null
+  iucn_query_species_e = taxa_unique %>%
+    anti_join(iucn_assessment_species,
+              by = c("genus" = "genus_q",
+                     "species" = "species_q")) %>%
+    filter(!is.na(genus) & !is.na(specificEpithet),
+           species != specificEpithet) %>%
+    select(genus, specificEpithet) %>%
+    distinct() %>%
+    rename(species = specificEpithet)
+  
+  iucn_assessment_species_e = fetch_iucn_assessments(api, iucn_query_species_e) %>%
+    rename(specific_epithet_q = species_q)
+  
+  peace = janitor::get_dupes(iucn_assessment_species, genus_q, species_q)
+  peace = janitor::get_dupes(iucn_assessment_species_e, genus_q, species_q)
+  
+  # combine specific results
+  iucn_assessment_raw = bind_rows(iucn_assessment_species,
+                              iucn_assessment_species_e) %>%
     select(genus_q,
            species_q,
+           specific_epithet_q,
            everything())
   
-  cat("\tLooking up species IDs\n")
-  pb = txtProgressBar(min = 1, max = nrow(iucn_query_species), style = 3)
-  for (ii in 1:nrow(iucn_query_species)) {
-    ii_genus = iucn_query_species$genus[ii]
-    ii_species = iucn_query_species$species[ii]
-    setTxtProgressBar(pb, ii)
-    
-    # pull data
-    new_row <- tryCatch({
-      assessments_by_name(api, genus = ii_genus, species = ii_species) %>%
-        mutate(genus_q = ii_genus,
-               species_q = ii_species) %>%
-        slice_max(order_by = year_published, n = 1)
-    }, error = function(e) {
-      # fail silently
-      NULL
-    })
-    
-    # bind
-    if (!is.null(new_row) && nrow(new_row) > 0) {
-      iucn_assessment = bind_rows(iucn_assessment, new_row)
-    }
-    # sleep to avoid rate limiting
-    Sys.sleep(0.5)
-  }
-  close(pb)
+  # get rid of duplicates
+  iucn_assessment = iucn_assessment_raw %>%
+    distinct() %>%
+    mutate(scopes_priority = case_match(scopes_description_en,
+                                        "Global" ~ "1_Global",
+                                        "Gulf of Mexico" ~ "2_Gulf of Mexico",
+                                        .default = paste0("3_", scopes_description_en))) %>%
+    group_by(genus_q, species_q, specific_epithet_q) %>%
+    arrange(desc(latest), scopes_priority, by_group = TRUE) %>%
+    slice_head(n = 1) %>%
+    ungroup() %>%
+    select(-scopes_priority)
   
- #  write_csv(iucn_assessment, paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments.csv"))
-  # iucn_assessment = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_IUCN_species_assessments.csv"))
-  
+  # fetch assessment data
   cat("\tQuerying local taxa occurences\n")
   iucn_assessment_data = assessment_data_many(api,
                                               iucn_assessment$assessment_id,
@@ -274,6 +357,8 @@ if (iucn_bool) {
   taxa_out = taxa_out %>%
     left_join(iucn_assessment_local, by = c("genus" = "genus_q",
                                            "species_simple" = "species_q"))
+  
+  cat("Done.\n")
 }
 
 write.csv(taxa_out, paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered_geography.csv"), row.names = FALSE)
