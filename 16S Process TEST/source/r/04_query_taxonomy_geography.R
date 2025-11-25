@@ -191,7 +191,7 @@ if (gbif_bool) {
                        order_q,
                        family_q,
                        gbif_familyKey,
-                       local_gbif_count_family),
+                       gbif_count_family_local),
               by = c("class" = "class_q",
                      "order" = "order_q",
                      "family" = "family_q")) %>%
@@ -204,7 +204,7 @@ if (gbif_bool) {
                        family_q,
                        genus_q,
                        gbif_genusKey,
-                       local_gbif_count_genus),
+                       gbif_count_genus_local),
               by = c("class" = "class_q",
                      "order" = "order_q",
                      "family" = "family_q",
@@ -247,7 +247,7 @@ if (gbif_bool) {
                        "genus" = "genus_q",
                        "specificEpithet" = "specific_epithet_q")) %>%
       mutate(gbif_speciesKey = coalesce(gbif_speciesKey_s, gbif_speciesKey_e),
-             local_gbif_count_species = coalesce(local_gbif_count_species_s, local_gbif_count_species_e)) %>%
+             gbif_count_species_local = coalesce(local_gbif_count_species_s, local_gbif_count_species_e)) %>%
       select(-gbif_speciesKey_s,
              -gbif_speciesKey_e,
              -local_gbif_count_species_s,
@@ -368,7 +368,7 @@ if (iucn_bool) {
     left_join(local_assessments, by = "assessment_id") %>%
     rename(iucn_taxon_id = sis_taxon_id) %>%
     group_by(genus_q, species_q, specific_epithet_q, iucn_taxon_id) %>%
-    summarize(iucn_reported_locally_species = if_else(any(!is.na(code)), TRUE, FALSE),
+    summarize(iucn_reported_species_local = if_else(any(!is.na(code)), TRUE, FALSE),
               .groups = "drop")
   
   iucn_assessment_local_species = iucn_assessment_local %>%
@@ -383,18 +383,18 @@ if (iucn_bool) {
   taxa_out = taxa_out %>%
     left_join(iucn_assessment_local_species %>%
                 rename(iucn_taxon_id_s = iucn_taxon_id,
-                       iucn_reported_locally_species_s = iucn_reported_locally_species), by = c("genus" = "genus_q",
+                       iucn_reported_species_local_s = iucn_reported_species_local), by = c("genus" = "genus_q",
                                                                                                 "species_simple" = "species_q")) %>%
     left_join(iucn_assessment_local_species_e %>%
                 rename(iucn_taxon_id_e = iucn_taxon_id,
-                       iucn_reported_locally_species_e = iucn_reported_locally_species), by = c("genus" = "genus_q",
+                       iucn_reported_species_local_e = iucn_reported_species_local), by = c("genus" = "genus_q",
                                                       "specificEpithet" = "specific_epithet_q")) %>%
     mutate(iucn_taxon_id = coalesce(iucn_taxon_id_s, iucn_taxon_id_e),
-           iucn_reported_locally_species = coalesce(iucn_reported_locally_species_s, iucn_reported_locally_species_e)) %>%
+           iucn_reported_species_local = coalesce(iucn_reported_species_local_s, iucn_reported_species_local_e)) %>%
     select(-iucn_taxon_id_s,
            -iucn_taxon_id_e,
-           -iucn_reported_locally_species_s,
-           -iucn_reported_locally_species_e)
+           -iucn_reported_species_local_s,
+           -iucn_reported_species_local_e)
   
   cat("Done.\n")
 }
