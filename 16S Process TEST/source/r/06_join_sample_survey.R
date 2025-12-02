@@ -40,16 +40,16 @@ feature_table =
 
 feature_long = feature_table %>%
   pivot_longer(cols = -asv_id,
-               names_to = "edna_sample_name",
+               names_to = "illumina_sample_name",
                values_to = "asv_count") %>%
   filter(asv_count != 0) %>%
-  arrange(edna_sample_name) %>%
-  select(edna_sample_name,
+  arrange(illumina_sample_name) %>%
+  select(illumina_sample_name,
          asv_id,
          asv_count)
 
 unique_samples = feature_long %>%
-  select(edna_sample_name) %>%
+  select(illumina_sample_name) %>%
   distinct()
 
 # panama survey data
@@ -60,4 +60,14 @@ edna_panama = db_edna %>%
   left_join(db_region, by = "region_id") %>%
   left_join(db_country, by = "country_id") %>%
   filter(country == "panama") %>%
-  collect()
+  select(any_of(colnames(db_edna)),
+         transect,
+         site,
+         date) %>%
+  collect() %>%
+  # fix sample name format
+  mutate(illumina_sample_name = gsub("edna_", "", illumina_sample_name, ignore.case = TRUE),
+         illumina_sample_name = gsub("(PAN_\\d{2})_", "\\1-", illumina_sample_name))
+
+samples_joined = unique_samples %>%
+  left_join(edna_panama, by = "illumina_sample_name")
