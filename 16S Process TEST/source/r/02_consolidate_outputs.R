@@ -3,14 +3,14 @@
 
 ## Load in Libraries (install as needed)
 library(tidyverse)
-# library(phylotools)
+library(phylotools)
 library(readxl)
 library(openxlsx)
 library(yaml)
 
 # 
 # # # manual runs
-# env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
+# env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
 # setwd("16S Process TEST")
 
 # inherit env_config_path
@@ -93,9 +93,10 @@ consensus_table_blast =
                                           "/data/taxonomy.tsv"),
              header = TRUE,
              sep = '\t') %>%
-  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";", fill = "right") %>%
   mutate(method = "blast",
-         across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+         across(everything(), ~ str_remove(., "^[a-z]__")),
+         k = if_else(k == "Unassigned", NA, k)) %>%
   rename(asv_id = Feature.ID,
          kingdom = k,
          phylum = p,
