@@ -12,7 +12,7 @@ library(ribbitrrr)
 
 # manual runs
 # setwd("16S Process TEST")
-env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
+env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
 
 # read in config file
 config = read_yaml(env_config_path)

@@ -8,7 +8,7 @@ library(yaml)
 
 # manual runs
 # setwd("16S Process TEST")
-env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
+env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
 
 # read in config file
 config = read_yaml(env_config_path)
@@ -244,46 +244,47 @@ accept_species_100_local_unanimous = hits_vsearch_geography %>%
   mutate(tie = n() > 1) %>%
   ungroup()
 
-acceptable_species_ties = c("horribilis",
-                            "marina",
-                            "molossus",
-                            "coibensis",
-                            "fleischmanni",
-                            "tatayoi")
-
-resolved_ties = accept_species_100_local_unanimous %>%
-  filter(tie & species %in% acceptable_species_ties) %>%
-  group_by(asv_id) %>%
-  mutate(tie_count = n()) %>%
-  ungroup() %>%
-  filter(tie_count > 1) %>%
-  group_by(asv_id,
-           asv_total_count,
-           sample_count,
-           samples,
-           sequence,
-           class,
-           order,
-           family,
-           genus) %>%
-  summarise(species = paste0(species, collapse = "/"),
-            p_identical_mean = sum(p_identical_mean * n_hits) / sum(n_hits),
-            n_hits = sum(n_hits),
-            p_identical_max = max(p_identical_max),
-            p_identical_min = min(p_identical_min),
-            seq_overlap_max = max(seq_overlap_max),
-            gbif_count_family_local = first(gbif_count_family_local),
-            gbif_count_genus_local = first(gbif_count_genus_local),
-            gbif_count_species_local = sum(gbif_count_species_local),
-            iucn_reported_species_local = NA,
-            local_species = TRUE,
-            method = "0_species_100p_local_unanimous",
-            tie = TRUE,
-            .groups = "drop")
+# acceptable_species_ties = c("horribilis",
+#                             "marina",
+#                             "molossus",
+#                             "coibensis",
+#                             "fleischmanni",
+#                             "tatayoi")
+# 
+# resolved_ties = accept_species_100_local_unanimous %>%
+#   filter(tie & species %in% acceptable_species_ties) %>%
+#   group_by(asv_id) %>%
+#   mutate(tie_count = n()) %>%
+#   ungroup() %>%
+#   filter(tie_count > 1) %>%
+#   group_by(asv_id,
+#            asv_total_count,
+#            sample_count,
+#            samples,
+#            sequence,
+#            class,
+#            order,
+#            family,
+#            genus) %>%
+#   summarise(species = paste0(species, collapse = "/"),
+#             p_identical_mean = sum(p_identical_mean * n_hits) / sum(n_hits),
+#             n_hits = sum(n_hits),
+#             p_identical_max = max(p_identical_max),
+#             p_identical_min = min(p_identical_min),
+#             seq_overlap_max = max(seq_overlap_max),
+#             gbif_count_family_local = first(gbif_count_family_local),
+#             gbif_count_genus_local = first(gbif_count_genus_local),
+#             gbif_count_species_local = sum(gbif_count_species_local),
+#             iucn_reported_species_local = NA,
+#             local_species = TRUE,
+#             method = "0_species_100p_local_unanimous",
+#             tie = TRUE,
+#             .groups = "drop")
 
 accept_species_100_local_unanimous_resolved = accept_species_100_local_unanimous %>%
-  filter(!tie) %>%
-  bind_rows(resolved_ties)
+  filter(!tie)
+# %>%
+#   bind_rows(resolved_ties)
 
 accept_species_100_consensus_75 = find_consensus(hits_vsearch_geography %>%
                                                 filter(!is.na(order),
@@ -370,7 +371,7 @@ accept_order_50_consensus_75 = find_consensus(hits_vsearch_geography,
                                            # anti_join(accept_genus_local_unambiguous, by = "asv_id") %>%
                                            # anti_join(accept_family_local_unambiguous, by = "asv_id") %>%
                                            # anti_join(accept_order_unambiguous, by = "asv_id"),
-                                           "order", identity_th = 0.50, consensus_th = 0.75, tie_handling = "drop") %>%
+                                           "order", identity_th = 0.499, consensus_th = 0.75, tie_handling = "drop") %>%
   mutate(method = "6_order_50p_consensus_75") %>%
   left_join(hits_vsearch_geography %>%
               select(asv_id,
@@ -426,7 +427,7 @@ iucn_no_gbif_no = taxa_geography %>%
          gbif_count_species_local == 0) %>%
   arrange(desc(gbif_count_species_local))
 
-nonlocal_100p = accept_species_100_consensus %>%
+nonlocal_100p = accept_species_100_consensus_75 %>%
   left_join(taxa_geography %>%
               select(-taxon_id) %>%
               distinct(), by = c("class", "order", "family", "genus", "species")) %>%

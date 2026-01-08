@@ -10,7 +10,7 @@ library(yaml)
 # config
 # setwd("16S Process TEST")
 print(getwd())
-env_config_path = "runs/2025-11-07_panama/output/metadata/config.yml"
+env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
 iucn_api_token = Sys.getenv("iucn_token")
 
 # read in config file
@@ -41,6 +41,47 @@ taxa_clean = taxa_raw %>%
 taxa_out = taxa_clean %>%
   mutate(country_codes = paste(country_codes, collapse = ", "))
 
+# # identify country(s)
+# feature_table =
+#   read_tsv(paste0(config$run$runDir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+#   as.data.frame() %>%
+#   rename("asv_id" = "#OTU ID") %>%
+#   arrange(asv_id)
+# 
+# 
+# all_ids = feature_long = feature_table %>%
+#   pivot_longer(cols = -asv_id,
+#                names_to = "illumina_sample_raw",
+#                values_to = "asv_count") %>%
+#   mutate(illumina_sample_name = gsub("-B$", "", illumina_sample_raw),
+#          illumina_sample_name = gsub("(_\\d{2}-)(\\d{2}$)", "\\10\\2", illumina_sample_name)) %>%
+#   select(illumina_sample_raw,
+#          illumina_sample_name) %>%
+#   distinct()
+# 
+# feature_long = feature_table %>%
+#   pivot_longer(cols = -asv_id,
+#                names_to = "illumina_sample_raw",
+#                values_to = "asv_count") %>%
+#   filter(asv_count != 0)
+# 
+# feature_long_c = feature_long %>%
+#   mutate(country = case_when(
+#     grepl("PAN", illumina_sample_raw) ~ "PA",
+#     grepl("PENN|PCI|Tissue", illumina_sample_raw) ~ "US",
+#     .default = NA
+#   ))
+# 
+# all_country_codes = paste0(sort(unique(feature_long_c$country)), collapse = ",")
+# 
+# asv_c = feature_long_c %>%
+#   group_by(asv_id) %>%
+#   summarise(na_true = any(is.na(country)),
+#             country_code = paste0(sort(unique(country)), collapse = ","),
+#             .groups = "drop") %>%
+#   mutate(country_code = if_else(na_true, all_country_codes, country_code)) %>%
+#   select(-na_true)
+
 # get unique for querying
 taxa_unique = taxa_clean %>%
   select(-taxon_id,
@@ -67,8 +108,8 @@ if (gbif_bool) {
   
   gbif_backbone_species_sn = name_backbone_checklist(gbif_query_species_sn, bucket_size = 100)
   
-  rownames(gbif_query_species) = NULL
-  rownames(gbif_backbone_species) = NULL
+  rownames(gbif_query_species_sn) = NULL
+  rownames(gbif_backbone_species_sn) = NULL
   
   gbif_backbone_key_species_sn = bind_cols(gbif_query_species_sn %>%
                                              rename(class_q = class,
@@ -185,7 +226,7 @@ if (gbif_bool) {
   taxa_out = taxa_out %>%
     left_join(gbif_backbone_key %>%
                 filter(rank == "FAMILY") %>%
-                rename(local_gbif_count_family = local_occ_count,
+                rename(gbif_count_family_local = local_occ_count,
                        gbif_familyKey = familyKey) %>%
                 select(class_q,
                        order_q,
@@ -197,7 +238,7 @@ if (gbif_bool) {
                      "family" = "family_q")) %>%
     left_join(gbif_backbone_key %>%
                 filter(rank == "GENUS") %>%
-                rename(local_gbif_count_genus = local_occ_count,
+                rename(gbif_count_genus_local = local_occ_count,
                        gbif_genusKey = genusKey) %>%
                 select(class_q,
                        order_q,
@@ -373,8 +414,12 @@ if (iucn_bool) {
   
   local_assessments = map_dfr(iucn_assessment_data, f_found_locally)
   
+  local_assessments_unique = local_assessments %>%
+    group_by(assessment_id) %>%
+    summarize(code = "yes")
+  
   iucn_assessment_local = iucn_assessment %>%
-    left_join(local_assessments, by = "assessment_id") %>%
+    left_join(local_assessments_unique, by = "assessment_id") %>%
     rename(iucn_taxon_id = sis_taxon_id) %>%
     group_by(genus_q, species_q, specific_epithet_q, iucn_taxon_id) %>%
     summarize(iucn_reported_species_local = if_else(any(!is.na(code)), TRUE, FALSE),
