@@ -10,7 +10,7 @@ library(yaml)
 
 # 
 # # # manual runs
-# env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
+# env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
 # setwd("16S Process TEST")
 
 # inherit env_config_path
@@ -22,7 +22,7 @@ config = read_yaml(env_config_path)
 
 ## Read in the .biom feature table. 
 feature_table =
-  read_tsv(paste0(config$run$runDir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  read_tsv(paste0(config$run$runDir, "/analysis/s06_denoised_", config$taxonomy$gene, "_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
   as.data.frame() %>%
   rename("asv_id" = "#OTU ID") %>%
   arrange(asv_id)
@@ -109,8 +109,8 @@ consensus_table_blast =
 
 # Read in taxonomies and filter to flagged taxa
 taxonomy_table =
-  read.table(paste0(config$taxonomy$classifierDir, "/Vertebrata16S_derep1_taxa_extracted/", 
-                    list.files(paste0(config$taxonomy$classifierDir, '/Vertebrata16S_derep1_taxa_extracted')), 
+  read.table(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted/", 
+                    list.files(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted")), 
                     "/data/taxonomy.tsv"),
              header = TRUE, 
              sep = '\t',
@@ -132,8 +132,8 @@ taxonomy_table =
 
 # Read in DNA sequences 
 sequence_table =
-  read.fasta(file = paste0(config$run$runDir, "/analysis/s06_denoised_16S_eDNA/representative_sequences/", 
-                           list.files(paste0(config$run$runDir, '/analysis/s06_denoised_16S_eDNA/representative_sequences')), 
+  read.fasta(file = paste0(config$run$runDir, "/analysis/s06_denoised_", config$taxonomy$gene, "_eDNA/representative_sequences/", 
+                           list.files(paste0(config$run$runDir, "/analysis/s06_denoised_", config$taxonomy$gene, "_eDNA/representative_sequences")), 
                            "/data/dna-sequences.fasta"))%>%
   rename(asv_id = seq.name, 
          sequence = seq.text) %>%

@@ -10,7 +10,7 @@ library(yaml)
 # config
 # setwd("16S Process TEST")
 print(getwd())
-env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
+env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
 iucn_api_token = Sys.getenv("iucn_token")
 
 # read in config file

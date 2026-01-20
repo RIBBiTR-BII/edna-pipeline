@@ -1,20 +1,18 @@
 #!/bin/bash
 
-# read in config.yml (from $env_config_path) for configuration parameters
-c_taxa_dir=$(yq e '.taxonomy.classifierDir' "$env_config_path")
-c_qiime_env=$(yq e '.run.qiimeEnv' "$env_config_path")
-
 # Activate the Qiime environment
-source activate $c_qiime_env
+source activate qiime2-amplicon-2025.4
+
+c_taxa_dir="vertebrata16s_classifier"
 
 # make sure to have rescript installed within this environment
 # see details here: https://library.qiime2.org/plugins/rescript/27/
 
-if [ -d $c_taxa_dir ]; then
+if [ -d "$c_taxa_dir" ]; then
   echo "The existing "vertebrata16s-classifier" folder will be deleted. Proceed? (y/n)"
   read confirm
   if [[ "$confirm" == [Yy] ]]; then
-    rm -r $c_taxa_dir
+    rm -r "$c_taxa_dir"
     echo "Folder deleted."
   else
     echo "Process canceled."
@@ -23,8 +21,8 @@ if [ -d $c_taxa_dir ]; then
 fi
 
 # make a new dirctory for the NCBI sequences
-mkdir $c_taxa_dir
-cd $c_taxa_dir
+mkdir "$c_taxa_dir"
+cd "$c_taxa_dir"
 
 # download all vertebrate (txid7742) 16S sequences from NCBI
 echo "Downloading vertibrate 16S sequences from NCBI"

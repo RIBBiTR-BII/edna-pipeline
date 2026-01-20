@@ -6,7 +6,7 @@ library(yaml)
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)
 env_config_path = args[1]
-#  env_config_path = "runs/2025-11-03_test/output/metadata/config.yml"
+# env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
 
 # read in config for runDir
 config = read_yaml(env_config_path)
@@ -23,12 +23,12 @@ metadata$post$exitStatus = dplyr::case_when(
   file.exists(paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_result_tables.xlsx")) ~ "complete",
   dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/")) ~ "incomplete-s07-b",
   dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_cblast/classification/")) ~ "incomplete-s07-a",
-  dir.exists(paste0(config$run$runDir, "/analysis/s06_denoised_16S_eDNA/representative_sequences")) ~ "incomplete-s06",
-  file.exists(paste0(config$run$runDir, "/analysis/s05_primertrimmed_16S_eDNA_Demux.qzv ")) ~ "incomplete-s05",
-  file.exists(paste0(config$run$runDir, "/analysis/s04_leadlag_primertrimmed_16S_eDNA_Demux.qza")) ~ "incomplete-s04",
-  file.exists(paste0(config$run$runDir, "/analysis/s03_lead_primertrimmed_16S_eDNA_Demux.qza")) ~ "incomplete-s03",
-  file.exists(paste0(config$run$runDir, "/analysis/s02_16S_eDNA_Demux.qzv")) ~ "incomplete-s02",
-  file.exists(paste0(config$run$runDir, "/analysis/s01_16S_eDNA_Demux.qza")) ~ "incomplete-s01",
+  dir.exists(paste0(config$run$runDir, "/analysis/s06_denoised_", config$taxonomy$gene, "_eDNA/representative_sequences")) ~ "incomplete-s06",
+  file.exists(paste0(config$run$runDir, "/analysis/s05_primertrimmed_", config$taxonomy$gene, "_eDNA_Demux.qzv ")) ~ "incomplete-s05",
+  file.exists(paste0(config$run$runDir, "/analysis/s04_leadlag_primertrimmed_", config$taxonomy$gene, "_eDNA_Demux.qza")) ~ "incomplete-s04",
+  file.exists(paste0(config$run$runDir, "/analysis/s03_lead_primertrimmed_", config$taxonomy$gene, "_eDNA_Demux.qza")) ~ "incomplete-s03",
+  file.exists(paste0(config$run$runDir, "/analysis/s02_", config$taxonomy$gene, "_eDNA_Demux.qzv")) ~ "incomplete-s02",
+  file.exists(paste0(config$run$runDir, "/analysis/s01_", config$taxonomy$gene, "_eDNA_Demux.qza")) ~ "incomplete-s01",
   file.exists(paste0(config$run$runDir, "/output/metadata/run_metadata.yml")) ~ "incomplete-r02",
   file.exists(paste0(config$run$runDir, "/output/metadata/manifest.csv")) ~ "incomplete-r01",
   .default = "incomplete-r00"
