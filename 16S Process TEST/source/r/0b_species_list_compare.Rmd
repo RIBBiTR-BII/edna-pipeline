@@ -7,7 +7,7 @@ output: html_document
 # setup
 
 # minimal libraries
-librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here)
+librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here, phylotools, Biostrings, pwalign)
 
 # read in config files
 config_12s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
@@ -29,66 +29,73 @@ taxa_rib = tbl(dbcon, Id("survey_data", "taxonomy")) %>%
          ncbi_id,
          ncbi_taxon) %>%
   collect() %>%
-  mutate(sn_rib = coalesce(ncbi_taxon, itis_species))
+  mutate(sn_rib = coalesce(ncbi_taxon, itis_species)) %>%
+  separate(sn_rib, c("ncbi_genus", "ncbi_species"), sep = " ", remove = FALSE)
 
 itis_ncbi_dif = taxa_rib %>%
   filter(itis_species != ncbi_taxon)
 
-taxa_12s = taxonomy_table =
-  read.table(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_taxa_extracted/", 
+taxa_12s_raw = read.table(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_taxa_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_taxa_extracted"))), 
                     "/data/taxonomy.tsv")),
              header = TRUE, 
              sep = '\t',
              quote = '') %>%
-  rename(taxon_id = Feature.ID,
-         taxon = Taxon) %>%
-  select(-taxon_id) %>%
-  group_by(taxon) %>%
+  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  filter(c == "Amphibia",
+         s != "")
+
+colnames(taxa_12s_raw) = c("feature_id",
+                          "kingdom",
+                          "phylum",
+                          "class",
+                          "order",
+                          "family",
+                          "genus",
+                          "species")
+  
+taxa_12s = taxa_12s_raw %>%
+  group_by(order, family, genus, species) %>%
   summarise(n_12s = n(),
             .groups = "drop") %>%
-  separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
-  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
-  rename(kingdom = k,
-         phylum = p,
-         class = c,
-         order = o,
-         family = f,
-         genus = g,
-         species = s) %>%
-  filter(class == "Amphibia",
-         species != "") %>%
-  mutate(sn_12s = paste(genus, species),
-         n_12s = as.numeric(n_12s))
+  mutate(sn_12s = paste(genus, species))
 
-
-taxa_16s = taxonomy_table =
-  read.table(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_taxa_extracted/", 
+taxa_16s_raw = read.table(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_taxa_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_taxa_extracted"))), 
                     "/data/taxonomy.tsv")),
              header = TRUE, 
              sep = '\t',
              quote = '') %>%
-  rename(taxon_id = Feature.ID,
-         taxon = Taxon) %>%
-  select(-taxon_id) %>%
-  group_by(taxon) %>%
+  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  filter(c == "Amphibia",
+         s != "")
+
+colnames(taxa_16s_raw) = c("feature_id",
+                          "kingdom",
+                          "phylum",
+                          "class",
+                          "order",
+                          "family",
+                          "genus",
+                          "species")
+  
+taxa_16s = taxa_16s_raw %>%
+  group_by(order, family, genus, species) %>%
   summarise(n_16s = n(),
             .groups = "drop") %>%
-  separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
-  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
-  rename(kingdom = k,
-         phylum = p,
-         class = c,
-         order = o,
-         family = f,
-         genus = g,
-         species = s) %>%
-  filter(class == "Amphibia",
-         species != "") %>%
-  mutate(sn_16s = paste(genus, species),
-         n_16s = as.numeric(n_16s))
+  mutate(sn_16s = paste(genus, species))
 
+seq_12s =
+  read.fasta(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_seqs_extracted/", 
+                    list.files(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_seqs_extracted"))), 
+                    "/data/dna-sequences.fasta")))
+
+seq_16s =
+  read.fasta(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_seqs_extracted/", 
+                    list.files(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_seqs_extracted"))), 
+                    "/data/dna-sequences.fasta")))
 
 ```
 
@@ -113,8 +120,8 @@ cumulative_table = tibble(
 ) %>%
   pivot_longer(cols = c("n_species_12s_gt_ii",
                         "n_species_16s_gt_ii")) %>%
-  rename(sequences_n = ii,
-         species_n = value) %>%
+  dplyr::rename(sequences_n = ii,
+                species_n = value) %>%
   mutate(gene = case_match(name,
                            "n_species_12s_gt_ii" ~ "12S",
                            "n_species_16s_gt_ii" ~ "16S",
@@ -122,21 +129,18 @@ cumulative_table = tibble(
          species_percent = species_n / nrow(taxa_rib))
   
 
-ggplot(cumulative_table, aes(x = sequences_n, y = species_percent, color = gene)) +
+ggplot(cumulative_table, aes(x = sequences_n, y = species_n, color = gene)) +
   geom_line() +
   scale_fill_brewer(palette = "Set2")
 
 
 total_count = taxa_12s %>%
-  full_join(taxa_16s, by = c("kingdom",
-                             "phylum",
-                             "class",
-                             "order",
+  full_join(taxa_16s, by = c("order",
                              "family",
                              "genus",
                              "species",
                              "sn_12s" = "sn_16s")) %>%
-  rename(sn = sn_12s)
+  dplyr::rename(sn = sn_12s)
 
 cumulative_table_all = tibble(
   ii = steps,
@@ -145,7 +149,7 @@ cumulative_table_all = tibble(
 ) %>%
   pivot_longer(cols = c("n_species_12s_gt_ii",
                         "n_species_16s_gt_ii")) %>%
-  rename(sequences_n = ii,
+  dplyr::rename(sequences_n = ii,
          species_n = value) %>%
   mutate(gene = case_match(name,
                            "n_species_12s_gt_ii" ~ "12S",
@@ -167,7 +171,7 @@ ggplot(cumulative_table_all, aes(x = sequences_n, y = species_n, color = gene)) 
 cf_genus_rib = taxa_rib %>%
   group_by(itis_genus) %>%
   count(name = "n_ribbitr") %>%
-  rename(genus = "itis_genus")
+  dplyr::rename(genus = "itis_genus")
 
 cf_genus_12s = taxa_12s %>%
   group_by(genus) %>%
@@ -210,7 +214,7 @@ ggplot(cf_genus_factor, aes(x = f, y = genus, fill = gene)) +
 cf_family_rib = taxa_rib %>%
   group_by(itis_family) %>%
   count(name = "n_ribbitr") %>%
-  rename(family = "itis_family")
+  dplyr::rename(family = "itis_family")
 
 cf_family_12s = taxa_12s %>%
   group_by(family) %>%
@@ -246,5 +250,187 @@ ggplot(cf_family_factor, aes(x = f, y = family, fill = gene)) +
   geom_col(position = position_dodge2(padding = 0)) +
   scale_fill_brewer(palette = "Set2") +
   xlab("factor")
+
+```
+
+# sequence length distributions
+```{r}
+taxa_seq_12s = taxa_12s_raw %>%
+  left_join(seq_12s, by = c("feature_id" = "seq.name")) %>%
+  inner_join(taxa_rib, by = c(""))
+
+taxa_seq_16s = taxa_16s_raw %>%
+  left_join(seq_16s, by = c("feature_id" = "seq.name"))
+
+set_12s = DNAStringSet(taxa_seq_12s$seq.text, use.name = TRUE)
+names(set_12s) = taxa_seq_12s$feature_id
+
+set_16s = DNAStringSet(taxa_seq_16s$seq.text, use.name = TRUE)
+names(set_16s) = taxa_seq_16s$feature_id
+
+width_df <- data.frame(
+  width = c(width(set_12s), width(set_16s)),
+  gene = rep(c("12S", "16S"), c(length(set_12s), length(set_16s))),
+  id = c(names(set_12s), names(set_16s))
+)
+
+ggplot(width_df, aes(x = width, fill = gene)) +
+  geom_density(alpha = 0.6) +
+  theme_minimal()
+```
+
+# within taxa similarity
+```{r}
+pid_mat_g = function(seqs) {
+  
+  n = length(seqs)
+  pid_mat <- matrix(0, n, n,
+                    dimnames = list(names(seqs), names(seqs)))
+  
+  pb = txtProgressBar(min = 1, max = n, style = 3)
+  for (ii in 1:n) {
+    aln = pairwiseAlignment(seqs, seqs[[ii]])
+    pid_mat[, ii] = pid(aln)
+    
+    setTxtProgressBar(pb, ii)
+  }
+  close(pb)
+  
+  return(pid_mat)
+}
+
+# 12s
+genus_seq_12s = taxa_seq_12s %>%
+  filter(genus %in% taxa_rib$ncbi_genus)
+
+consensus_genus_12s = genus_seq_12s %>%
+  group_by(genus) %>%
+  summarise(
+    n = n(),
+    consensus = as.character(consensusString(DNAStringSet(seq.text))),
+    .groups = "drop"
+  ) %>%
+  mutate(median_pid = NA,
+         gene = "12s")
+
+consensus_genus_set_12s = DNAStringSet(consensus_genus_12s$consensus)
+
+for(ii in 1:nrow(consensus_genus_12s)) {
+  aln = pairwiseAlignment(DNAStringSet(genus_seq_12s %>%
+                                         filter(genus == consensus_genus_12s$genus[[ii]]) %>%
+                                         pull(seq.text)), consensus_genus_set_12s[[ii]])
+  consensus_genus_12s$median_pid[[ii]] = median(pid(aln))
+}
+
+# 16s
+genus_seq_16s = taxa_seq_16s %>%
+  filter(genus %in% taxa_rib$ncbi_genus)
+
+consensus_genus_16s = genus_seq_16s %>%
+  group_by(genus) %>%
+  summarise(
+    n = n(),
+    consensus = as.character(consensusString(DNAStringSet(seq.text))),
+    .groups = "drop"
+  ) %>%
+  mutate(median_pid = NA,
+         gene = "16s")
+
+consensus_genus_set_16s = DNAStringSet(consensus_genus_16s$consensus)
+
+for(ii in 1:nrow(consensus_genus_16s)) {
+  aln = pairwiseAlignment(DNAStringSet(genus_seq_16s %>%
+                                         filter(genus == consensus_genus_16s$genus[[ii]]) %>%
+                                         pull(seq.text)), consensus_genus_set_16s[[ii]])
+  consensus_genus_16s$median_pid[[ii]] = median(pid(aln))
+}
+
+# combine
+within_genus_pid = bind_rows(consensus_genus_12s,
+                             consensus_genus_16s)
+
+ggplot(within_genus_pid %>%
+         filter(n > 1), aes(x = median_pid, fill = gene)) +
+  geom_density(alpha = 0.6) +
+  theme_minimal() +
+  xlim(0, 100)
+
+
+```
+
+# between taxa similarity
+```{r}
+pid_mat_f = function(seqs) {
+  
+  n = length(seqs)
+  pid_mat <- matrix(0, n, n,
+                    dimnames = list(names(seqs), names(seqs)))
+  
+  pb = txtProgressBar(min = 1, max = n, style = 3)
+  for (ii in 1:n) {
+    aln = pairwiseAlignment(seqs, seqs[[ii]])
+    pid_mat[, ii] = pid(aln)
+    
+    setTxtProgressBar(pb, ii)
+  }
+  close(pb)
+  
+  return(pid_mat)
+}
+
+# 12s
+genus_seq_12s = taxa_seq_12s %>%
+  filter(genus %in% taxa_rib$ncbi_genus)
+
+consensus_genus_12s = genus_seq_12s %>%
+  group_by(genus) %>%
+  summarise(
+    consensus = as.character(consensusString(DNAStringSet(seq.text))),
+    .groups = "drop"
+  )
+
+consensus_genus_12s_set = DNAStringSet(consensus_genus_12s$consensus, use.name = TRUE)
+names(consensus_genus_12s_set) = consensus_genus_12s$genus
+
+between_genus_pid_12s = pid_mat_f(consensus_genus_12s_set)
+
+bg_pid_12s = between_genus_pid_12s[upper.tri(between_genus_pid_12s)]
+
+
+# between_genus_dist_12s = stringDist(consensus_genus_12s_set, method = "levenshtein")
+# 
+# between_genus_12s = as.data.frame(as.matrix(between_genus_dist_12s)) %>%
+#   rownames_to_column("genus1") %>%
+#   pivot_longer(-genus1, names_to = "genus2", values_to = "distance") %>%
+#   filter(genus1 < genus2) %>%
+#   mutate(gene = "12s")
+
+## 16s
+genus_seq_16s = taxa_seq_16s %>%
+  filter(genus %in% taxa_rib$ncbi_genus)
+
+upper_tri_vec <- pid_matrix[upper.tri(pid_matrix)]consensus_genus_16s = genus_seq_16s %>%
+  group_by(genus) %>%
+  summarise(
+    consensus = as.character(consensusString(DNAStringSet(seq.text))),
+    .groups = "drop"
+  )
+
+consensus_genus_16s_set = DNAStringSet(consensus_genus_16s$consensus, use.name = TRUE)
+names(consensus_genus_16s_set) = consensus_genus_16s$genus
+
+between_genus_pid_16s = pid_mat_f(consensus_genus_16s_set)
+
+bg_pid_16s = between_genus_pid_16s[upper.tri(between_genus_pid_16s)]
+
+between_genus_pid = data.frame(
+  pid = c(bg_pid_12s, bg_pid_16s),
+  gene = rep(c("12S", "16S"), c(length(bg_pid_12s), length(bg_pid_16s)))
+)
+
+ggplot(between_genus_pid, aes(x = pid, fill = gene)) +
+  geom_density(alpha = 0.6) +
+  theme_minimal() +
+  xlim(0, 100)
 
 ```
