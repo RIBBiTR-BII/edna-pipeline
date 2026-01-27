@@ -1,0 +1,523 @@
+# Title: Process taxonomic hits to identify species likely found in Panama
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
+## Load in Libraries (install them in you need them.)
+library(tidyverse)
+library(yaml)
+
+# working dir
+getwd()
+# setwd("16S Process TEST")
+env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
+
+# read in config file
+config = read_yaml(env_config_path)
+
+hits_raw = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"))
+
+# filter suspect hits
+# suspect_taxon_id = c("MW136636.1")
+
+hits_vsearch_clean = hits_raw %>%
+  filter(!is.na(class),
+         method == "vsearch",
+         # seq_overlap >= 50,
+         ) %>%
+  select(-consensus) %>%
+  mutate(p_identical = percent_identical / 100,
+         p_overlap = seq_overlap / (s_end - s_start + 1))
+
+taxa_geography = read.csv(paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered_geography_12s.csv"))
+
+# samples
+feature_table =
+  read_tsv(paste0(config$run$runDir, "/analysis/s06_denoised_12S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  as.data.frame() %>%
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+sample_country = feature_table %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "illumina_sample_id",
+               values_to = "asv_count") %>%
+  select(illumina_sample_id) %>%
+  distinct() %>%
+  mutate(country = case_when(
+    grepl("PENN", illumina_sample_id) ~ "US",
+    grepl("PAN", illumina_sample_id) ~ "PA",
+    .default = "XX"
+  ))
+
+feature_long = feature_table %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "illumina_sample_id",
+               values_to = "asv_count") %>%
+  filter(asv_count != 0) %>%
+  arrange(illumina_sample_id) %>%
+  select(illumina_sample_id,
+         asv_id,
+         asv_count)
+
+asv_country = feature_long %>%
+  left_join(sample_country, by = "illumina_sample_id") %>%
+  group_by(asv_id) %>%
+  summarize(country_compiled = paste0(sort(unique(country)), collapse = ","),
+            .groups = "drop") %>%
+  mutate(country_class = case_when(
+    grepl("XX|PA,US", country_compiled) ~ "PA,US",
+    .default = country_compiled
+  )) %>%
+  select(-country_compiled)
+
+
+hits_vsearch_geography = hits_vsearch_clean %>%
+  left_join(taxa_geography %>%
+              select(taxon_id,
+                     any_of(starts_with("gbif")),
+                     any_of(starts_with("iucn"))), by = "taxon_id") %>%
+  left_join(asv_country, by = "asv_id") %>%
+  mutate(gbif_count_species_local = case_match(country_class,
+                                               "PA" ~ gbif_count_species_pa,
+                                               "US" ~ gbif_count_species_pe,
+                                               "PA,US" ~ gbif_count_species_us + gbif_count_species_pa),
+         gbif_count_genus_local = case_match(country_class,
+                                             "PA" ~ gbif_count_genus_pa,
+                                             "US" ~ gbif_count_genus_pe,
+                                             "PA,US" ~ gbif_count_genus_us + gbif_count_genus_pa),
+         gbif_count_family_local = case_match(country_class,
+                                              "PA" ~ gbif_count_family_pa,
+                                              "US" ~ gbif_count_family_pe,
+                                              "PA,US" ~ gbif_count_family_us + gbif_count_family_pa),
+         iucn_assessment = case_match(country_class,
+                                      "PA" ~ iucn_assessment_pa,
+                                      "US" ~ iucn_assessment_pe,
+                                      "PA,US" ~ any(iucn_assessment_us,iucn_assessment_pe, na.rm = TRUE)),
+    local_species = case_when(
+      iucn_assessment %in% TRUE ~ TRUE,
+      gbif_count_species_local > 0 ~ TRUE,
+      iucn_assessment %in% FALSE ~ FALSE,
+      gbif_count_species_local == 0 ~ FALSE,
+      gbif_count_genus_local == 0 ~ FALSE,
+      gbif_count_family_local == 0 ~ FALSE,
+      .default = NA))
+
+find_consensus = function(hit_table, taxonomic_level, identity_th = 0, consensus_th = 0.5, min_consensus_hits = 1, tie_handling = "error") {
+  
+  if (!(tie_handling %in% c("error", "pass", "drop"))) {
+    stop('Invalid value for tie_handling. Must be in c("error", "pass", "drop")')
+  }
+  
+  hit_table_filtered = hit_table %>%
+    filter(p_identical >= identity_th)
+  
+  if (consensus_th <= 0.5) {
+    warning("Using a consensus_th <= 0.5 may result in multiple consensus classification. Consensus classification(s) will be selected with the greatest consensus value, with ties handled according to tie_handling ('error', 'pass', 'drop')")
+  }
+  
+  if (!(taxonomic_level %in% c("class", "order", "family", "genus", "species"))) {
+    stop('taxonnomic_level not recognized, must be one of c("class", "order", "family", "genus", "species")')
+  }
+  
+  taxon_groups_list = list(
+    species = c("asv_id", "method", "class", "order", "family", "genus", "species"),
+    genus = c("asv_id", "method", "class", "order", "family", "genus"),
+    family = c("asv_id", "method", "class", "order", "family"),
+    order = c("asv_id", "method", "class", "order"),
+    class = c("asv_id", "method", "class")
+  )
+  
+  taxon_group = taxon_groups_list[[taxonomic_level]]
+  
+  consensus_table = hit_table_filtered %>%
+    group_by(asv_id, method) %>%
+    mutate(asv_hits_n = n()) %>%
+    ungroup() %>%
+    group_by_at(taxon_group) %>%
+    mutate(taxon_hits_n = n()) %>%
+    ungroup() %>%
+    mutate(consensus_value = taxon_hits_n / asv_hits_n) %>%
+    filter(taxon_hits_n >= min_consensus_hits,
+           consensus_value >= consensus_th) %>%
+    arrange(desc(asv_total_count),
+            asv_id,
+            method,
+            desc(consensus_value),
+            desc(p_identical)) %>%
+    group_by_at(c(taxon_group,
+                  "consensus_value")) %>%
+    summarise(n_hits = first(taxon_hits_n),
+              p_identical_min = mean(p_identical),
+              p_identical_max = mean(p_identical),
+              p_identical_mean = mean(p_identical),
+              seq_overlap_max = max(seq_overlap),
+              .groups = "drop") %>%
+    group_by(asv_id, method) %>%
+    slice_max(order_by = consensus_value, n = 1, with_ties = TRUE) %>%
+    mutate(n_hits_consensus = n()) %>%
+    ungroup() %>%
+    mutate(identity_th = identity_th,
+           consensus_th = consensus_th,
+           min_consensus_hits = min_consensus_hits,
+           taxonomic_level = taxonomic_level)
+  
+  tie_ids = consensus_table %>%
+    filter(n_hits_consensus > 1) %>%
+    select(asv_id) %>%
+    distinct() %>%
+    pull(asv_id)
+  
+  if (length(tie_ids) > 0) {
+    if (tie_handling == "error") {
+      stop(paste0("Ties found for the following asv_ids:\n\t", paste(tie_ids, collapse = "\n\t"), "\nAborting."))
+    } else if (tie_handling == "pass") {
+      warning(paste0("Ties found for the following asv_ids:\n\t", paste(tie_ids, collapse = "\n\t"), "\nPassing to output."))
+    } else if (tie_handling == "drop") {
+      warning(paste0("Ties found for the following asv_ids:\n\t", paste(tie_ids, collapse = "\n\t"), "\nDropping from output."))
+      consensus_table = consensus_table %>%
+        filter(consensus <= 1)
+    }
+  }
+  
+  return(consensus_table)
+}
+
+hits_group_calc = function(hits_df, group_cols) {
+  hits_df %>%
+    group_by_at(group_cols) %>%
+    summarize(
+      n_hits = n(),
+      p_identical_mean = mean(percent_identical) / 100,
+      p_identical_max = max(percent_identical) / 100,
+      p_identical_min = min(percent_identical) / 100,
+      seq_overlap_max = max(seq_overlap),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(asv_total_count), asv_id, method, desc(p_identical_max)) %>%
+    group_by(asv_id, method) %>%
+    mutate(next_pimax = lead(p_identical_max),
+           drop_to_next_pimax = p_identical_max - next_pimax,
+           pimax_rank = row_number()) %>%
+    ungroup() %>%
+    select(all_of(group_cols),
+           n_hits,
+           p_identical_max,
+           p_identical_mean,
+           p_identical_min,
+           drop_to_next_pimax,
+           everything())
+}
+
+hits_vsearch_species_local = hits_group_calc(hits_vsearch_geography %>%
+                                               filter(!(local_species %in% FALSE),
+                                                      !is.na(species)),
+                                             c("asv_id",
+                                               "asv_total_count",
+                                               "sample_count",
+                                               "samples",
+                                               "sequence",
+                                               "method",
+                                               "class",
+                                               "order",
+                                               "family",
+                                               "genus",
+                                               "species",
+                                               "gbif_count_family_local",
+                                               "gbif_count_genus_local",
+                                               "gbif_count_species_local",
+                                               "iucn_assessment",
+                                               "local_species"))
+
+hits_vsearch_genus_local = hits_group_calc(hits_vsearch_geography %>%
+                                             filter(gbif_count_genus_local > 20,
+                                                    !is.na(genus)),
+                                           c("asv_id",
+                                             "asv_total_count",
+                                             "sample_count",
+                                             "samples",
+                                             "sequence",
+                                             "method",
+                                             "class",
+                                             "order",
+                                             "family",
+                                             "genus",
+                                             "gbif_count_family_local",
+                                             "gbif_count_genus_local"))
+
+hits_vsearch_family_local = hits_group_calc(hits_vsearch_geography %>%
+                                              filter(gbif_count_family_local > 50,
+                                                     !is.na(family)),
+                                            c("asv_id",
+                                              "asv_total_count",
+                                              "sample_count",
+                                              "samples",
+                                              "sequence",
+                                              "method",
+                                              "class",
+                                              "order",
+                                              "family",
+                                              "gbif_count_family_local"))
+
+hits_vsearch_order = hits_group_calc(hits_vsearch_geography %>%
+                                       filter(!is.na(order)),
+                                     c("asv_id",
+                                       "asv_total_count",
+                                       "sample_count",
+                                       "samples",
+                                       "sequence",
+                                       "method",
+                                       "class",
+                                       "order"))
+
+accept_species_100_local_unanimous = hits_vsearch_geography %>%
+  filter(p_identical == 1,
+         !is.na(species),
+         local_species) %>%
+  group_by(asv_id,
+           asv_total_count,
+           sample_count,
+           samples,
+           sequence,
+           class,
+           order,
+           family,
+           genus,
+           species) %>%
+  summarise(n_hits = n(),
+            p_identical_mean = mean(percent_identical) / 100,
+            p_identical_max = max(percent_identical) / 100,
+            p_identical_min = min(percent_identical) / 100,
+            seq_overlap_max = max(seq_overlap),
+            gbif_count_family_local = first(gbif_count_family_local),
+            gbif_count_genus_local = first(gbif_count_genus_local),
+            gbif_count_species_local = first(gbif_count_species_local),
+            iucn_assessment = any(iucn_assessment, na.rm = TRUE),
+            local_species = any(local_species, na.rm = TRUE),
+            .groups = "drop") %>%
+  mutate(method = "0_species_100p_local_unanimous") %>%
+  group_by(asv_id) %>%
+  mutate(tie = n() > 1) %>%
+  ungroup()
+
+# acceptable_species_ties = c("horribilis",
+#                             "marina",
+#                             "molossus",
+#                             "coibensis",
+#                             "fleischmanni",
+#                             "tatayoi")
+# 
+# resolved_ties = accept_species_100_local_unanimous %>%
+#   filter(tie & species %in% acceptable_species_ties) %>%
+#   group_by(asv_id) %>%
+#   mutate(tie_count = n()) %>%
+#   ungroup() %>%
+#   filter(tie_count > 1) %>%
+#   group_by(asv_id,
+#            asv_total_count,
+#            sample_count,
+#            samples,
+#            sequence,
+#            class,
+#            order,
+#            family,
+#            genus) %>%
+#   summarise(species = paste0(species, collapse = "/"),
+#             p_identical_mean = sum(p_identical_mean * n_hits) / sum(n_hits),
+#             n_hits = sum(n_hits),
+#             p_identical_max = max(p_identical_max),
+#             p_identical_min = min(p_identical_min),
+#             seq_overlap_max = max(seq_overlap_max),
+#             gbif_count_family_local = first(gbif_count_family_local),
+#             gbif_count_genus_local = first(gbif_count_genus_local),
+#             gbif_count_species_local = sum(gbif_count_species_local),
+#             iucn_reported_species_local = NA,
+#             local_species = TRUE,
+#             method = "0_species_100p_local_unanimous",
+#             tie = TRUE,
+#             .groups = "drop")
+
+accept_species_100_local_unanimous_resolved = accept_species_100_local_unanimous %>%
+  filter(!tie)
+# %>%
+#   bind_rows(resolved_ties)
+
+accept_species_100_consensus_75 = find_consensus(hits_vsearch_geography %>%
+                                                filter(!is.na(order),
+                                                       !is.na(species)), "species", identity_th = 1, consensus_th = 0.75, tie_handling = "drop") %>%
+  mutate(method = "1_species_100p_consensus_75") %>%
+  left_join(hits_vsearch_geography %>%
+              select(asv_id,
+                     asv_total_count,
+                     sample_count,
+                     samples,
+                     sequence) %>%
+              distinct(), by = "asv_id")
+
+
+# accept_species_100p_unique = hits_vsearch_geography %>%
+#   filter(p_identical == 1,
+#          !is.na(specificEpithet)) %>%
+#   mutate(species = specificEpithet) %>%
+#   group_by(asv_id,
+#            asv_total_count,
+#            sample_count,
+#            samples,
+#            sequence,
+#            class,
+#            order,
+#            family,
+#            genus,
+#            species) %>%
+#   summarise(n_hits = n(),
+#             p_identical_mean = mean(percent_identical) / 100,
+#             p_identical_max = max(percent_identical) / 100,
+#             p_identical_min = min(percent_identical) / 100,
+#             seq_overlap_max = max(seq_overlap),
+#             gbif_count_family_local = first(gbif_count_family_local),
+#             gbif_count_genus_local = first(gbif_count_genus_local),
+#             gbif_count_species_local = first(gbif_count_species_local),
+#             iucn_reported_species_local = any(iucn_reported_species_local, na.rm = TRUE),
+#             local_species = any(local_species, na.rm = TRUE),
+#             .groups = "drop") %>%
+#   mutate(method = "1_species_100p_unique") %>%
+#   group_by(asv_id) %>%
+#   mutate(tie = n() > 1) %>%
+#   ungroup()
+
+accept_species_local_unambiguous = hits_vsearch_species_local %>%
+  # anti_join(accept_species_100_consensus, by = "asv_id") %>%
+  filter(pimax_rank == 1,
+         p_identical_max >= 0.95,
+         is.na(drop_to_next_pimax) | drop_to_next_pimax >= 0.03) %>%
+  mutate(method = "2_species_local_95p_pdrop_03")
+
+accept_genus_local_unambiguous = hits_vsearch_genus_local %>%
+  # anti_join(accept_species_100_consensus, by = "asv_id") %>%
+  # anti_join(accept_species_local_unambiguous, by = "asv_id") %>%
+  filter(pimax_rank == 1,
+         p_identical_max >= 0.90,
+         is.na(drop_to_next_pimax) | drop_to_next_pimax >= 0.03) %>%
+  mutate(method = "3_genus_local_90p_pdrop_03")
+
+accept_family_local_unambiguous = hits_vsearch_family_local %>%
+  # anti_join(accept_species_100_consensus, by = "asv_id") %>%
+  # anti_join(accept_species_local_unambiguous, by = "asv_id") %>%
+  # anti_join(accept_genus_local_unambiguous, by = "asv_id") %>%
+  filter(pimax_rank == 1,
+         p_identical_max >= 0.80,
+         is.na(drop_to_next_pimax) | drop_to_next_pimax >= 0.05) %>%
+  mutate(method = "4_family_local_80p_pdrop_05")
+
+accept_order_unambiguous = hits_vsearch_order %>%
+  # anti_join(accept_species_100_consensus, by = "asv_id") %>%
+  # anti_join(accept_species_local_unambiguous, by = "asv_id") %>%
+  # anti_join(accept_genus_local_unambiguous, by = "asv_id") %>%
+  # anti_join(accept_family_local_unambiguous, by = "asv_id") %>%
+  filter(pimax_rank == 1,
+         p_identical_max >= 0.70,
+         is.na(drop_to_next_pimax) | drop_to_next_pimax >= 0.05) %>%
+  mutate(method = "5_order_70p_pdrop_05")
+
+accept_order_50_consensus_75 = find_consensus(hits_vsearch_geography,
+                                           # anti_join(accept_species_100_consensus, by = "asv_id") %>%
+                                           # anti_join(accept_species_local_unambiguous, by = "asv_id") %>%
+                                           # anti_join(accept_genus_local_unambiguous, by = "asv_id") %>%
+                                           # anti_join(accept_family_local_unambiguous, by = "asv_id") %>%
+                                           # anti_join(accept_order_unambiguous, by = "asv_id"),
+                                           "order", identity_th = 0.499, consensus_th = 0.75, tie_handling = "drop") %>%
+  mutate(method = "6_order_50p_consensus_75") %>%
+  left_join(hits_vsearch_geography %>%
+              select(asv_id,
+                     asv_total_count,
+                     sample_count,
+                     samples,
+                     sequence) %>%
+              distinct(), by = "asv_id")
+
+accept_all = bind_rows(accept_species_local_unambiguous,
+                       accept_genus_local_unambiguous,
+                       accept_family_local_unambiguous,
+                       accept_order_unambiguous,
+                       accept_species_100_local_unanimous_resolved,
+                       accept_species_100_consensus_75,
+                       accept_order_50_consensus_75) %>%
+  mutate(tie = if_else(is.na(tie), FALSE, tie)) %>%
+  select(-drop_to_next_pimax,
+         -next_pimax,
+         -pimax_rank) %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(n_hits), desc(p_identical_max))
+
+asv_count = length(unique(accept_all$asv_id))
+
+remainder = hits_vsearch_geography %>%
+  anti_join(accept_all, by = "asv_id")
+
+hits_accept = hits_vsearch_geography %>%
+  left_join(asv_country, by = "asv_id") %>%
+  bind_rows(accept_all) %>%
+  arrange(desc(asv_total_count), asv_id, method, desc(n_hits), desc(p_identical))
+
+write.csv(hits_accept, paste0(config$run$runDir, "/output/", config$run$name, "_vsearch_hybrid_classification.csv"), row.names = FALSE)
+
+# checks
+# iucn_no_gbif_yes = taxa_geography %>%
+#   select(-taxon_id) %>%
+#   distinct() %>%
+#   filter(iucn_reported_species_local %in% FALSE,
+#          gbif_count_species_local > 0) %>%
+#   arrange(desc(gbif_count_species_local))
+# 
+# iucn_yes_gbif_no = taxa_geography %>%
+#   select(-taxon_id) %>%
+#   distinct() %>%
+#   filter(iucn_reported_species_local %in% TRUE,
+#          gbif_count_species_local == 0) %>%
+#   arrange(desc(gbif_count_species_local))
+# 
+# iucn_no_gbif_no = taxa_geography %>%
+#   select(-taxon_id) %>%
+#   distinct() %>%
+#   filter(iucn_reported_species_local %in% FALSE,
+#          gbif_count_species_local == 0) %>%
+#   arrange(desc(gbif_count_species_local))
+# 
+# nonlocal_100p = accept_species_100_consensus_75 %>%
+#   left_join(taxa_geography %>%
+#               select(-taxon_id) %>%
+#               distinct(), by = c("class", "order", "family", "genus", "species")) %>%
+#   filter(iucn_reported_species_local %in% FALSE & gbif_count_species_local == 0)
+
+short_seq = hits_accept %>%
+  filter(asv_id %in% (hits_accept %>%
+                        filter(seq_overlap_max < 50) %>%
+                        pull(asv_id) %>%
+                        unique()))
+
+hits_accept_100p_ties = hits_accept %>%
+  filter(asv_id %in% (hits_accept %>%
+                        filter(tie) %>%
+                        pull(asv_id) %>%
+                        unique()))
+
+accept_out = accept_all %>%
+  group_by(asv_id) %>%
+  slice_min(method, n = 1, with_ties = TRUE) %>%
+  ungroup() %>%
+  mutate(taxonomic_level = case_when(grepl("species", method) ~ "species",
+                                     grepl("genus", method) ~ "genus",
+                                     grepl("family", method) ~ "family",
+                                     grepl("order", method) ~ "order")) %>%
+  select(asv_id,
+         method,
+         taxonomic_level,
+         class,
+         order,
+         family,
+         genus,
+         species,
+         n_hits,
+         p_identical_max,
+         seq_overlap_max,
+         consensus_value,
+         tie)
+
+write.csv(accept_out, paste0(config$run$runDir, "/output/", config$run$name, "_asv_classified.csv"), row.names = FALSE)
