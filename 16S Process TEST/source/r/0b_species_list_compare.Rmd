@@ -16,7 +16,7 @@ config_16s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/16S/out
 # establish database connection
 dbcon = hopToDB("ribbitr")
 
-# download RIBBiTR species list
+# download RIBBiTR species list, filter to amphibians
 taxa_rib = tbl(dbcon, Id("survey_data", "taxonomy")) %>%
   filter(itis_rank == "species",
          itis_class == "Amphibia") %>%
@@ -32,9 +32,11 @@ taxa_rib = tbl(dbcon, Id("survey_data", "taxonomy")) %>%
   mutate(sn_rib = coalesce(ncbi_taxon, itis_species)) %>%
   separate(sn_rib, c("ncbi_genus", "ncbi_species"), sep = " ", remove = FALSE)
 
+# check for discrepancies between itis and ncbi
 itis_ncbi_dif = taxa_rib %>%
   filter(itis_species != ncbi_taxon)
 
+# read in 12s taxonomies, filter to amphibians
 taxa_12s_raw = read.table(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_taxa_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_taxa_extracted"))), 
                     "/data/taxonomy.tsv")),
@@ -46,6 +48,7 @@ taxa_12s_raw = read.table(here("16S Process TEST", paste0(config_12s$taxonomy$cl
   filter(c == "Amphibia",
          s != "")
 
+# rename columns
 colnames(taxa_12s_raw) = c("feature_id",
                           "kingdom",
                           "phylum",
@@ -54,13 +57,15 @@ colnames(taxa_12s_raw) = c("feature_id",
                           "family",
                           "genus",
                           "species")
-  
+
+# count by taxonomy
 taxa_12s = taxa_12s_raw %>%
   group_by(order, family, genus, species) %>%
   summarise(n_12s = n(),
             .groups = "drop") %>%
   mutate(sn_12s = paste(genus, species))
 
+# read in 16s taxonomy, filter to anphibians
 taxa_16s_raw = read.table(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_taxa_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_taxa_extracted"))), 
                     "/data/taxonomy.tsv")),
@@ -72,6 +77,7 @@ taxa_16s_raw = read.table(here("16S Process TEST", paste0(config_16s$taxonomy$cl
   filter(c == "Amphibia",
          s != "")
 
+# rename columns
 colnames(taxa_16s_raw) = c("feature_id",
                           "kingdom",
                           "phylum",
@@ -80,18 +86,21 @@ colnames(taxa_16s_raw) = c("feature_id",
                           "family",
                           "genus",
                           "species")
-  
+
+# count by taxonomy
 taxa_16s = taxa_16s_raw %>%
   group_by(order, family, genus, species) %>%
   summarise(n_16s = n(),
             .groups = "drop") %>%
   mutate(sn_16s = paste(genus, species))
 
+# read in 12s sequences
 seq_12s =
   read.fasta(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_seqs_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_seqs_extracted"))), 
                     "/data/dna-sequences.fasta")))
 
+# read in 16s sequences
 seq_16s =
   read.fasta(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_seqs_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_seqs_extracted"))), 
@@ -101,65 +110,111 @@ seq_16s =
 
 # sequence counts
 ```{r}
+# how many sequences per species?
 
+## RIBBiTR amphibian species
 taxa_rib_count = taxa_rib %>%
   left_join(taxa_12s %>%
               select(sn_12s,
                      n_12s), by = c("sn_rib" = "sn_12s")) %>%
   left_join(taxa_16s %>%
               select(sn_16s,
-                     n_16s), by = c("sn_rib" = "sn_16s"))
+                     n_16s), by = c("sn_rib" = "sn_16s")) %>%
+  pivot_longer(cols = c("n_12s", "n_16s"),
+               names_to = "gene",
+               values_to = "n") %>%
+  mutate(n = if_else(is.na(n), 0, n),
+         gene = gsub("n_", "", gene))
 
 steps = seq(1, 50, 1)
 
 # Combine into one table
-cumulative_table = tibble(
-  ii = steps,
-  n_species_12s_gt_ii = sapply(steps, function(k) sum(taxa_rib_count$n_12s > k, na.rm = TRUE)),
-  n_species_16s_gt_ii = sapply(steps, function(k) sum(taxa_rib_count$n_16s > k, na.rm = TRUE))
-) %>%
-  pivot_longer(cols = c("n_species_12s_gt_ii",
-                        "n_species_16s_gt_ii")) %>%
-  dplyr::rename(sequences_n = ii,
-                species_n = value) %>%
-  mutate(gene = case_match(name,
-                           "n_species_12s_gt_ii" ~ "12S",
-                           "n_species_16s_gt_ii" ~ "16S",
-                           .default = NA),
-         species_percent = species_n / nrow(taxa_rib))
-  
+cumulative_table_12s = tibble(
+  sequences_n = steps,
+  gene = "12s",
+  n_species_ii = sapply(steps, function(k) sum(taxa_rib_count$gene == "12s" & taxa_rib_count$n == k)),
+  n_species_gte_ii = sapply(steps, function(k) sum(taxa_rib_count$gene == "12s" & taxa_rib_count$n >= k)),
+)
 
-ggplot(cumulative_table, aes(x = sequences_n, y = species_n, color = gene)) +
+cumulative_table_16s = tibble(
+  sequences_n = steps,
+  gene = "16s",
+  n_species_ii = sapply(steps, function(k) sum(taxa_rib_count$gene == "16s" & taxa_rib_count$n == k)),
+  n_species_gte_ii = sapply(steps, function(k) sum(taxa_rib_count$gene == "16s" & taxa_rib_count$n >= k)),
+)
+
+cumulative_table = bind_rows(cumulative_table_12s,
+                             cumulative_table_16s) %>%
+  mutate(p_species_ii = n_species_ii / nrow(taxa_rib),
+         p_species_gte_ii = n_species_gte_ii / nrow(taxa_rib))
+
+# histogram of sequence counts
+ggplot(taxa_rib_count, aes(x = n, fill = gene)) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  scale_fill_brewer(palette = "Set2")+
+  labs(title = "12S/16S sequence counts: RIBBiTR amphibian species",
+       x = "Number of sequences",
+       y = "Number of species with at least 'x' sequences") +
+  xlim(0, 50)
+
+# proportion of RIBBiTR sequence counts
+ggplot(cumulative_table, aes(x = sequences_n, y = p_species_gte_ii, color = gene)) +
   geom_line() +
-  scale_fill_brewer(palette = "Set2")
+  scale_fill_brewer(palette = "Set2")+
+  labs(title = "Cumulative 12S/16S sequence counts: RIBBiTR amphibian species",
+       x = "Number of sequences",
+       y = "Portion of RIBBiTR species with at least 'x' sequences")
 
-
-total_count = taxa_12s %>%
+## all amphibian species
+taxa_total_count = taxa_12s %>%
   full_join(taxa_16s, by = c("order",
                              "family",
                              "genus",
                              "species",
                              "sn_12s" = "sn_16s")) %>%
-  dplyr::rename(sn = sn_12s)
+  dplyr::rename(sn = sn_12s) %>%
+  pivot_longer(cols = c("n_12s", "n_16s"),
+               names_to = "gene",
+               values_to = "n") %>%
+  mutate(n = if_else(is.na(n), 0, n),
+         gene = gsub("n_", "", gene))
 
 cumulative_table_all = tibble(
   ii = steps,
-  n_species_12s_gt_ii = sapply(steps, function(k) sum(total_count$n_12s > k, na.rm = TRUE)),
-  n_species_16s_gt_ii = sapply(steps, function(k) sum(total_count$n_16s > k, na.rm = TRUE))
+  n_species_12s_gt_ii = sapply(steps, function(k) sum(taxa_total_count$gene == "12s" & taxa_total_count$n >= k)),
+  n_species_16s_gt_ii = sapply(steps, function(k) sum(taxa_total_count$gene == "16s" & taxa_total_count$n >= k))
 ) %>%
   pivot_longer(cols = c("n_species_12s_gt_ii",
                         "n_species_16s_gt_ii")) %>%
   dplyr::rename(sequences_n = ii,
-         species_n = value) %>%
+                species_gte_n = value) %>%
   mutate(gene = case_match(name,
                            "n_species_12s_gt_ii" ~ "12S",
                            "n_species_16s_gt_ii" ~ "16S",
                            .default = NA))
 
 
-ggplot(cumulative_table_all, aes(x = sequences_n, y = species_n, color = gene)) +
+# ggplot(cumulative_table_all, aes(x = sequences_n, y = species_n, color = gene)) +
+#   geom_line() +
+#   scale_fill_brewer(palette = "Set2")
+
+# histogram of sequence counts
+ggplot(taxa_total_count, aes(x = n, fill = gene)) +
+  geom_histogram(position = "identity", alpha = 0.5) +
+  scale_fill_brewer(palette = "Set2")+
+  labs(title = "12S/16S sequence counts: All amphibian species",
+       x = "Number of sequences",
+       y = "Number of species with at least 'x' sequences") +
+  xlim(0, 50)
+
+# proportion of RIBBiTR sequence counts
+ggplot(cumulative_table_all, aes(x = sequences_n, y = species_gte_n, color = gene)) +
   geom_line() +
-  scale_fill_brewer(palette = "Set2")
+  scale_fill_brewer(palette = "Set2")+
+  labs(title = "Cumulative 12S/16S sequence counts: All amphibian species",
+       x = "Number of sequences",
+       y = "Number of species with at least 'x' sequences")
+
 ```
 
 # similar species counts
