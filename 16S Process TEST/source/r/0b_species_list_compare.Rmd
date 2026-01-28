@@ -7,7 +7,7 @@ output: html_document
 # setup
 
 # minimal libraries
-librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here, phylotools, Biostrings, pwalign)
+librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here, phylotools, Biostrings, pwalign, msa)
 
 # read in config files
 config_12s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
@@ -153,17 +153,20 @@ ggplot(taxa_rib_count, aes(x = n, fill = gene)) +
   geom_histogram(position = "identity", alpha = 0.5) +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "12S/16S sequence counts: RIBBiTR amphibian species",
-       x = "Number of sequences",
-       y = "Number of species with at least 'x' sequences") +
-  xlim(0, 50)
+       x = "Number of sequences (n)",
+       y = "Number of species with at least 'n' sequences") +
+  xlim(1, 50) +
+  theme_minimal()
 
 # proportion of RIBBiTR sequence counts
 ggplot(cumulative_table, aes(x = sequences_n, y = p_species_gte_ii, color = gene)) +
   geom_line() +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "Cumulative 12S/16S sequence counts: RIBBiTR amphibian species",
-       x = "Number of sequences",
-       y = "Portion of RIBBiTR species with at least 'x' sequences")
+       x = "Number of sequences (n)",
+       y = "Portion of RIBBiTR species with at least 'n' sequences") +
+  xlim(1, 50) +
+  theme_minimal()
 
 ## all amphibian species
 taxa_total_count = taxa_12s %>%
@@ -203,43 +206,49 @@ ggplot(taxa_total_count, aes(x = n, fill = gene)) +
   geom_histogram(position = "identity", alpha = 0.5) +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "12S/16S sequence counts: All amphibian species",
-       x = "Number of sequences",
-       y = "Number of species with at least 'x' sequences") +
-  xlim(0, 50)
+       x = "Number of sequences (n)",
+       y = "Number of species with at least 'n' sequences") +
+  xlim(1, 50) +
+  theme_minimal()
 
 # proportion of RIBBiTR sequence counts
 ggplot(cumulative_table_all, aes(x = sequences_n, y = species_gte_n, color = gene)) +
   geom_line() +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "Cumulative 12S/16S sequence counts: All amphibian species",
-       x = "Number of sequences",
-       y = "Number of species with at least 'x' sequences")
+       x = "Number of sequences (n)",
+       y = "Number of species with at least 'n' sequences") +
+  xlim(1, 50) +
+  theme_minimal()
 
 ```
 
 # similar species counts
 ```{r}
-#| fig-height: 10
+#| fig-height: 8
 #| fig-width: 8
 
-## genus
+## RIBBiTR genera
 cf_genus_rib = taxa_rib %>%
   group_by(itis_genus) %>%
   count(name = "n_ribbitr") %>%
   dplyr::rename(genus = "itis_genus")
 
 cf_genus_12s = taxa_12s %>%
+  select(genus, species) %>%
+  distinct() %>%
   group_by(genus) %>%
   count(name = "n_12s")
 
 cf_genus_16s = taxa_16s %>%
+  select(genus, species) %>%
+  distinct() %>%
   group_by(genus) %>%
   count(name = "n_16s")
 
 cf_genus = cf_genus_rib %>%
   full_join(cf_genus_12s, by = "genus") %>%
   full_join(cf_genus_16s, by = "genus") %>%
-  
   pivot_longer(cols = c("n_12s",
                         "n_16s"),
                names_to = "gene",
@@ -262,20 +271,26 @@ cf_genus_factor$genus = factor(cf_genus_factor$genus, levels = genus_order)
 ggplot(cf_genus_factor, aes(x = f, y = genus, fill = gene)) +
   geom_col(position = position_dodge2(padding = 0)) +
   scale_fill_brewer(palette = "Set2") +
-  xlab("factor")
+  labs(title = "Amphibian 12S/16S sequence counts by RIBBiTR genera",
+       x = "Ratio of Classifier species to RIBBiTR species within each genus",
+       y = "Genus") +
+  theme_minimal()
 
-
-## family
+## RIBBiTR families
 cf_family_rib = taxa_rib %>%
   group_by(itis_family) %>%
   count(name = "n_ribbitr") %>%
   dplyr::rename(family = "itis_family")
 
 cf_family_12s = taxa_12s %>%
+  select(family, genus, species) %>%
+  distinct() %>%
   group_by(family) %>%
   count(name = "n_12s")
 
 cf_family_16s = taxa_16s %>%
+  select(family, genus, species) %>%
+  distinct() %>%
   group_by(family) %>%
   count(name = "n_16s")
 
@@ -304,111 +319,115 @@ cf_family_factor$family = factor(cf_family_factor$family, levels = family_order)
 ggplot(cf_family_factor, aes(x = f, y = family, fill = gene)) +
   geom_col(position = position_dodge2(padding = 0)) +
   scale_fill_brewer(palette = "Set2") +
-  xlab("factor")
+  labs(title = "Amphibian 12S/16S sequence counts by RIBBiTR family",
+       x = "Ratio of Classifier species to RIBBiTR species within each family",
+       y = "Family") +
+  theme_minimal()
 
 ```
 
 # sequence length distributions
 ```{r}
+# look at sequence lengths (total and for RIBBiTR species)
 taxa_seq_12s = taxa_12s_raw %>%
+  mutate(sn = paste(genus, species)) %>%
   left_join(seq_12s, by = c("feature_id" = "seq.name")) %>%
-  inner_join(taxa_rib, by = c(""))
+  left_join(taxa_rib %>%
+               select(taxon_id,
+                      ncbi_taxon), by = c("sn" = "ncbi_taxon"))
 
 taxa_seq_16s = taxa_16s_raw %>%
-  left_join(seq_16s, by = c("feature_id" = "seq.name"))
+  mutate(sn = paste(genus, species)) %>%
+  left_join(seq_16s, by = c("feature_id" = "seq.name")) %>%
+  left_join(taxa_rib %>%
+               select(taxon_id,
+                      ncbi_taxon), by = c("sn" = "ncbi_taxon"))
 
+# convert to DNAStringSets
 set_12s = DNAStringSet(taxa_seq_12s$seq.text, use.name = TRUE)
 names(set_12s) = taxa_seq_12s$feature_id
 
 set_16s = DNAStringSet(taxa_seq_16s$seq.text, use.name = TRUE)
 names(set_16s) = taxa_seq_16s$feature_id
 
-width_df <- data.frame(
+width_df = data.frame(
   width = c(width(set_12s), width(set_16s)),
   gene = rep(c("12S", "16S"), c(length(set_12s), length(set_16s))),
-  id = c(names(set_12s), names(set_16s))
+  feature_id = c(names(set_12s), names(set_16s)),
+  taxon_id = c(taxa_seq_12s$taxon_id, taxa_seq_16s$taxon_id)
 )
 
 ggplot(width_df, aes(x = width, fill = gene)) +
-  geom_density(alpha = 0.6) +
-  theme_minimal()
+  geom_histogram() +
+  facet_wrap("gene", scales = "free") +
+  theme_minimal() +
+  labs(title = "12S/16S sequence length distributions (all amphibians)",
+       x = "Sequence length (bp)",
+       y = "Sequences")
+
+ggplot(width_df %>%
+         filter(!is.na(taxon_id)), aes(x = width, fill = gene)) +
+  geom_histogram() +
+  facet_wrap("gene", scales = "free") +
+  theme_minimal() +
+  labs(title = "12S/16S sequence length distributions (RIBBiTR amphibians)",
+       x = "Sequence length (bp)",
+       y = "Sequences")
 ```
 
 # within taxa similarity
 ```{r}
-pid_mat_g = function(seqs) {
-  
-  n = length(seqs)
-  pid_mat <- matrix(0, n, n,
-                    dimnames = list(names(seqs), names(seqs)))
-  
-  pb = txtProgressBar(min = 1, max = n, style = 3)
-  for (ii in 1:n) {
-    aln = pairwiseAlignment(seqs, seqs[[ii]])
-    pid_mat[, ii] = pid(aln)
-    
-    setTxtProgressBar(pb, ii)
-  }
-  close(pb)
-  
-  return(pid_mat)
+
+within_group_pid2 = function(df, group_col) {
+  df %>%
+    group_by(!!sym(group_col)) %>%
+    reframe(
+      n = n(),
+      n2 = n ^ 2,
+      {
+        if (n > 1) {
+          temp_mat <- 1 - as.matrix(DistanceMatrix(AlignSeqs(DNAStringSet(seq.text), verbose = FALSE), 
+                                                   type = "dist", correction = NA, verbose = FALSE))
+          tibble(pid = temp_mat[upper.tri(temp_mat)])
+        } else {
+          tibble(pid = NA)
+        }
+      }
+    ) %>%
+    ungroup()
 }
 
-# 12s
-genus_seq_12s = taxa_seq_12s %>%
-  filter(genus %in% taxa_rib$ncbi_genus)
+spp_seq_12s = taxa_seq_12s %>%
+  filter(sn %in% taxa_rib$sn_rib)
 
-consensus_genus_12s = genus_seq_12s %>%
-  group_by(genus) %>%
-  summarise(
-    n = n(),
-    consensus = as.character(consensusString(DNAStringSet(seq.text))),
-    .groups = "drop"
-  ) %>%
-  mutate(median_pid = NA,
-         gene = "12s")
+oput = within_group_pid2(spp_seq_12s, "species")
 
-consensus_genus_set_12s = DNAStringSet(consensus_genus_12s$consensus)
+oput_samp = oput %>%
+  filter(n > 1) %>%
+  group_by(species) %>%
+  slice_sample(n = 100) %>%
+  ungroup()
 
-for(ii in 1:nrow(consensus_genus_12s)) {
-  aln = pairwiseAlignment(DNAStringSet(genus_seq_12s %>%
-                                         filter(genus == consensus_genus_12s$genus[[ii]]) %>%
-                                         pull(seq.text)), consensus_genus_set_12s[[ii]])
-  consensus_genus_12s$median_pid[[ii]] = median(pid(aln))
-}
+# density plot
+ggplot(oput_samp, aes(x = pid)) +
+  geom_density()
 
-# 16s
-genus_seq_16s = taxa_seq_16s %>%
-  filter(genus %in% taxa_rib$ncbi_genus)
+steps = seq(1, 0.5, -0.01)
 
-consensus_genus_16s = genus_seq_16s %>%
-  group_by(genus) %>%
-  summarise(
-    n = n(),
-    consensus = as.character(consensusString(DNAStringSet(seq.text))),
-    .groups = "drop"
-  ) %>%
-  mutate(median_pid = NA,
-         gene = "16s")
+# Combine into one table
+cumulative_oput = tibble(
+  pid = steps,
+  gene = "12s",
+  pid_cum = sapply(steps, function(k) sum(oput_samp$pid >= k) / nrow(oput_samp)),
+)
 
-consensus_genus_set_16s = DNAStringSet(consensus_genus_16s$consensus)
-
-for(ii in 1:nrow(consensus_genus_16s)) {
-  aln = pairwiseAlignment(DNAStringSet(genus_seq_16s %>%
-                                         filter(genus == consensus_genus_16s$genus[[ii]]) %>%
-                                         pull(seq.text)), consensus_genus_set_16s[[ii]])
-  consensus_genus_16s$median_pid[[ii]] = median(pid(aln))
-}
-
-# combine
-within_genus_pid = bind_rows(consensus_genus_12s,
-                             consensus_genus_16s)
-
-ggplot(within_genus_pid %>%
-         filter(n > 1), aes(x = median_pid, fill = gene)) +
-  geom_density(alpha = 0.6) +
-  theme_minimal() +
-  xlim(0, 100)
+ggplot(cumulative_oput, aes(x = pid, y = pid_cum, color = gene)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2")+
+  labs(title = "Within-species identity (RIBBiTR species",
+       x = "Within-species pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal()
 
 
 ```
