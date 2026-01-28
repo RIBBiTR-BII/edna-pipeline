@@ -7,10 +7,10 @@ output: html_document
 # setup
 
 # minimal libraries
-librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here, phylotools, Biostrings, pwalign, msa)
+librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here, phylotools, Biostrings, pwalign, DECIPHER)
 
 # read in config files
-config_12s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
+config_12s = read_yaml(here("12S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
 config_16s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/16S/output/metadata/config.yml"))
 
 # establish database connection
@@ -375,10 +375,10 @@ ggplot(width_df %>%
        y = "Sequences")
 ```
 
-# within taxa similarity
+# Taxa similarity
 ```{r}
 
-within_group_pid2 = function(df, group_col) {
+within_group_pid = function(df, group_col) {
   df %>%
     group_by(!!sym(group_col)) %>%
     reframe(
@@ -387,7 +387,7 @@ within_group_pid2 = function(df, group_col) {
       {
         if (n > 1) {
           temp_mat <- 1 - as.matrix(DistanceMatrix(AlignSeqs(DNAStringSet(seq.text), verbose = FALSE), 
-                                                   type = "dist", correction = NA, verbose = FALSE))
+                                                   type = "matrix", correction = NA, verbose = FALSE))
           tibble(pid = temp_mat[upper.tri(temp_mat)])
         } else {
           tibble(pid = NA)
@@ -397,114 +397,497 @@ within_group_pid2 = function(df, group_col) {
     ungroup()
 }
 
-spp_seq_12s = taxa_seq_12s %>%
-  filter(sn %in% taxa_rib$sn_rib)
+df = peace
+group_col = "genus"
 
-oput = within_group_pid2(spp_seq_12s, "species")
+between_group_pid = function(df, group_col, replicate = 10) {
+  testme = df %>%
+    group_by(!!sym(group_col)) %>%
+    slice_sample(n = replicate, replace = TRUE) %>%
+    mutate(sample_group = row_number()) %>%
+    ungroup() %>%
+    group_by(sample_group) %>%
+    reframe(
+      n = n(),
+      n2 = n ^ 2,
+      {
+        if (n > 1) {
+          temp_mat <- 1 - as.matrix(DistanceMatrix(AlignSeqs(DNAStringSet(seq.text), verbose = FALSE), 
+                                                   type = "matrix", correction = NA, verbose = FALSE))
+          tibble(pid = temp_mat[upper.tri(temp_mat)])
+        } else {
+          tibble(pid = NA)
+        }
+      }
+    ) %>%
+    ungroup()
+}
 
-oput_samp = oput %>%
+cumulative_gte = function(values, start, end, step){
+  steps = seq(start, end, step)
+  
+  cumulative_oput = tibble(
+    x = steps,
+    val_cum = sapply(steps, function(k) sum(values >= k) / length(values)),
+  )
+
+}
+```
+
+## 12S
+
+### 12S species
+```{r}
+species_within_pid_12s = taxa_seq_12s %>%
+  filter(sn %in% taxa_rib$sn_rib) %>%
+  within_group_pid("species")
+
+species_within_pid_12s_samp = species_within_pid_12s %>%
   filter(n > 1) %>%
   group_by(species) %>%
-  slice_sample(n = 100) %>%
-  ungroup()
+  slice_sample(n = 100, replace = TRUE) %>%
+  ungroup() %>%
+  mutate(gene = "12s",
+         type = "within",
+         level = "species")
+
+species_within_pid_12s_cum = cumulative_gte(species_within_pid_12s_samp$pid, 1, 0, -0.02) %>%
+  mutate(gene = "12s",
+         type = "within",
+         level = "species")
+
+species_between_pid_12s = taxa_seq_12s %>%
+  filter(sn %in% taxa_rib$sn_rib) %>%
+  between_group_pid("species", replicate = 10) %>%
+  mutate(gene = "12s",
+         type = "between",
+         level = "species")
+
+species_between_pid_12s = taxa_seq_12s %>%
+  
+  # filter(sn %in% taxa_rib$sn_rib) %>%
+  between_group_pid("species", replicate = 10) %>%
+  mutate(gene = "12s",
+         type = "between",
+         level = "species")
+
+species_between_pid_12s_cum = cumulative_gte(species_between_pid_12s$pid, 1, 0, -0.02) %>%
+  mutate(gene = "12s",
+         type = "between",
+         level = "species")
+
+species_pid_12s = bind_rows(species_within_pid_12s_samp,
+                            species_between_pid_12s)
+
+species_pid_12s_cum = bind_rows(species_within_pid_12s_cum,
+                            species_between_pid_12s_cum)
+
+# calculate numbers of sequences
+
+## median number of sequences in species
+n_in = 
+
+## median number of sequences out of species
+
 
 # density plot
-ggplot(oput_samp, aes(x = pid)) +
-  geom_density()
+ggplot(species_pid_12s, aes(x = pid, color = type)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-species identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal()
 
-steps = seq(1, 0.5, -0.01)
-
-# Combine into one table
-cumulative_oput = tibble(
-  pid = steps,
-  gene = "12s",
-  pid_cum = sapply(steps, function(k) sum(oput_samp$pid >= k) / nrow(oput_samp)),
-)
-
-ggplot(cumulative_oput, aes(x = pid, y = pid_cum, color = gene)) +
+# cumulative plot
+ggplot(species_pid_12s_cum, aes(x = x, y = val_cum, color = type)) +
   geom_line() +
-  scale_fill_brewer(palette = "Set2")+
-  labs(title = "Within-species identity (RIBBiTR species",
-       x = "Within-species pairwise fractional identity",
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-species identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
        y = "1 - Cumulative density") +
   theme_minimal()
 
 
 ```
 
-# between taxa similarity
+### 12S genus
 ```{r}
-pid_mat_f = function(seqs) {
-  
-  n = length(seqs)
-  pid_mat <- matrix(0, n, n,
-                    dimnames = list(names(seqs), names(seqs)))
-  
-  pb = txtProgressBar(min = 1, max = n, style = 3)
-  for (ii in 1:n) {
-    aln = pairwiseAlignment(seqs, seqs[[ii]])
-    pid_mat[, ii] = pid(aln)
-    
-    setTxtProgressBar(pb, ii)
-  }
-  close(pb)
-  
-  return(pid_mat)
-}
+genus_within_pid_12s = taxa_seq_12s %>%
+  filter(genus %in% taxa_rib$ncbi_genus) %>%
+  within_group_pid("genus")
 
-# 12s
-genus_seq_12s = taxa_seq_12s %>%
-  filter(genus %in% taxa_rib$ncbi_genus)
-
-consensus_genus_12s = genus_seq_12s %>%
+genus_within_pid_12s_samp = genus_within_pid_12s %>%
+  filter(n > 1) %>%
   group_by(genus) %>%
-  summarise(
-    consensus = as.character(consensusString(DNAStringSet(seq.text))),
-    .groups = "drop"
-  )
+  slice_sample(n = 100, replace = TRUE) %>%
+  ungroup() %>%
+  mutate(gene = "12s",
+         type = "within",
+         level = "genus")
 
-consensus_genus_12s_set = DNAStringSet(consensus_genus_12s$consensus, use.name = TRUE)
-names(consensus_genus_12s_set) = consensus_genus_12s$genus
+genus_within_pid_12s_cum = cumulative_gte(genus_within_pid_12s_samp$pid, 1, 0, -0.02) %>%
+  mutate(gene = "12s",
+         type = "within",
+         level = "genus")
 
-between_genus_pid_12s = pid_mat_f(consensus_genus_12s_set)
+genus_between_pid_12s = taxa_seq_12s %>%
+  filter(genus %in% taxa_rib$ncbi_genus) %>%
+  between_group_pid("genus", replicate = 10) %>%
+  mutate(gene = "12s",
+         type = "between",
+         level = "genus")
 
-bg_pid_12s = between_genus_pid_12s[upper.tri(between_genus_pid_12s)]
+genus_between_pid_12s_cum = cumulative_gte(genus_between_pid_12s$pid, 1, 0, -0.02) %>%
+  mutate(gene = "12s",
+         type = "between",
+         level = "genus")
+
+genus_pid_12s = bind_rows(genus_within_pid_12s_samp,
+                            genus_between_pid_12s)
+
+genus_pid_12s_cum = bind_rows(genus_within_pid_12s_cum,
+                            genus_between_pid_12s_cum)
+
+# density plot
+ggplot(genus_pid_12s, aes(x = pid, color = type)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-genus identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal()
+
+# cumulative plot
+ggplot(genus_pid_12s_cum, aes(x = x, y = val_cum, color = type)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-genus identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal()
 
 
-# between_genus_dist_12s = stringDist(consensus_genus_12s_set, method = "levenshtein")
-# 
-# between_genus_12s = as.data.frame(as.matrix(between_genus_dist_12s)) %>%
-#   rownames_to_column("genus1") %>%
-#   pivot_longer(-genus1, names_to = "genus2", values_to = "distance") %>%
-#   filter(genus1 < genus2) %>%
-#   mutate(gene = "12s")
+```
 
-## 16s
-genus_seq_16s = taxa_seq_16s %>%
-  filter(genus %in% taxa_rib$ncbi_genus)
+### 12S family
+```{r}
+family_within_pid_12s = taxa_seq_12s %>%
+  filter(family %in% taxa_rib$itis_family) %>%
+  within_group_pid("family")
 
-upper_tri_vec <- pid_matrix[upper.tri(pid_matrix)]consensus_genus_16s = genus_seq_16s %>%
+family_within_pid_12s_samp = family_within_pid_12s %>%
+  filter(n > 1) %>%
+  group_by(family) %>%
+  slice_sample(n = 100, replace = TRUE) %>%
+  ungroup() %>%
+  mutate(gene = "12s",
+         type = "within")
+
+family_within_pid_12s_cum = cumulative_gte(family_within_pid_12s_samp$pid, 1, 0, -0.02) %>%
+  mutate(gene = "12s",
+         type = "within",
+         level = "family")
+
+family_between_pid_12s = taxa_seq_12s %>%
+  filter(family %in% taxa_rib$itis_family) %>%
+  between_group_pid("family", replicate = 10) %>%
+  mutate(gene = "12s",
+         type = "between",
+         level = "family")
+
+family_between_pid_12s_cum = cumulative_gte(family_between_pid_12s$pid, 1, 0, -0.02) %>%
+  mutate(gene = "12s",
+         type = "between",
+         level = "family")
+
+family_pid_12s = bind_rows(family_within_pid_12s_samp,
+                            family_between_pid_12s)
+
+family_pid_12s_cum = bind_rows(family_within_pid_12s_cum,
+                            family_between_pid_12s_cum)
+
+# density plot
+ggplot(family_pid_12s, aes(x = pid, color = type)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-family identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal()
+
+# cumulative plot
+ggplot(family_pid_12s_cum, aes(x = x, y = val_cum, color = type)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-family identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal()
+
+
+```
+
+## 16S
+### 16S species
+```{r}
+species_within_pid_16s = taxa_seq_16s %>%
+  filter(sn %in% taxa_rib$sn_rib) %>%
+  within_group_pid("species")
+
+species_within_pid_16s_samp = species_within_pid_16s %>%
+  filter(n > 1) %>%
+  group_by(species) %>%
+  slice_sample(n = 100, replace = TRUE) %>%
+  ungroup() %>%
+  mutate(gene = "16s",
+         type = "within",
+         level = "species")
+
+species_within_pid_16s_cum = cumulative_gte(species_within_pid_16s_samp$pid, 1, 0, -0.02) %>%
+  mutate(gene = "16s",
+         type = "within",
+         level = "species")
+
+species_between_pid_16s = taxa_seq_16s %>%
+  filter(sn %in% taxa_rib$sn_rib) %>%
+  between_group_pid("species", replicate = 10) %>%
+  mutate(gene = "16s",
+         type = "between",
+         level = "species")
+
+species_between_pid_16s_cum = cumulative_gte(species_between_pid_16s$pid, 1, 0, -0.02) %>%
+  mutate(gene = "16s",
+         type = "between",
+         level = "species")
+
+species_pid_16s = bind_rows(species_within_pid_16s_samp,
+                            species_between_pid_16s)
+
+species_pid_16s_cum = bind_rows(species_within_pid_16s_cum,
+                            species_between_pid_16s_cum)
+
+# density plot
+ggplot(species_pid_16s, aes(x = pid, color = type)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-species identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal()
+
+# cumulative plot
+ggplot(species_pid_16s_cum, aes(x = x, y = val_cum, color = type)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-species identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal()
+
+
+```
+
+### 16s genus
+```{r}
+genus_within_pid_16s = taxa_seq_16s %>%
+  filter(genus %in% taxa_rib$ncbi_genus) %>%
+  within_group_pid("genus")
+
+genus_within_pid_16s_samp = genus_within_pid_16s %>%
+  filter(n > 1) %>%
   group_by(genus) %>%
-  summarise(
-    consensus = as.character(consensusString(DNAStringSet(seq.text))),
-    .groups = "drop"
-  )
+  slice_sample(n = 100, replace = TRUE) %>%
+  ungroup() %>%
+  mutate(gene = "16s",
+         type = "within",
+         level = "genus")
 
-consensus_genus_16s_set = DNAStringSet(consensus_genus_16s$consensus, use.name = TRUE)
-names(consensus_genus_16s_set) = consensus_genus_16s$genus
+genus_within_pid_16s_cum = cumulative_gte(genus_within_pid_16s_samp$pid, 1, 0, -0.02) %>%
+  mutate(gene = "16s",
+         type = "within",
+         level = "genus")
 
-between_genus_pid_16s = pid_mat_f(consensus_genus_16s_set)
+genus_between_pid_16s = taxa_seq_16s %>%
+  filter(genus %in% taxa_rib$ncbi_genus) %>%
+  between_group_pid("genus", replicate = 10) %>%
+  mutate(gene = "16s",
+         type = "between",
+         level = "genus")
 
-bg_pid_16s = between_genus_pid_16s[upper.tri(between_genus_pid_16s)]
+genus_between_pid_16s_cum = cumulative_gte(genus_between_pid_16s$pid, 1, 0, -0.02) %>%
+  mutate(gene = "16s",
+         type = "between",
+         level = "genus")
 
-between_genus_pid = data.frame(
-  pid = c(bg_pid_12s, bg_pid_16s),
-  gene = rep(c("12S", "16S"), c(length(bg_pid_12s), length(bg_pid_16s)))
-)
+genus_pid_16s = bind_rows(genus_within_pid_16s_samp,
+                            genus_between_pid_16s)
 
-ggplot(between_genus_pid, aes(x = pid, fill = gene)) +
-  geom_density(alpha = 0.6) +
+genus_pid_16s_cum = bind_rows(genus_within_pid_16s_cum,
+                            genus_between_pid_16s_cum)
+
+# density plot
+ggplot(genus_pid_16s, aes(x = pid, color = type)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-genus identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal()
+
+# cumulative plot
+ggplot(genus_pid_16s_cum, aes(x = x, y = val_cum, color = type)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-genus identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal()
+
+
+```
+
+### 16s family
+```{r}
+family_within_pid_16s = taxa_seq_16s %>%
+  filter(family %in% taxa_rib$itis_family) %>%
+  within_group_pid("family")
+
+family_within_pid_16s_samp = family_within_pid_16s %>%
+  filter(n > 1) %>%
+  group_by(family) %>%
+  slice_sample(n = 100, replace = TRUE) %>%
+  ungroup() %>%
+  mutate(gene = "16s",
+         type = "within")
+
+family_within_pid_16s_cum = cumulative_gte(family_within_pid_16s_samp$pid, 1, 0, -0.02) %>%
+  mutate(gene = "16s",
+         type = "within",
+         level = "family")
+
+family_between_pid_16s = taxa_seq_16s %>%
+  filter(family %in% taxa_rib$itis_family) %>%
+  between_group_pid("family", replicate = 10) %>%
+  mutate(gene = "16s",
+         type = "between",
+         level = "family")
+
+family_between_pid_16s_cum = cumulative_gte(family_between_pid_16s$pid, 1, 0, -0.02) %>%
+  mutate(gene = "16s",
+         type = "between",
+         level = "family")
+
+family_pid_16s = bind_rows(family_within_pid_16s_samp,
+                            family_between_pid_16s)
+
+family_pid_16s_cum = bind_rows(family_within_pid_16s_cum,
+                            family_between_pid_16s_cum)
+
+# density plot
+ggplot(family_pid_16s, aes(x = pid, color = type)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-family identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal()
+
+# cumulative plot
+ggplot(family_pid_16s_cum, aes(x = x, y = val_cum, color = type)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-family identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal()
+
+
+```
+
+## Combined
+```{r}
+
+species_pid = bind_rows(species_pid_12s,
+                       species_pid_16s)
+
+species_pid_cum = bind_rows(species_pid_12s_cum,
+                           species_pid_16s_cum)
+
+# density plot
+ggplot(species_pid, aes(x = pid, color = gene)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-species identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
   theme_minimal() +
-  xlim(0, 100)
+  facet_wrap("type")
+
+# cumulative plot
+ggplot(species_pid_cum, aes(x = x, y = val_cum, color = gene)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-species identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal() +
+  facet_wrap("type")
+
+# genus
+genus_pid = bind_rows(genus_pid_12s,
+                       genus_pid_16s)
+
+genus_pid_cum = bind_rows(genus_pid_12s_cum,
+                           genus_pid_16s_cum)
+
+# density plot
+ggplot(genus_pid, aes(x = pid, color = gene)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-genus identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal() +
+  facet_wrap("type")
+
+# cumulative plot
+ggplot(genus_pid_cum, aes(x = x, y = val_cum, color = gene)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-genus identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal() +
+  facet_wrap("type")
+
+
+# family
+family_pid = bind_rows(family_pid_12s,
+                       family_pid_16s)
+
+family_pid_cum = bind_rows(family_pid_12s_cum,
+                           family_pid_16s_cum)
+
+# density plot
+ggplot(family_pid, aes(x = pid, color = gene)) +
+  geom_density() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-family identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "Relative density") +
+  theme_minimal() +
+  facet_wrap("type")
+
+# cumulative plot
+ggplot(family_pid_cum, aes(x = x, y = val_cum, color = gene)) +
+  geom_line() +
+  scale_fill_brewer(palette = "Set2") +
+  labs(title = "Within- & between-family identity (RIBBiTR taxa)",
+       x = "Pairwise fractional identity",
+       y = "1 - Cumulative density") +
+  theme_minimal() +
+  facet_wrap("type")
+
 
 ```
