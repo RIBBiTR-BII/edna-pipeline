@@ -21,7 +21,7 @@ config = read_yaml(env_config_path)
 dbcon = hopToDB("ribbitr")
 
 # db table pointers
-db_edna = tbl(dbcon, Id("survey_data", "edna"))
+db_edna = tbl(dbcon, Id("survey_data", "edna_collection"))
 db_env = tbl(dbcon, Id("survey_data", "environmental"))
 db_survey = tbl(dbcon, Id("survey_data", "survey"))
 db_visit = tbl(dbcon, Id("survey_data", "visit"))
@@ -40,7 +40,7 @@ feature_table =
   arrange(asv_id)
 
 
-all_ids = feature_long = feature_table %>%
+all_ids = feature_table %>%
   pivot_longer(cols = -asv_id,
                names_to = "illumina_sample_raw",
                values_to = "asv_count") %>%
