@@ -1,0 +1,108 @@
+---
+title: "06_join_sample_survey"
+output: html_document
+---
+
+# Title: Process taxonomic hits to identify species likely found in Panama
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
+# load data
+```{r}
+## Load in Libraries (install them in you need them.)
+librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor)
+
+# read in config files
+config_12s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
+config_16s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/16S/output/metadata/config.yml"))
+
+# read in lookup file
+sample_lookup = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-01-22.xlsx")) %>%
+  clean_names() %>%
+  mutate(edna_sample_name = if_else(grepl("PAN_22", id_e_dna_sample),
+                                    id_e_dna_sample_edited,
+                                    id_e_dna_sample),
+         edna_sample_name = gsub("(^[0-9]{6})_", "\\1_eDNA_", edna_sample_name))
+
+# establish database connection
+dbcon = hopToDB("ribbitr")
+
+# db table pointers
+db_edna = tbl(dbcon, Id("survey_data", "edna_collection"))
+db_env = tbl(dbcon, Id("survey_data", "environmental"))
+db_survey = tbl(dbcon, Id("survey_data", "survey"))
+db_visit = tbl(dbcon, Id("survey_data", "visit"))
+db_site = tbl(dbcon, Id("survey_data", "site"))
+db_region = tbl(dbcon, Id("survey_data", "region"))
+db_country = tbl(dbcon, Id("survey_data", "country"))
+
+```
+
+# pull environmental data
+```{r}
+sample_names = sample_lookup %>%
+  filter(!is.na(edna_sample_name),
+         illumina_run %in% c("February_2023",
+                             "December_2023")) %>%
+  select(edna_sample_name) %>%
+  distinct()
+
+edna_meta = db_edna %>%
+  left_join(db_survey, by = "survey_id") %>%
+  left_join(db_visit, by = "visit_id") %>%
+  left_join(db_site, by = "site_id") %>%
+  left_join(db_region, by = "region_id") %>%
+  left_join(db_country, by = "country_id") %>%
+  filter(edna_sample_name %in% sample_names$edna_sample_name) %>%
+  select(edna_sample_name,
+         collection_time,
+         edna_latitude,
+         edna_longitude,
+         comments_edna,
+         filter_method,
+         filter_size_um,
+         filter_start_time,
+         filter_end_time,
+         filter_volume_ml,
+         visit_id,
+         date,
+         site,
+         region,
+         country) %>%
+  collect()
+
+missing = setdiff(sample_names$edna_sample_name, edna_meta$edna_sample_name)
+
+env_meta = db_env %>%
+  left_join(db_survey, by = "survey_id") %>%
+  left_join(db_visit, by = "visit_id") %>%
+  filter(visit_id %in% edna_meta$visit_id) %>%
+  select(visit_id,
+         air_temp_c,
+         wind_speed_m_s,
+         cloud_cover_percent,
+         water_temp_c,
+         p_h,
+         tds_ppm,
+         conductivity_us_cm) %>%
+  collect() %>%
+  group_by(visit_id) %>%
+  slice_sample(n = 1) %>%
+  ungroup()
+
+edna_env_meta = edna_meta %>%
+  left_join(env_meta, by = "visit_id") %>%
+  full_join(sample_lookup %>%
+              filter(!is.na(edna_sample_name),
+                     illumina_run %in% c("February_2023",
+                                         "December_2023")) %>%
+              select(edna_sample_name,
+                     id_e_dna_sample) %>%
+              distinct(), by = "edna_sample_name") %>%
+  arrange(edna_sample_name) %>%
+  select(edna_sample_name,
+         id_e_dna_sample,
+         everything())
+
+write_csv(edna_env_meta, here("16S Process TEST", paste0("runs/methods_2026-01-12/12S/output/metadata/edna_env_metadata", today(),".csv")))
+
+```
