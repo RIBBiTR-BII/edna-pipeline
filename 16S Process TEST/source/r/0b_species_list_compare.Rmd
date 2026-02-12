@@ -3,14 +3,15 @@ title: "0b_species_list_compare"
 output: html_document
 ---
 
+# setup
 ```{r}
 # setup
 
 # minimal libraries
-librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here, phylotools, Biostrings, pwalign, DECIPHER)
+librarian::shelf(tidyverse, dbplyr, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, yaml, here, phylotools, Biostrings, pwalign, DECIPHER, nls2)
 
 # read in config files
-config_12s = read_yaml(here("12S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
+config_12s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
 config_16s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/16S/output/metadata/config.yml"))
 
 # establish database connection
@@ -94,17 +95,117 @@ taxa_16s = taxa_16s_raw %>%
             .groups = "drop") %>%
   mutate(sn_16s = paste(genus, species))
 
-# read in 12s sequences
+# read in 12s classifier sequences
 seq_12s =
   read.fasta(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_seqs_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_12s$taxonomy$classifierDir, "/Vertebrata", config_12s$taxonomy$gene, "_derep1_seqs_extracted"))), 
                     "/data/dna-sequences.fasta")))
 
-# read in 16s sequences
+# read in 16s classifier sequences
 seq_16s =
   read.fasta(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_seqs_extracted/", 
                     list.files(here("16S Process TEST", paste0(config_16s$taxonomy$classifierDir, "/Vertebrata", config_16s$taxonomy$gene, "_derep1_seqs_extracted"))), 
                     "/data/dna-sequences.fasta")))
+
+```
+
+# samples
+```{r}
+# 12s
+feature_table_12s =
+  read_tsv(here("16S Process TEST", config_12s$run$runDir, "analysis/s06_denoised_12S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  as.data.frame() %>%
+  dplyr::rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+
+all_ids_12s = feature_table_12s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "illumina_sample_id",
+               values_to = "asv_count") %>%
+  select(illumina_sample_id) %>%
+  distinct() %>%
+  mutate(crispr = grepl("CRISPR", illumina_sample_id),
+         block = FALSE,
+         control = grepl("Negative|Positive", illumina_sample_id)) %>%
+  arrange(illumina_sample_id)
+
+feature_long_12s = feature_table_12s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "illumina_sample_id",
+               values_to = "asv_count") %>%
+  filter(asv_count != 0) %>%
+  select(illumina_sample_id,
+         everything()) %>%
+  arrange(illumina_sample_id,
+          desc(asv_count))
+
+# 16s
+feature_table_16s =
+  read_tsv(here("16S Process TEST", config_16s$run$runDir, "analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  as.data.frame() %>%
+  dplyr::rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+
+all_ids_16s = feature_table_16s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "illumina_sample_id",
+               values_to = "asv_count") %>%
+  select(illumina_sample_id) %>%
+  distinct() %>%
+  mutate(crispr = grepl("CRISPR", illumina_sample_id),
+         block = grepl("block", illumina_sample_id) & !grepl("noblock", illumina_sample_id),
+         control = grepl("Negative|Positive|Neg|BH", illumina_sample_id)) %>%
+  arrange(illumina_sample_id)
+
+feature_long_16s = feature_table_16s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "illumina_sample_id",
+               values_to = "asv_count") %>%
+  filter(asv_count != 0) %>%
+  select(illumina_sample_id,
+         everything()) %>%
+  arrange(illumina_sample_id,
+          desc(asv_count))
+
+```
+# asv sequences
+```{r}
+asv_seq_12s =
+  read.fasta(here("16S Process TEST", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences/", 
+                           list.files(here("16S Process TEST", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences"))), 
+                           "/data/dna-sequences.fasta"))) %>%
+  dplyr::rename(asv_id = seq.name) %>%
+  arrange(asv_id)
+
+asv_seq_16s =
+  read.fasta(here("16S Process TEST", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences/", 
+                           list.files(here("16S Process TEST", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences"))), 
+                           "/data/dna-sequences.fasta"))) %>%
+  dplyr::rename(asv_id = seq.name) %>%
+  arrange(asv_id)
+
+```
+
+# hits
+```{r}
+hits_12s = read_csv(here("16S Process TEST", config_12s$run$runDir, "output", paste0(config_12s$run$name, "_eDNA_hits_joined.csv"))) %>%
+  filter(!is.na(class),
+         method == "vsearch",
+         seq_overlap >= 50) %>%
+  select(-consensus) %>%
+  mutate(p_identical = percent_identical / 100,
+         p_overlap = seq_overlap / (s_end - s_start + 1))
+
+hits_16s = read_csv(here("16S Process TEST", config_16s$run$runDir, "output", paste0(config_16s$run$name, "_eDNA_hits_joined.csv"))) %>%
+  filter(!is.na(class),
+         method == "vsearch",
+         seq_overlap >= 50) %>%
+  select(-consensus) %>%
+  mutate(p_identical = percent_identical / 100,
+         p_overlap = seq_overlap / (s_end - s_start + 1))
+
 
 ```
 
@@ -154,7 +255,7 @@ ggplot(taxa_rib_count, aes(x = n, fill = gene)) +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "12S/16S sequence counts: RIBBiTR amphibian species",
        x = "Number of sequences (n)",
-       y = "Number of species with at least 'n' sequences") +
+       y = "Number of species with 'n' sequences") +
   xlim(1, 50) +
   theme_minimal()
 
@@ -163,7 +264,7 @@ ggplot(cumulative_table, aes(x = sequences_n, y = p_species_gte_ii, color = gene
   geom_line() +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "Cumulative 12S/16S sequence counts: RIBBiTR amphibian species",
-       x = "Number of sequences (n)",
+       x = "Minimum number of sequences (n)",
        y = "Portion of RIBBiTR species with at least 'n' sequences") +
   xlim(1, 50) +
   theme_minimal()
@@ -191,10 +292,10 @@ cumulative_table_all = tibble(
                         "n_species_16s_gt_ii")) %>%
   dplyr::rename(sequences_n = ii,
                 species_gte_n = value) %>%
-  mutate(gene = case_match(name,
+  mutate(gene = recode_values(name,
                            "n_species_12s_gt_ii" ~ "12S",
                            "n_species_16s_gt_ii" ~ "16S",
-                           .default = NA))
+                           default = NA))
 
 
 # ggplot(cumulative_table_all, aes(x = sequences_n, y = species_n, color = gene)) +
@@ -207,7 +308,7 @@ ggplot(taxa_total_count, aes(x = n, fill = gene)) +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "12S/16S sequence counts: All amphibian species",
        x = "Number of sequences (n)",
-       y = "Number of species with at least 'n' sequences") +
+       y = "Number of species with 'n' sequences") +
   xlim(1, 50) +
   theme_minimal()
 
@@ -216,7 +317,7 @@ ggplot(cumulative_table_all, aes(x = sequences_n, y = species_gte_n, color = gen
   geom_line() +
   scale_fill_brewer(palette = "Set2")+
   labs(title = "Cumulative 12S/16S sequence counts: All amphibian species",
-       x = "Number of sequences (n)",
+       x = "Minimum number of sequences (n)",
        y = "Number of species with at least 'n' sequences") +
   xlim(1, 50) +
   theme_minimal()
@@ -326,7 +427,7 @@ ggplot(cf_family_factor, aes(x = f, y = family, fill = gene)) +
 
 ```
 
-# sequence length distributions
+# sequence length distributions: classifiers
 ```{r}
 # look at sequence lengths (total and for RIBBiTR species)
 taxa_seq_12s = taxa_12s_raw %>%
@@ -357,11 +458,30 @@ width_df = data.frame(
   taxon_id = c(taxa_seq_12s$taxon_id, taxa_seq_16s$taxon_id)
 )
 
+# all taxa in classifier (vertebrata)
+# convert to DNAStringSets
+set_12s_all = DNAStringSet(seq_12s$seq.text, use.name = TRUE)
+
+set_16s_all = DNAStringSet(seq_16s$seq.text, use.name = TRUE)
+
+width_df_all = data.frame(
+  width = c(width(set_12s_all), width(set_16s_all)),
+  gene = rep(c("12S", "16S"), c(length(set_12s_all), length(set_16s_all)))
+)
+
+ggplot(width_df_all, aes(x = width, fill = gene)) +
+  geom_histogram() +
+  facet_wrap("gene", scales = "free") +
+  theme_minimal() +
+  labs(title = "12S/16S sequence length distributions (Vertebrata)",
+       x = "Sequence length (bp)",
+       y = "Sequences")
+
 ggplot(width_df, aes(x = width, fill = gene)) +
   geom_histogram() +
   facet_wrap("gene", scales = "free") +
   theme_minimal() +
-  labs(title = "12S/16S sequence length distributions (all amphibians)",
+  labs(title = "12S/16S sequence length distributions (Amphibia)",
        x = "Sequence length (bp)",
        y = "Sequences")
 
@@ -374,7 +494,29 @@ ggplot(width_df %>%
        x = "Sequence length (bp)",
        y = "Sequences")
 ```
+# sequence length distributions: ASVs
+```{r}
+# convert to DNAStringSets
+set_asv_12s = DNAStringSet(asv_seq_12s$seq.text, use.name = TRUE)
+names(set_asv_12s) = asv_seq_12s$asv_id
 
+set_asv_16s = DNAStringSet(asv_seq_16s$seq.text, use.name = TRUE)
+names(set_asv_16s) = asv_seq_16s$asv_id
+
+width_asv_df = data.frame(
+  width = c(width(set_asv_12s), width(set_asv_16s)),
+  gene = rep(c("12S", "16S"), c(length(set_asv_12s), length(set_asv_16s))),
+  feature_id = c(names(set_asv_12s), names(set_asv_16s))
+)
+
+ggplot(width_asv_df, aes(x = width, fill = gene)) +
+  geom_histogram() +
+  facet_wrap("gene", scales = "free") +
+  theme_minimal() +
+  labs(title = "12S/16S ASV sequence length distributions",
+       x = "Sequence length (bp)",
+       y = "Sequences")
+```
 # Taxa similarity
 ```{r}
 
@@ -889,5 +1031,254 @@ ggplot(family_pid_cum, aes(x = x, y = val_cum, color = gene)) +
   theme_minimal() +
   facet_wrap("type")
 
+
+```
+
+# ASVs per sample
+```{r}
+asv_rarefy <- function(df, max_n, ii = 100) {
+  samples <- unique(df$illumina_sample_id)
+  n_samples <- length(samples)
+  if (max_n > n_samples) {
+    warning("max_n exceeds number of samples; setting to n_samples")
+    max_n <- n_samples
+  }
+  
+  nn_vec <- 0:max_n
+  
+  results <- map_dfr(nn_vec, function(nn) {
+    sims <- map_df(1:ii, ~ {
+      sel_samples <- sample(samples, size = nn, replace = FALSE)
+      df %>% 
+        filter(illumina_sample_id %in% sel_samples) %>% 
+        summarise(n_asv = n_distinct(asv_id), .groups = "drop")
+    })
+    sims %>% 
+      summarise(
+        nn = nn,
+        median_asv = median(n_asv),
+        q25 = quantile(n_asv, 0.25),
+        q75 = quantile(n_asv, 0.75),
+        mean_asv = mean(n_asv),
+        sd_asv = sd(n_asv),
+        .groups = "drop"
+      )
+  })
+  
+  return(results)
+}
+
+# 12s
+## filter to simple samples
+simple_ids_12s = all_ids_12s %>%
+  filter(!crispr,
+         !block,
+         !control)
+
+simple_asvs_12s = feature_long_12s %>%
+  filter(illumina_sample_id %in% simple_ids_12s$illumina_sample_id)
+
+mean_asv_per_samp_12s = nrow(simple_asvs_12s) / nrow(simple_ids_12s)
+
+rarefied_12s = asv_rarefy(simple_asvs_12s, nrow(simple_ids_12s), ii = 100) %>%
+  mutate(gene = "12S",
+         mean_asv_0 = nn * mean_asv_per_samp_12s)
+
+# 16s
+## filter to simple samples
+simple_ids_16s = all_ids_16s %>%
+  filter(!crispr,
+         !block,
+         !control)
+
+simple_asvs_16s = feature_long_16s %>%
+  filter(illumina_sample_id %in% simple_ids_16s$illumina_sample_id)
+
+mean_asv_per_samp_16s = nrow(simple_asvs_16s) / nrow(simple_ids_16s)
+
+rarefied_16s = asv_rarefy(df = simple_asvs_16s, max_n = nrow(simple_ids_16s), ii = 100) %>%
+  mutate(gene = "16S",
+         mean_asv_0 = nn * mean_asv_per_samp_16s)
+
+rarefied = bind_rows(rarefied_12s,
+                     rarefied_16s) %>%
+  mutate(mean_asv_per_sample = mean_asv / nn)
+
+ggplot(rarefied, aes(x = nn, y = median_asv, color = gene, fill = gene)) +
+  geom_line() +
+  geom_line(aes(y = mean_asv_0), linetype = 2) +
+  ylim(0, 200)
+
+ggplot(rarefied, aes(x = nn, y = mean_asv_per_sample, color = gene, fill = gene)) +
+  geom_line() +
+  ylim(0, NA)
+
+# estimate asymptote
+
+# Inverse: 1/S vs 1/nn should be linear
+lin_data_12s <- rarefied_12s %>% 
+  filter(nn > 5, median_asv > 0) %>%  # Avoid edge effects
+  mutate(inv_S = 1/median_asv, inv_nn = 1/nn)
+
+lm_fit_12s <- lm(inv_S ~ inv_nn, data = lin_data_12s)
+asymptote_lin_12s <- 1/coef(lm_fit_12s)[1]  # Intercept gives 1/K
+asymptote_lin_12s
+
+lin_data_16s <- rarefied_16s %>% 
+  filter(nn > 5, median_asv > 0) %>%  # Avoid edge effects
+  mutate(inv_S = 1/median_asv, inv_nn = 1/nn)
+
+lm_fit_16s <- lm(inv_S ~ inv_nn, data = lin_data_16s)
+asymptote_lin_16s <- 1/coef(lm_fit_16s)[1]  # Intercept gives 1/K
+asymptote_lin_16s
+```
+
+# Hits per sample
+```{r}
+# 12s
+## filter to simple samples
+simple_hits_12s = hits_12s %>%
+  select(asv_id,
+         taxon_id,
+         class,
+         percent_identical,
+         seq_overlap) %>%
+  inner_join(simple_asvs_12s, by = "asv_id", relationship = "many-to-many")
+
+quality_hits_12s = simple_hits_12s %>%
+  filter(percent_identical >= 95)
+
+simple_hits_amphibia_12s = simple_hits_12s %>%
+  filter(class == "Amphibia")
+
+quality_hits_amphibia_12s = quality_hits_12s %>%
+  filter(class == "Amphibia")
+
+mean_hit_per_asv_12s = nrow(simple_hits_12s) / nrow(simple_asvs_12s)
+mean_amphibia_hit_per_asv_12s = nrow(simple_hits_amphibia_12s) / nrow(simple_asvs_12s)
+
+any_hit_per_asv_12s = nrow(simple_hits_12s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_12s)
+any_amphibia_hit_per_asv_12s = nrow(simple_hits_amphibia_12s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_12s)
+
+quality_hit_per_asv_12s = nrow(quality_hits_12s) / nrow(simple_asvs_12s)
+quality_amphibia_hit_per_asv_12s = nrow(quality_hits_amphibia_12s) / nrow(simple_asvs_12s)
+
+any_quality_hit_per_asv_12s = nrow(quality_hits_12s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_12s)
+any_quality_amphibia_hit_per_asv_12s = nrow(quality_hits_amphibia_12s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_12s)
+
+# 16s
+## filter to simple samples
+simple_hits_16s = hits_16s %>%
+  select(asv_id,
+         taxon_id,
+         class,
+         percent_identical,
+         seq_overlap) %>%
+  inner_join(simple_asvs_16s, by = "asv_id", relationship = "many-to-many")
+
+quality_hits_16s = simple_hits_16s %>%
+  filter(percent_identical >= 95)
+
+simple_hits_amphibia_16s = simple_hits_16s %>%
+  filter(class == "Amphibia")
+
+quality_hits_amphibia_16s = quality_hits_16s %>%
+  filter(class == "Amphibia")
+
+mean_hit_per_asv_16s = nrow(simple_hits_16s) / nrow(simple_asvs_16s)
+mean_amphibia_hit_per_asv_16s = nrow(simple_hits_amphibia_16s) / nrow(simple_asvs_16s)
+
+any_hit_per_asv_16s = nrow(simple_hits_16s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_16s)
+any_amphibia_hit_per_asv_16s = nrow(simple_hits_amphibia_16s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_16s)
+
+quality_hit_per_asv_16s = nrow(quality_hits_16s) / nrow(simple_asvs_16s)
+quality_amphibia_hit_per_asv_16s = nrow(quality_hits_amphibia_16s) / nrow(simple_asvs_16s)
+
+any_quality_hit_per_asv_16s = nrow(quality_hits_16s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_16s)
+any_quality_amphibia_hit_per_asv_16s = nrow(quality_hits_amphibia_16s %>%
+                             select(asv_id) %>%
+                             distinct()) / nrow(simple_asvs_16s)
+
+rarefied_hits = rarefied %>%
+  mutate(median_q_hits_vertebrata = recode_values(gene,
+                                                "12S" ~ median_asv * quality_hit_per_asv_12s,
+                                                "16S" ~ median_asv * quality_hit_per_asv_16s),
+         # mean_hits_vertebrata = recode_values(gene,
+         #                                        "12S" ~ nn * mean_hit_per_asv_12s,
+         #                                        "16S" ~ median_asv * mean_hit_per_asv_16s),
+         median_q_hits_amphibia = recode_values(gene,
+                                                "12S" ~ median_asv * quality_amphibia_hit_per_asv_12s,
+                                                "16S" ~ median_asv * quality_amphibia_hit_per_asv_16s))
+
+ggplot(rarefied_hits, aes(x = nn, y = median_q_hits_vertebrata, color = gene, fill = gene)) +
+  geom_line()
+  #geom_line(aes(y = mean_seq), linetype = 2)
+
+ggplot(rarefied_hits, aes(x = nn, y = median_q_hits_amphibia, color = gene, fill = gene)) +
+  geom_line()
+  #geom_line(aes(y = mean_seq), linetype = 2)
+
+```
+
+# summarize relative rates 
+```{r}
+# ASUs per sample
+## at 20 samples:
+peace = rarefied %>%
+  filter(nn == 20) %>%
+  pull(mean_asv_per_sample)
+asv_per_samp_12s = peace[1]
+asv_per_samp_16s = peace[2]
+
+r_asv_per_samp = asv_per_samp_12s / asv_per_samp_16s
+
+# at least one quality vertebrate hit per ASV
+any_quality_hit_per_asv_12s
+any_quality_hit_per_asv_16s
+r_quality_hit_per_asv = any_quality_hit_per_asv_12s / any_quality_hit_per_asv_16s
+
+# at least one quality amphibia hit per ASV
+any_quality_amphibia_hit_per_asv_12s
+any_quality_amphibia_hit_per_asv_16s
+r_quality_amphibia_hit_per_asv = any_quality_amphibia_hit_per_asv_12s / any_quality_amphibia_hit_per_asv_16s
+
+## classifier pool factor
+### prob hit given target amphibian
+hope = cumulative_table %>%
+  filter(sequences_n == 1) %>%
+  pull(p_species_gte_ii)
+p_target_amphibian_12s = hope[1]
+p_target_amphibian_16s = hope[2]
+
+r_target_amphibian = p_target_amphibian_12s / p_target_amphibian_16s
+
+### prob quality hit given hit (amphibian)
+p_quality_hit_12s = nrow(simple_hits_amphibia_12s) / nrow(simple_hits_amphibia_12s %>%
+                                        filter(percent_identical >= 95))
+p_quality_hit_16s = nrow(simple_hits_amphibia_16s) / nrow(simple_hits_amphibia_16s %>%
+                                        filter(percent_identical >= 95))
+
+r_quality_hit = p_quality_hit_12s / p_quality_hit_16s
+
+### prob amphibian given ASV
+xx_12s = any_quality_amphibia_hit_per_asv_12s / (p_target_amphibian_12s * p_quality_hit_12s)
+
+xx_16s = any_quality_amphibia_hit_per_asv_16s / (p_target_amphibian_16s * p_quality_hit_16s)
+
+r_xx = xx_12s / xx_16s
 
 ```
