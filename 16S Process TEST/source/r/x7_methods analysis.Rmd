@@ -1,0 +1,299 @@
+---
+title: "x7_methods analysis"
+output: html_document
+---
+
+# setup
+```{r}
+librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor, phylotools)
+
+# data directory
+ddir = Sys.getenv("data_dir")
+
+# read in config files
+config_12s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
+config_16s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/16S/output/metadata/config.yml"))
+```
+
+# load data
+## metadata
+```{r}
+# sample metadata file
+sample_lookup_md = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-01-22.xlsx")) %>%
+  clean_names() %>%
+  filter(illumina_run %in% c("February_2023",
+                             "December_2023")) %>%
+  rename(passive_active_rz = passive_active_rz_lab) %>%
+  select(-date,
+         -region,
+         -site,
+         -x22)
+
+
+sample_lookup_rib = read_csv(here("16S Process TEST", paste0("runs/methods_2026-01-12/12S/output/metadata/edna_env_metadata_2026-02-11.csv")))
+
+# augment control types
+field_controls = tibble(sample_id = c("PAN_14-12S",
+                                      "PAN_14-12S-CRISPR",
+                                      "PAN_14-16Sblock",
+                                      "PAN_14-16Sblock-CRISPR",
+                                      "PAN_14-16Snoblock",
+                                      "PAN_14-16Snoblock-CRISPR",
+                                      "PENN_08-12S",
+                                      "PENN_08-12S-CRISPR",
+                                      "PENN_08-16Sblock",
+                                      "PENN_08-16Sblock-CRISPR",
+                                      "PENN_08-16Snoblock",
+                                      "PENN_08-16Snoblock-CRISPR",
+                                      "Tissue_63"),
+                       control_type = "negative_field")
+
+sample_lookup = sample_lookup_rib %>%
+  rename(ribbitr_sample_name = edna_sample_name) %>%
+  full_join(sample_lookup_md, by = "id_e_dna_sample") %>%
+  mutate(sample_id = sub("-", "_", gsub("_", "-", sequencing_sample_name))) %>%
+  left_join(field_controls, by = "sample_id") %>%
+  select(sample_id,
+         control_type,
+         everything()) %>%
+  mutate(crispr = grepl("CRISPR", sample_id),
+         block = grepl("block", sample_id) & !grepl("noblock", sample_id),
+         gene = case_when(
+           grepl("12S", sample_id) ~ "12S",
+           grepl("16S|Tissue|PCI|Neg_Control", sample_id) ~ "16S",
+           .default = NA),
+         control_type = case_when(
+           grepl("^Positive", sample_id) ~ "positive",
+           grepl("^Neg", sample_id) ~ "negative_lab",
+           .default = control_type),
+         country = if_else(is.na(country), "usa", country),
+         extraction_type = if_else(grepl("PCI", sample_id), "PCI", extraction_type))
+
+sample_simple = sample_lookup %>%
+  select(sample_id,
+         ribbitr_sample_name,
+         gene,
+         filter_size_um_rz,
+         passive_active_rz,
+         crispr,
+         block,
+         extraction_type,
+         control_type)
+
+# summary stats
+sample_stats = sample_simple %>%
+  group_by(gene,
+           filter_size_um_rz,
+           passive_active_rz,
+           crispr,
+           block,
+           extraction_type,
+           control_type) %>%
+  count() %>%
+  ungroup() %>%
+  complete(gene,
+           filter_size_um_rz,
+           passive_active_rz,
+           crispr,
+           block,
+           extraction_type,
+           control_type,
+           fill = list(n = 0)) %>%
+  arrange(gene,
+           filter_size_um_rz,
+           passive_active_rz,
+           crispr,
+           block,
+           extraction_type,
+          control_type)
+
+```
+
+## feature tables
+```{r}
+## 12s
+feature_table_12s =
+  read_tsv(here("16S Process TEST", config_12s$run$runDir, "analysis/s06_denoised_12S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  as.data.frame() %>%
+  dplyr::rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+feature_long_12s = feature_table_12s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "sample_id",
+               values_to = "asv_count") %>%
+  # filter(asv_count != 0) %>%
+  select(sample_id,
+         everything()) %>%
+  arrange(sample_id,
+          desc(asv_count))
+
+samples_12s = feature_long_12s %>%
+  select(sample_id) %>%
+  distinct() %>%
+  mutate(gene = "12S")
+
+## 16s
+feature_table_16s =
+  read_tsv(here("16S Process TEST", config_16s$run$runDir, "analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  as.data.frame() %>%
+  dplyr::rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+feature_long_16s = feature_table_16s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "sample_id",
+               values_to = "asv_count") %>%
+  # filter(asv_count != 0) %>%
+  select(sample_id,
+         everything()) %>%
+  arrange(sample_id,
+          desc(asv_count))
+
+samples_16s = feature_long_16s %>%
+  select(sample_id) %>%
+  distinct() %>%
+  mutate(gene = "16S")
+
+# # check alignment
+# sample_align = sample_simple %>%
+#   left_join(bind_rows(samples_12s,
+#                       samples_16s), by = "sample_id")
+# 
+# sample_align$gene.x == sample_align$gene.y
+# 
+# # check no common asv_ids
+# peace = get_dupes(bind_rows(bind_rows(feature_long_12s %>%
+#                                         select(asv_id) %>%
+#                                         distinct(),
+#                                       feature_long_16s %>%
+#                                         select(asv_id) %>%
+#                                         distinct())), asv_id)
+```
+
+
+## sequence tables
+```{r}
+## 12s
+asv_seq_12s =
+  read.fasta(here("16S Process TEST", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences/", 
+                           list.files(here("16S Process TEST", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences"))), 
+                           "/data/dna-sequences.fasta"))) %>%
+  dplyr::rename(asv_id = seq.name) %>%
+  arrange(asv_id)
+
+## 16s
+asv_seq_16s =
+  read.fasta(here("16S Process TEST", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences/", 
+                           list.files(here("16S Process TEST", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences"))), 
+                           "/data/dna-sequences.fasta"))) %>%
+  dplyr::rename(asv_id = seq.name) %>%
+  arrange(asv_id)
+```
+
+## classification tables
+```{r}
+classified_12s = read.csv(here("16S Process TEST", config_12s$run$runDir, "output", "methods_2026-01-12_12S_asv_classified.csv"))
+classified_16s = read.csv(here("16S Process TEST", config_16s$run$runDir, "output", "methods_2026-01-12_16S_asv_classified.csv"))
+
+```
+
+# controls
+```{r}
+sample_asv = sample_simple %>%
+  left_join(bind_rows(feature_long_12s,
+                      feature_long_16s), by = "sample_id")
+
+control_asv_pos = sample_asv %>%
+  filter(control_type == "positive") %>%
+  group_by(asv_id, control_type) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop")
+
+control_asv_neg_lab = sample_asv %>%
+  filter(control_type == "negative_lab") %>%
+  group_by(asv_id, control_type) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop")
+
+control_asv_neg_field = sample_asv %>%
+  filter(control_type == "negative_field") %>%
+  group_by(asv_id, control_type) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop")
+
+control_asv = bind_rows(control_asv_pos,
+                        control_asv_neg_lab,
+                        control_asv_neg_field) %>%
+  filter(max_control_asv_count > 0) %>%
+  group_by(asv_id) %>%
+  slice_max(max_control_asv_count, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(asv_control_th = 100 * max_control_asv_count) %>%
+  rename(control_th_type = control_type)
+
+sample_asv_control = sample_asv %>%
+  left_join(control_asv, by = "asv_id") %>%
+  mutate(control_th_below = (asv_count <= asv_control_th),
+         detected = (asv_count > 0),
+         detected_controlled = (detected & !(control_th_below %in% c(TRUE))))
+
+```
+
+# analysis
+
+## asvs
+```{r}
+sample_taxa_control = sample_asv_control %>%
+  left_join(bind_rows(classified_12s,
+                      classified_16s), by = "asv_id") %>%
+  filter(is.na(control_type))
+
+sample_taxa_control_count = sample_taxa_control %>%
+  group_by(sample_id,
+           gene,
+           filter_size_um_rz,
+           passive_active_rz,
+           crispr,
+           block,
+           extraction_type,
+           control_type) %>%
+  summarize(n_asv = sum(detected),
+            n_asv_controlled = sum(detected_controlled),
+            n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_level)),
+            n_asv_controlled_class_amph = sum(detected_controlled & (class == "Amphibia")),
+            n_asv_controlled_class_amph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_level == "species")),
+            .groups = "drop")
+
+sample_taxa_control_count_long = sample_taxa_control_count %>%
+  pivot_longer(cols = c(n_asv,
+                        n_asv_controlled,
+                        n_asv_controlled_class,
+                        n_asv_controlled_class_amph,
+                        n_asv_controlled_class_amph_spp),
+               names_to = "count_type",
+               values_to = "n")
+
+peace = sample_taxa_control %>%
+  filter(asv_id == "b4f707eba930e41eb1d4aac90d5f1765",
+         asv_count > 0)
+
+# gene
+ggplot(sample_taxa_control_count_long, aes(x = gene, y = n, color = count_type)) +
+  geom_boxplot() +
+  ylim(0, 15)
++
+  scale_y_log10()
+
+peace = sample_taxa_control_count %>%
+  filter(gene == "16S") %>%
+  group_by(passive_active_rz,
+           filter_size_um_rz) %>%
+  summarize(memean = mean(n_asv_controlled_class_amph_spp))
+
+# 16s pore size active passive
+ggplot(sample_taxa_control_count %>%
+         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_amph_spp, color = filter_size_um_rz)) +
+  geom_boxplot()
+
+```
