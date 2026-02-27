@@ -3,7 +3,6 @@
 # read in config.yml for configuration parameters
 c_run_name=$(yq e '.run.name' config.yml)
 c_run_dir=$(yq e '.run.runDir' config.yml)
-c_update_taxa=$(yq e '.taxonomy.updateBool' config.yml)
 
 echo "Initiating run: $c_run_name"
 
@@ -29,12 +28,6 @@ cp config.yml "$c_run_dir/output/metadata"
 env_config_path="$c_run_dir/output/metadata/config.yml"
 export env_config_path
 
-# update reference taxonomy
-if [ "$c_update_taxa" = "true" ]; then
-  echo "Downloading and curating reference taxa list"
-  bash update-vertebrata16s-classifier.sh 
-fi
-
 # r01
 echo "Making manifest file"
 Rscript source/r/00_make_manifest_file.R "$env_config_path"
@@ -46,6 +39,7 @@ Rscript source/r/01_init_run_metadata.R "$env_config_path"
 # s##
 echo "Performing sequence processing"
 bash source/shell/qiime-seq-process.sh
+# bash source/shell/qiime-seq-process_12s.sh
 
 # t01
 echo "Consolidating outputs"
