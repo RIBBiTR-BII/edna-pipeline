@@ -38,7 +38,7 @@ Rscript source/r/01_init_run_metadata.R "$env_config_path"
 
 # s##
 echo "Performing sequence processing"
-bash source/shell/qiime-seq-process.sh
+bash source/shell/qiime-seq-process_16s.sh
 # bash source/shell/qiime-seq-process_12s.sh
 
 # t01
