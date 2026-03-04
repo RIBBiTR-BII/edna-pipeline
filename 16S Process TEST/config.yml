@@ -1,16 +1,17 @@
 ---
 run:
-  name: methods_2025-12-29
-  runDir: runs/methods_2025-12-29
+  name: methods_2026-02-03_12S                # a unique run name
+  runDir: runs/methods_2026-02-03/12S         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
   description: Methods comparison run, including all samples from February and December 2023 Illumina sequencing
-  technician: Cob Staines
-  qiimeEnv: qiime2-amplicon-2025.4
+                                              # run description
+  technician: Cob Staines                     # who is processing these data, for communication
+  qiimeEnv: qiime2-amplicon-2025.4            # the name of the conda environment with qiime2 installed (run `conda env list` in terminal to see all environment names)
 taxonomy:
-  classifierDir: vertebrata16s_classifier
-  updateBool: false
-trimPaired:              # trim primers
+  gene: 16S                                   # 12S or 16S
+  classifierDir: vertebrata16s_classifier     # subfolder containing the taxonomic classifier
+trimPaired:
   errorRate: 0.3         # error rate for trimming of primers
-denoisePaired:           # denoise
+denoisePaired:
   truncQ: 2              # quality threshold at which to truncate reads
   truncLen: 0            # length at which to truncate reads (forward and reverse)
 consensusBlast:
