@@ -3,6 +3,7 @@
 # read in config.yml for configuration parameters
 c_run_name=$(yq e '.run.name' config.yml)
 c_run_dir=$(yq e '.run.runDir' config.yml)
+c_taxonomy_gene=$(yq e '.taxonomy.gene' config.yml)
 
 echo "Initiating run: $c_run_name"
 
@@ -38,8 +39,16 @@ Rscript source/r/01_init_run_metadata.R "$env_config_path"
 
 # s##
 echo "Performing sequence processing"
-bash source/shell/qiime-seq-process_16s.sh
-# bash source/shell/qiime-seq-process_12s.sh
+if [ $c_taxonomy_gene == "12S"]; then
+  echo "Running qiime-seq-process_12s.sh"
+  bash source/shell/qiime-seq-process_12s.sh
+elif [ $c_taxonomy_gene == "16S"]; then
+  echo "Running qiime-seq-process_16s.sh"
+  bash source/shell/qiime-seq-process_16s.sh
+else
+  echo "Gene not recognized: $c_taxonomy_gene"
+  exit 1
+fi
 
 # t01
 echo "Consolidating outputs"
