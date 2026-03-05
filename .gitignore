@@ -1,8 +1,8 @@
-.Rproj.user
-.Rhistory
-.RData
-.Ruserdata
-nf_test/*
+*.Rproj
+*.Rproj.user
+*.Rhistory
+*.RData
+*.Ruserdata
 *.fastq
 *.fastq.gz
 *.qza
@@ -12,3 +12,4 @@ nf_test/*
 */output/*
 */metadata/*
 */analysis/*
+*/runs/*
