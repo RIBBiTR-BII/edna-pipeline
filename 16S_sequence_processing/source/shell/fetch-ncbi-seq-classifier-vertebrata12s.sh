@@ -9,7 +9,7 @@ c_taxa_dir="vertebrata12s_classifier"
 # see details here: https://library.qiime2.org/plugins/rescript/27/
 
 if [ -d "$c_taxa_dir" ]; then
-  echo "The existing "vertebrata12s-classifier" folder will be deleted. Proceed? (y/n)"
+  echo "The existing "vertebrata12s_classifier" folder will be deleted. Proceed? (y/n)"
   read confirm
   if [[ "$confirm" == [Yy] ]]; then
     rm -r "$c_taxa_dir"
