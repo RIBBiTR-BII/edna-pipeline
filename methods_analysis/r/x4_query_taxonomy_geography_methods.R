@@ -8,17 +8,20 @@ library(rgbif)
 library(yaml)
 
 # config
-# setwd("16S Process TEST")
+# setwd("16S_sequence_pro")
 print(getwd())
-env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
+# env_config_path = "runs/methods_2026-03-05/12S/output/metadata/config.yml"
+# file_out = paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered_geography_12s.csv")
+env_config_path = "runs/methods_2026-03-05/16S/output/metadata/config.yml"
+file_out = paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered_geography_16s.csv")
+
 iucn_api_token = Sys.getenv("iucn_token")
 
 # read in config file
 config = read_yaml(env_config_path)
 
-gbif_bool = config$geography$run_gbif_lookup
-iucn_bool = config$geography$run_iucn_lookup
-country_codes = config$geography$country_codes
+gbif_bool = TRUE
+iucn_bool = TRUE
 
 
 taxa_raw = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered.csv"))
@@ -39,8 +42,7 @@ taxa_clean = taxa_raw %>%
     intraspecificEpithet = if_else(intraspecificEpithet == "", NA, intraspecificEpithet))
 
 # copy for output
-taxa_out = taxa_clean %>%
-  mutate(country_codes = paste(country_codes, collapse = ", "))
+taxa_out = taxa_clean
 
 # get unique for querying
 taxa_unique = taxa_clean %>%
@@ -53,7 +55,7 @@ taxa_unique = taxa_clean %>%
 # pull from gbif
 if (gbif_bool) {
   cat("\nQuery GBIF for occurences in target countries (families, genuses & species)...\n")
-  
+
   ## species
   cat("\tLooking up species IDs\n")
   
@@ -174,6 +176,48 @@ if (gbif_bool) {
   
   cat("\tQuerying local taxa occurences\n")
   
+  # # Panama
+  # taxon_keys = gbif_backbone_key$usageKey[!is.na(gbif_backbone_key$usageKey)]
+  # 
+  # sleep = TRUE
+  # 
+  # d_pa = occ_download(
+  #   pred_in("taxonKey", taxon_keys),
+  #   pred("country", "PA"),
+  #   format = "SPECIES_LIST"
+  # )
+  # 
+  # d_us = occ_download(
+  #   pred_in("taxonKey", taxon_keys),
+  #   pred("country", "US"),
+  #   format = "SPECIES_LIST"
+  # )
+  # 
+  # d_pe = occ_download(
+  #   pred_in("taxonKey", taxon_keys),
+  #   pred("country", "US"),
+  #   pred("stateProvince", "Pennsylvania"),
+  #   format = "SPECIES_LIST"
+  # )
+  # 
+  # while (sleep) {
+  #   Sys.sleep(5)
+  #   
+  #   q_pa = occ_download_meta(d_pa)
+  #   q_us = occ_download_meta(d_us)
+  #   q_pe = occ_download_meta(d_pe)
+  #   
+  #   q_pa
+  # }
+  # 
+  # occ_download_meta(d_pa)
+  # 
+  # # Wait for completion (check occ_download_meta(d_pa)), then:
+  # zipfile_pa = occ_download_get(d_pa)
+  # pa_data = occ_download_import(zipfile_pa)
+  # pa_counts = pa_data %>%
+  #   count(taxonKey, species, name = "local_occ_count")
+  
   pb = txtProgressBar(min = 1, max = nrow(gbif_backbone_key), style = 3)
   for (ii in 1:nrow(gbif_backbone_key)) {
     if (!is.na(gbif_backbone_key$usageKey[ii])) {
@@ -184,7 +228,7 @@ if (gbif_bool) {
       gbif_backbone_key_pe$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
                                                         country = "US",
                                                         stateProvince = "Pennsylvania")
-      Sys.sleep(0.2)
+      Sys.sleep(1)
       setTxtProgressBar(pb, ii)
     }
   }
@@ -494,4 +538,4 @@ if (iucn_bool) {
   cat("Done.\n")
 }
 
-write.csv(taxa_out, paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered_geography_12s.csv"), row.names = FALSE)
+write.csv(taxa_out, file_out, row.names = FALSE)
