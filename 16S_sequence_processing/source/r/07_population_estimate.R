@@ -11,7 +11,7 @@ library(ribbitrrr)
 
 
 # manual runs
-# setwd("16S Process TEST")
+# setwd("16S_sequence_processing")
 env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
 
 # read in config file

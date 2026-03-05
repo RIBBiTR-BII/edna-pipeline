@@ -7,7 +7,7 @@ library(yaml)
 
 
 # manual runs
-# setwd("16S Process TEST")
+# setwd("16S_sequence_processing")
 env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
 
 # read in config file

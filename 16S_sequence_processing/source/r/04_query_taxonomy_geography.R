@@ -8,7 +8,7 @@ library(rgbif)
 library(yaml)
 
 # config
-# setwd("16S Process TEST")
+# setwd("16S_sequence_processing")
 print(getwd())
 env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
 iucn_api_token = Sys.getenv("iucn_token")
