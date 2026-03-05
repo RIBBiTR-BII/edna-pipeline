@@ -11,4 +11,4 @@ metadata$classifier$name = paste0("NCBI_Vertebrata_", gene)
 metadata$classifier$buildScript = src
 metadata$classifier$buildEndTimestamp = format(Sys.time(), '%Y-%m-%d %H:%M:%S %z')
 # write to file
-write_yaml(metadata, paste0(config$taxonomy$referenceDir, "/classifier_metadata.yml"))
+write_yaml(metadata, paste0("vertebrata", tolower(gene), "_classifier/classifier_metadata.yml"))
