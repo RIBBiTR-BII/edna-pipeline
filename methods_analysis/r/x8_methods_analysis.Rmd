@@ -1,0 +1,61 @@
+---
+title: "x8_methods analysis"
+output: html_document
+---
+
+# load data
+```{r}
+librarian::shelf(tidyverse, here)
+
+data_combined = here("methods_analysis", "output", "edna_methods_12S_16S_feature_sequence_classification_controlled_combined_2026-03-06.csv")
+```
+
+## asvs
+```{r}
+sample_taxa_control_count = data_combined %>%
+  filter(is.na(control_type)) %>%
+  group_by(sample_id,
+           gene,
+           filter_size_um_rz,
+           passive_active_rz,
+           crispr,
+           block,
+           extraction_type,
+           control_type) %>%
+  summarize(n_asv = sum(detected),
+            n_asv_controlled = sum(detected_controlled),
+            n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_level)),
+            n_asv_controlled_class_amph = sum(detected_controlled & (class == "Amphibia")),
+            n_asv_controlled_class_amph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_level == "species")),
+            .groups = "drop")
+
+sample_taxa_control_count_long = sample_taxa_control_count %>%
+  pivot_longer(cols = c(n_asv,
+                        n_asv_controlled,
+                        n_asv_controlled_class,
+                        n_asv_controlled_class_amph,
+                        n_asv_controlled_class_amph_spp),
+               names_to = "count_type",
+               values_to = "n")
+
+peace = sample_taxa_control %>%
+  filter(asv_id == "b4f707eba930e41eb1d4aac90d5f1765",
+         asv_count > 0)
+
+# gene
+ggplot(sample_taxa_control_count_long, aes(x = gene, y = n, color = count_type)) +
+  geom_boxplot() +
+  ylim(0, 15)
+
+peace = sample_taxa_control_count %>%
+  filter(gene == "16S") %>%
+  group_by(passive_active_rz,
+           filter_size_um_rz) %>%
+  summarize(memean = mean(n_asv_controlled_class_amph_spp))
+
+# 16s pore size active passive
+ggplot(sample_taxa_control_count %>%
+         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_amph_spp, color = filter_size_um_rz)) +
+  geom_boxplot()
+
+```
