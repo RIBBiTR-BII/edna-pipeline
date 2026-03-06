@@ -199,6 +199,15 @@ asv_seq_16s =
 classified_12s = read.csv(here("16S_sequence_processing", config_12s$run$runDir, "output", "methods_2026-03-05_12S_asv_classified.csv"))
 classified_16s = read.csv(here("16S_sequence_processing", config_16s$run$runDir, "output", "methods_2026-03-05_16S_asv_classified.csv"))
 
+genbank_align = read.csv(here("methods_analysis", "output", "genbank_alignment_12s_16s.csv"))
+
+genbank_align_best = genbank_align %>%
+  distinct() %>%
+  arrange(asv_id, desc(p_identity), hit_id) %>%
+  group_by(asv_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
 ```
 
 # controls
@@ -246,65 +255,27 @@ sample_asv_control_seq_class = sample_asv_control %>%
                       asv_seq_16s), by = "asv_id") %>%
   left_join(bind_rows(classified_12s,
                       classified_16s), by = "asv_id") %>%
+  left_join(genbank_align_best, by = "asv_id") %>%
   rename(seq = seq.text,
          classification_method = method)
 
+peace = sample_asv_control_seq_class %>%
+  select(class,
+         order,
+         family,
+         genus,
+         species,
+         b_domain,
+         b_class,
+         b_order,
+         b_family,
+         b_genus,
+         b_species,
+         asv_id,
+         p_identical_max,
+         p_identity) %>%
+  distinct()
+
 write_csv(sample_asv_control_seq_class, here("methods_analysis", "output", paste0("edna_methods_12S_16S_feature_sequence_classification_controlled_combined_", today(), ".csv")))
-
-```
-
-# analysis
-
-## asvs
-```{r}
-sample_taxa_control = sample_asv_control %>%
-  left_join(bind_rows(classified_12s,
-                      classified_16s), by = "asv_id") %>%
-  filter(is.na(control_type))
-
-sample_taxa_control_count = sample_taxa_control %>%
-  group_by(sample_id,
-           gene,
-           filter_size_um_rz,
-           passive_active_rz,
-           crispr,
-           block,
-           extraction_type,
-           control_type) %>%
-  summarize(n_asv = sum(detected),
-            n_asv_controlled = sum(detected_controlled),
-            n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_level)),
-            n_asv_controlled_class_amph = sum(detected_controlled & (class == "Amphibia")),
-            n_asv_controlled_class_amph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_level == "species")),
-            .groups = "drop")
-
-sample_taxa_control_count_long = sample_taxa_control_count %>%
-  pivot_longer(cols = c(n_asv,
-                        n_asv_controlled,
-                        n_asv_controlled_class,
-                        n_asv_controlled_class_amph,
-                        n_asv_controlled_class_amph_spp),
-               names_to = "count_type",
-               values_to = "n")
-
-peace = sample_taxa_control %>%
-  filter(asv_id == "b4f707eba930e41eb1d4aac90d5f1765",
-         asv_count > 0)
-
-# gene
-ggplot(sample_taxa_control_count_long, aes(x = gene, y = n, color = count_type)) +
-  geom_boxplot() +
-  ylim(0, 15)
-
-peace = sample_taxa_control_count %>%
-  filter(gene == "16S") %>%
-  group_by(passive_active_rz,
-           filter_size_um_rz) %>%
-  summarize(memean = mean(n_asv_controlled_class_amph_spp))
-
-# 16s pore size active passive
-ggplot(sample_taxa_control_count %>%
-         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_amph_spp, color = filter_size_um_rz)) +
-  geom_boxplot()
 
 ```

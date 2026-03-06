@@ -1,0 +1,132 @@
+---
+title: "x8_genbank_json_export"
+output: html_document
+---
+
+```{r}
+librarian::shelf(tidyverse, jsonlite, here, taxize)
+
+# import json file
+json_12s = fromJSON(here("methods_analysis", "output", "12S", "UK0XTPC0016-Alignment.json"))
+json_16s = fromJSON(here("methods_analysis", "output", "16S", "UPAWB0ED014-Alignment.json"))
+
+# strip hit taxa
+search_12s = json_12s$BlastOutput2$report$results$search
+search_16s =  json_16s$BlastOutput2$report$results$search
+
+# preallocate
+all_hits_12s = tibble(asv_id = c())
+all_hits_16s = tibble(asv_id = c())
+
+# for each item
+## 12s
+for (ii in 1:length(search_12s$hits)) {
+  print(ii)
+  
+  ii_hits = search_12s$hits[[ii]]$description %>%
+    map_dfr(as_tibble, .id = "hit_id") %>%
+    mutate(asv_id = search_12s$query_title[ii])
+  
+  ii_identity = search_12s$hits[[ii]]$hsps %>%
+    map_dfr(as_tibble, .id = "hit_id")
+  
+  if (nrow(ii_hits) > 0) {
+    ii_identity = ii_identity %>%
+    mutate(p_identity = identity / align_len) %>%
+    select(hit_id,
+           p_identity)
+    
+    ii_out = ii_hits %>%
+    left_join(ii_identity, by = "hit_id")
+  } else {
+    ii_out = tibble()
+  }
+  
+  all_hits_12s = bind_rows(all_hits_12s, ii_out)
+}
+
+##16s
+for (ii in 1:length(search_16s$hits)) {
+  print(ii)
+  
+  ii_hits = search_16s$hits[[ii]]$description %>%
+    map_dfr(as_tibble, .id = "hit_id") %>%
+    mutate(asv_id = search_16s$query_title[ii])
+  
+  ii_identity = search_16s$hits[[ii]]$hsps %>%
+    map_dfr(as_tibble, .id = "hit_id")
+  
+  if (nrow(ii_hits) > 0) {
+    ii_identity = ii_identity %>%
+    mutate(p_identity = identity / align_len) %>%
+    select(hit_id,
+           p_identity)
+    
+    ii_out = ii_hits %>%
+    left_join(ii_identity, by = "hit_id")
+  } else {
+    ii_out = tibble()
+  }
+  
+  all_hits_16s = bind_rows(all_hits_16s, ii_out)
+}
+
+all_hits = bind_rows(all_hits_12s,
+                     all_hits_16s) %>%
+  select(asv_id,
+         everything())
+
+# query genbank taxonomy
+
+all_taxids = unique(all_hits$taxid)
+ncbi_taxa = classification(all_taxids, db = "ncbi")
+
+# extract taxa
+all_taxa = tibble(taxid = c())
+
+for (ii in 1:length(all_taxids)) {
+  print(ii)
+  ii_taxa = ncbi_taxa[[ii]] %>%
+    select(-id) %>%
+    filter(rank %in% c("domain",
+                       "kingdom",
+                       "phylum",
+                       "class",
+                       "order",
+                       "family",
+                       "genus",
+                       "species")) %>%
+    pivot_wider(names_from = rank,
+                values_from = name) %>%
+    mutate(taxid = all_taxids[ii])
+  
+  all_taxa = bind_rows(all_taxa, ii_taxa)
+}
+
+all_hits_out = all_hits %>%
+  left_join(all_taxa, by = "taxid") %>%
+  rename(b_domain = domain,
+         b_kingdom = kingdom,
+         b_phylum = phylum,
+         b_class = class,
+         b_order = order,
+         b_family = family,
+         b_genus = genus,
+         b_species = species) %>%
+  select(asv_id,
+         hit_id,
+         accession,
+         taxid,
+         p_identity,
+         b_domain,
+         b_kingdom,
+         b_phylum,
+         b_class,
+         b_order,
+         b_family,
+         b_genus,
+         b_species)
+
+write_csv(all_hits_out, here("methods_analysis", "output", "genbank_alignment_12s_16s.csv"))
+
+```
