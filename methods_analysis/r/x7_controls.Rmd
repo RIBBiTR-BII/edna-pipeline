@@ -1,7 +1,8 @@
 ---
-title: "x7_methods analysis"
+title: "x7_methods_controls"
 output: html_document
 ---
+
 
 # setup
 ```{r}
@@ -24,6 +25,8 @@ sample_lookup_md = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina
   filter(illumina_run %in% c("February_2023",
                              "December_2023")) %>%
   rename(passive_active_rz = passive_active_rz_lab) %>%
+  mutate(passive_active_rz = if_else(passive_active_rz == "NA", NA, passive_active_rz),
+         filter_size_um_rz = if_else(filter_size_um_rz == "NA", NA, filter_size_um_rz)) %>%
   select(-date,
          -region,
          -site,
@@ -237,6 +240,16 @@ sample_asv_control = sample_asv %>%
   mutate(control_th_below = (asv_count <= asv_control_th),
          detected = (asv_count > 0),
          detected_controlled = (detected & !(control_th_below %in% c(TRUE))))
+
+sample_asv_control_seq_class = sample_asv_control %>%
+  left_join(bind_rows(asv_seq_12s,
+                      asv_seq_16s), by = "asv_id") %>%
+  left_join(bind_rows(classified_12s,
+                      classified_16s), by = "asv_id") %>%
+  rename(seq = seq.text,
+         classification_method = method)
+
+write_csv(sample_asv_control_seq_class, here("methods_analysis", "output", paste0("edna_methods_12S_16S_feature_sequence_classification_controlled_combined_", today(), ".csv")))
 
 ```
 
