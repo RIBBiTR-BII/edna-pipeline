@@ -1,0 +1,33 @@
+---
+title: "x8_genbank_json_export"
+output: html_document
+---
+
+```{r}
+librarian::shelf(tidyverse, jsonlite, here)
+
+# import json file
+json_12s = fromJSON(here("methods_analysis", "output", "12S", "UK0XTPC0016-Alignment.json"))
+
+# strip hit taxa
+search_12s = json_12s$BlastOutput2$report$results$search
+
+all_hits = tibble(asv_id = c())
+
+# for each item
+for (ii in 1:length(search_12s$hits)) {
+  print(ii)
+  ii_hits = search_12s$hits[[ii]]$description %>%
+    map_dfr(as_tibble, .id = "hit_id") %>%
+    mutate(asv_id = search_12s$query_title[ii])
+  
+  all_hits = bind_rows(all_hits, ii_hits)
+}
+
+all_hits = all_hits %>%
+  select(asv_id,
+         everything())
+
+write_csv(all_hits, here("methods_analysis", "output", "12S", "UK0XTPC0016-Alignment.csv"))
+
+```
