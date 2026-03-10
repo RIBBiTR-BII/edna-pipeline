@@ -3,6 +3,7 @@
 
 ## Load in Libraries (install as needed)
 library(tidyverse)
+library(ape)
 library(phylotools)
 library(readxl)
 library(openxlsx)
@@ -10,8 +11,8 @@ library(yaml)
 
 # 
 # # # manual runs
-# env_config_path = "runs/methods_2026-01-12/12S/output/metadata/config.yml"
-# setwd("16S Process TEST")
+# env_config_path = "runs/methods_2026-03-05/12S/output/metadata/config.yml"
+# setwd("16S_sequence_processing")
 
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)
