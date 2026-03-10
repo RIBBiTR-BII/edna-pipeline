@@ -32,6 +32,10 @@ search_dir_files = tibble(relative_filepath = c(list.files(search_dir, recursive
          filebase = gsub(".fastq", "", gsub(".gz", "", filename)),
          batch_id = str_match(filebase, "^([A-Za-z0-9]+-)")[,2],
          processing_id = str_match(filebase, "(_S[0-9]+_L[0-9]+_R[12]_[0-9]+)$")[,2],
+         read_dir = case_when(
+           grepl("_R1_", processing_id) ~ "forward",
+           grepl("_R2_", processing_id) ~ "reverse",
+           .default = NA),
          sample_id = str_remove(str_remove(filebase, processing_id), batch_id),
          system = case_when(
            grepl("PAN", sample_id) ~ "panama",
@@ -44,10 +48,12 @@ search_dir_files = tibble(relative_filepath = c(list.files(search_dir, recursive
            grepl("negative", sample_id, ignore.case = TRUE) ~ "negative",
            grepl("positive", sample_id, ignore.case = TRUE) ~ "positive",
            .default = NA
-         ))
+         )) %>%
+  filter(sample_id != "0",
+         !grepl("Blank", sample_id))
 
 # check for duplicates
-dupes_filename_1 = get_dupes(search_dir_files, filename)
+dupes_samples_1 = get_dupes(search_dir_files, sample_id, read_dir)
 ```
 
 # Filter to system of interest
@@ -57,14 +63,49 @@ foi = search_dir_files %>%
   filter(system %in% soi) %>%
   # drop duplicates
   arrange(relative_filepath) %>%
-  group_by(filename) %>%
+  group_by(sample_id, read_dir) %>%
   slice_head(n = 1) %>%
   ungroup()
 
-dupes_filename_2 = get_dupes(foi, filename)
+
+# check for duplicate copies of sample/read_dir
+dupes_samples_2 = get_dupes(foi, sample_id, read_dir)
+
+if (nrow(dupes_samples_2) > 0) {
+  stop("Unexpected duplicate samples found. Aborting.")
+}
+
+# check two reads per sample (forward & reverse)
+dupes_samples_3 = foi %>%
+  group_by(sample_id) %>%
+  count() %>%
+  filter(n != 2)
+
+if (nrow(dupes_samples_3) > 0) {
+  stop(paste0("Unpaired reads found for the following samples:\n\t", paste0(dupes_samples_3$sample_id, collapse = "\n\t")))
+}
+
 ```
 
 # Copy files to copy directory
 ```{r}
+# delete all existing files in directory first
+if (length(list.files(search_dir)) > 0) {
+  drop_input = readline(prompt = "Files exist in the copy directory. Do you want to delete these files before copying? [y/n]"); 
+  
+  if (tolower(drop_input == "y")) {
+    cat("Deleting existing files in copy directory.\n")
+    unlink(here(copy_dir, "*"))
+  } else if (tolower(drop_input == "n")) {
+    cat("Leaving existing files in copy directory. Proceeding to copy new files.\n")
+  } else {
+    stop("Input not recognized. Copy aborted.")
+  }
+}
+
+cat(paste0("Copying ", as.character(nrow(foi)), " sequence files to copy directory... "))
+
 file.copy(foi$absolute_filepath, copy_dir)
+
+cat("done.")
 ```
