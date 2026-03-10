@@ -1,7 +1,7 @@
 ---
 run:
-  name: penn_2010-03-10                # a unique run name
-  runDir: runs/penn_2010-03-10         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
+  name: penn_2026-03-10                # a unique run name
+  runDir: runs/penn_2026-03-10         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
   description: Run of all current Pennsylvania samples
                                               # run description
   technician: Cob Staines                     # who is processing these data, for communication
