@@ -12,11 +12,12 @@ output: html_document
 librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor)
 
 # read in config files
-config_12s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/12S/output/metadata/config.yml"))
-config_16s = read_yaml(here("16S Process TEST", "runs/methods_2026-01-12/16S/output/metadata/config.yml"))
+config_12s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/12S/output/metadata/config.yml"))
+config_16s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/16S/output/metadata/config.yml"))
+file_out = here("16S_sequence_processing", paste0("runs/methods_2026-03-05/12S/output/metadata/edna_env_metadata_", today(),".csv"))
 
 # read in lookup file
-sample_lookup = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-01-22.xlsx")) %>%
+sample_lookup = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-03-05.xlsx")) %>%
   clean_names() %>%
   mutate(edna_sample_name = if_else(grepl("PAN_22", id_e_dna_sample),
                                     id_e_dna_sample_edited,
@@ -103,6 +104,6 @@ edna_env_meta = edna_meta %>%
          id_e_dna_sample,
          everything())
 
-write_csv(edna_env_meta, here("16S Process TEST", paste0("runs/methods_2026-01-12/12S/output/metadata/edna_env_metadata", today(),".csv")))
+write_csv(edna_env_meta, file_out)
 
 ```
