@@ -39,10 +39,10 @@ Rscript source/r/01_init_run_metadata.R "$env_config_path"
 
 # s##
 echo "Performing sequence processing"
-if [ $c_taxonomy_gene == "12S"]; then
+if [ $c_taxonomy_gene == "12S" ]; then
   echo "Running qiime-seq-process_12s.sh"
   bash source/shell/qiime-seq-process_12s.sh
-elif [ $c_taxonomy_gene == "16S"]; then
+elif [ $c_taxonomy_gene == "16S" ]; then
   echo "Running qiime-seq-process_16s.sh"
   bash source/shell/qiime-seq-process_16s.sh
 else
