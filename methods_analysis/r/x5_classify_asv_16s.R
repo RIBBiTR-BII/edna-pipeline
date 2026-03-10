@@ -8,7 +8,7 @@ library(yaml)
 # working dir
 getwd()
 # setwd("16S Process TEST")
-env_config_path = "runs/methods_2026-01-12/16S/output/metadata/config.yml"
+env_config_path = "runs/methods_2026-03-05/16S/output/metadata/config.yml"
 
 # read in config file
 config = read_yaml(env_config_path)
