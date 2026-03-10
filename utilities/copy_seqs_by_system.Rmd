@@ -1,0 +1,70 @@
+---
+title: "copy_seqs_by_system"
+author: "Cob Staines"
+output: html_document
+---
+
+# Copy Sequence Files by System
+
+This is a utility script which parses through nested folders for .fastq sequencing files, identifies which study system they belong to, and supports copying only files for a desired system to a desired repository
+
+# Config
+```{r}
+librarian::shelf(tidyverse, here, janitor)
+
+# directory to search recursively
+search_dir = here(Sys.getenv("data_dir"), "edna_results")
+
+# system(s) of interest: any of: brazil, panama, pennsylvania, california
+soi = "pennsylvania"
+
+# directory to copy files to
+copy_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10", "sequences")
+
+```
+
+# Parse search directory
+```{r}
+search_dir_files = tibble(relative_filepath = c(list.files(search_dir, recursive = TRUE))) %>%
+  filter(str_detect(relative_filepath, "\\.fastq(\\.gz)?$")) %>%
+  mutate(absolute_filepath = here(search_dir, relative_filepath),
+         filename = basename(relative_filepath),
+         filebase = gsub(".fastq", "", gsub(".gz", "", filename)),
+         batch_id = str_match(filebase, "^([A-Za-z0-9]+-)")[,2],
+         processing_id = str_match(filebase, "(_S[0-9]+_L[0-9]+_R[12]_[0-9]+)$")[,2],
+         sample_id = str_remove(str_remove(filebase, processing_id), batch_id),
+         system = case_when(
+           grepl("PAN", sample_id) ~ "panama",
+           grepl("Pe|PENN|PCI|Tissue|CRISPR|block|12S|16S", sample_id) ~ "pennsylvania",
+           grepl("BR", sample_id) ~ "brazil",
+           grepl("SN|BII", sample_id) ~ "california",
+           .default = NA
+         ),
+         control = case_when(
+           grepl("negative", sample_id, ignore.case = TRUE) ~ "negative",
+           grepl("positive", sample_id, ignore.case = TRUE) ~ "positive",
+           .default = NA
+         ))
+
+# check for duplicates
+dupes_filename_1 = get_dupes(search_dir_files, filename)
+```
+
+# Filter to system of interest
+```{r}
+# files of interest
+foi = search_dir_files %>%
+  filter(system %in% soi) %>%
+  # drop duplicates
+  arrange(relative_filepath) %>%
+  group_by(filename) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+dupes_filename_2 = get_dupes(foi, filename)
+```
+
+# Copy files to copy directory
+```{r}
+file.copy(foi$absolute_filepath, copy_dir)
+```
