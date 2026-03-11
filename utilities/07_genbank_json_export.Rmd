@@ -1,0 +1,144 @@
+---
+title: "x8_genbank_json_export"
+output: html_document
+---
+# Genbank BLAST submission
+
+Steps:
+
+1. Register with NCBI and create an Entrez API key
+  - obtain a key following this guidance: https://support.nlm.nih.gov/kbArticle/?pn=KA-05317
+  - save this key to your local .Renviron file as: ENTREZ_KEY = "your-key-here". This will allow you to look up NCBI taxa through taxize without additional steps.
+2. Locate the ASV representative sequences .fasta file at: `[run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
+3. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
+  - Visit https://blast.ncbi.nlm.nih.gov/Blast.cgi, click on Nucleotide BLAST
+  - Click `Browse` and navigate to the ASV representatitve sequences .fasta file
+  - Under `Algorithm parameters`
+    - adjust the desired max number of hits as desired (10 is ideal)
+    - adjust the `Expect threshold` (0.03 is ideal)
+  - Click `BLAST` and wait for the query to finish
+4. In the main results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[run-directory]/outout/`
+5. Adjust the parameters in the Config section below to match your needs.
+
+# Config
+```{r}
+librarian::shelf(tidyverse, jsonlite, here, taxize)
+
+# import json file
+json_blast_results = fromJSON(here("16S_sequence_processing", "runs", "penn_2026-03-10", "output", "V3SY4J9U014-Alignment.json"))
+
+output_file = here("16S_sequence_processing", "runs", "penn_2026-03-10", "output", "ncbi_web_blast_hits.csv")
+```
+
+# Parse BLAST results
+```{r}
+# strip hit taxa
+search_results = json_blast_results$BlastOutput2$report$results$search
+
+# preallocate hits table
+all_hits = tibble(asv_id = c())
+
+cat("Reading hits...\n")
+# extract hits from JSON
+pb = txtProgressBar(min = 1, max = length(search_results$hits), style = 3)
+for (ii in 1:length(search_results$hits)) {
+  # print(ii)
+  
+  ii_hits = search_results$hits[[ii]]$description %>%
+    map_dfr(as_tibble, .id = "hit_id") %>%
+    mutate(asv_id = search_results$query_title[ii])
+  
+  ii_identity = search_results$hits[[ii]]$hsps %>%
+    map_dfr(as_tibble, .id = "hit_id")
+  
+  if (nrow(ii_hits) > 0) {
+    ii_identity = ii_identity %>%
+    mutate(p_identity = identity / align_len) %>%
+    select(hit_id,
+           p_identity) %>%
+      group_by(hit_id) %>%
+      slice_max(p_identity, with_ties = FALSE) %>%
+      ungroup()
+    
+    ii_out = ii_hits %>%
+    left_join(ii_identity, by = "hit_id")
+  } else {
+    ii_out = tibble()
+  }
+  
+  all_hits = bind_rows(all_hits, ii_out)
+  setTxtProgressBar(pb, ii)
+}
+close(pb)
+
+all_hits = all_hits %>%
+  select(asv_id,
+         everything())
+```
+
+
+# query NCBI taxonomy
+```{r}
+# pull taxa IDs
+all_taxids = unique(all_hits$taxid)
+
+# retreive taxa classifications
+cat("Querying NCBI taxa...\n")
+ncbi_taxa = classification(all_taxids, db = "ncbi")
+
+# extract taxa
+all_taxa = tibble(taxid = c())
+
+cat("Extracting taxa...\n")
+pb = txtProgressBar(min = 1, max = length(all_taxids), style = 3)
+for (ii in 1:length(all_taxids)) {
+  # print(ii)
+  ii_taxa = ncbi_taxa[[ii]] %>%
+    select(-id) %>%
+    filter(rank %in% c("domain",
+                       "kingdom",
+                       "phylum",
+                       "class",
+                       "order",
+                       "family",
+                       "genus",
+                       "species")) %>%
+    pivot_wider(names_from = rank,
+                values_from = name) %>%
+    mutate(taxid = all_taxids[ii])
+  
+  all_taxa = bind_rows(all_taxa, ii_taxa)
+  setTxtProgressBar(pb, ii)
+}
+close(pb)
+```
+
+# Merge and export
+```{r}
+all_hits_out = all_hits %>%
+  left_join(all_taxa, by = "taxid") %>%
+  rename(b_domain = domain,
+         b_kingdom = kingdom,
+         b_phylum = phylum,
+         b_class = class,
+         b_order = order,
+         b_family = family,
+         b_genus = genus,
+         b_species = species) %>%
+  select(asv_id,
+         hit_id,
+         accession,
+         taxid,
+         p_identity,
+         b_domain,
+         b_kingdom,
+         b_phylum,
+         b_class,
+         b_order,
+         b_family,
+         b_genus,
+         b_species)
+
+write_csv(all_hits_out, output_file)
+
+```
