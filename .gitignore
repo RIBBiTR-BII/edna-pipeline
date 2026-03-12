@@ -7,6 +7,8 @@
 *.fastq.gz
 *.qza
 *.qzv
+*.csv
+*.json
 */taxonomic-classification/*
 */classified_taxonomy/*
 */output/*
