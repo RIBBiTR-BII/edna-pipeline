@@ -68,7 +68,7 @@ qiime feature-classifier extract-reads \
 --p-f-primer ACACCGCCCGTCACCCT \
 --p-r-primer GTAYACTTACCATGTTACGACTT \
 --p-min-length 30 \
---p-max-length 80 \
+--p-max-length 150 \
 --o-reads Vertebrata12S_derep1_seqs_extracted.qza
 
 # filter taxa to filtered sequences
@@ -81,6 +81,11 @@ qiime rescript filter-taxa \
 qiime tools extract \
     --input-path Vertebrata12S_derep1_taxa_extracted.qza \
     --output-path Vertebrata12S_derep1_taxa_extracted
+
+    # extract sequences
+qiime tools extract \
+    --input-path Vertebrata12S_derep1_seqs_extracted.qza \
+    --output-path Vertebrata12S_derep1_seqs_extracted
 
 # drop temp folder
 echo "deleting temporary files"

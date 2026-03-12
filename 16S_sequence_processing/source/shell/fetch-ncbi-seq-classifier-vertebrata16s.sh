@@ -71,6 +71,11 @@ qiime tools extract \
     --input-path Vertebrata16S_derep1_taxa_extracted.qza \
     --output-path Vertebrata16S_derep1_taxa_extracted
 
+# extract sequences
+qiime tools extract \
+    --input-path Vertebrata16S_derep1_seqs_extracted.qza \
+    --output-path Vertebrata16S_derep1_seqs_extracted
+
 # drop temp folder
 echo "deleting temporary files"
 rm -r "temp"
