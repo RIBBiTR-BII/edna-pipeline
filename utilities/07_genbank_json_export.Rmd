@@ -53,15 +53,29 @@ for (ii in 1:length(search_results$hits)) {
   
   if (nrow(ii_hits) > 0) {
     ii_identity = ii_identity %>%
-    mutate(p_identity = identity / align_len) %>%
-    select(hit_id,
-           p_identity) %>%
+      rename(seq_overlap = align_len,
+             gapopen_count = gaps,
+             q_start = query_from,
+             q_end = query_to,
+             s_start = hit_from,
+             s_end = hit_to) %>%
+      mutate(percent_identical = 100 * identity / seq_overlap,
+             seq_mismatch = seq_overlap - identity,) %>%
+      select(hit_id,
+             percent_identical,
+             seq_overlap,
+             seq_mismatch,
+             gapopen_count,
+             q_start,
+             q_end,
+             s_start,
+             s_end) %>%
       group_by(hit_id) %>%
-      slice_max(p_identity, with_ties = FALSE) %>%
+      slice_max(percent_identical, with_ties = FALSE) %>%
       ungroup()
     
     ii_out = ii_hits %>%
-    left_join(ii_identity, by = "hit_id")
+      left_join(ii_identity, by = "hit_id")
   } else {
     ii_out = tibble()
   }
@@ -102,7 +116,8 @@ for (ii in 1:length(all_taxids)) {
                        "order",
                        "family",
                        "genus",
-                       "species")) %>%
+                       "species",
+                       "subspecies")) %>%
     pivot_wider(names_from = rank,
                 values_from = name) %>%
     mutate(taxid = all_taxids[ii])
@@ -117,27 +132,23 @@ close(pb)
 ```{r}
 all_hits_out = all_hits %>%
   left_join(all_taxa, by = "taxid") %>%
-  rename(b_domain = domain,
-         b_kingdom = kingdom,
-         b_phylum = phylum,
-         b_class = class,
-         b_order = order,
-         b_family = family,
-         b_genus = genus,
-         b_species = species) %>%
+  mutate(method = "blast_web") %>%
   select(asv_id,
          hit_id,
+         method,
          accession,
          taxid,
-         p_identity,
-         b_domain,
-         b_kingdom,
-         b_phylum,
-         b_class,
-         b_order,
-         b_family,
-         b_genus,
-         b_species)
+         title,
+         percent_identical,
+         domain,
+         kingdom,
+         phylum,
+         class,
+         order,
+         family,
+         genus,
+         species,
+         subspecies)
 
 write_csv(all_hits_out, output_file)
 
