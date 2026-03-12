@@ -26,8 +26,9 @@ cd "$c_taxa_dir"
 
 # download all vertebrate (txid7742) 16S sequences from NCBI
 echo "Downloading vertibrate 16S sequences from NCBI"
+
 qiime rescript get-ncbi-data \
---p-query "(txid7742[ORGN] AND (mitochondria[TITLE] OR mitochondrion[TITLE] OR mitochondrial[TITLE])) OR (txid7742[ORGN] AND (large subunit ribosomal RNA[TITLE] OR 16S rRNA[TITLE] OR 16S ribosomal RNA[TITLE] OR 16S[TITLE] OR 16S r RNA[TITLE] OR MT-RNR2[TITLE] OR MTRNR2[TITLE] OR RNR2[TITLE])) AND (biomol_genomic[PROP] AND ddbj_embl_genbank[filter] AND mitochondrion[filter])" \
+--p-query "((txid7742[ORGN] AND (mitochondria[TITLE] OR mitochondrion[TITLE] OR mitochondrial[TITLE])) OR (txid7742[ORGN] AND (large subunit ribosomal RNA[TITLE] OR 16S rRNA[TITLE] OR 16S ribosomal RNA[TITLE] OR 16S[TITLE] OR 16S r RNA[TITLE] OR MT-RNR2[TITLE] OR MTRNR2[TITLE] OR RNR2[TITLE] OR rrnL[TITLE] OR rrn16[TITLE] OR l-rRNA[TITLE]))) AND (ddbj_embl_genbank[filter] AND mitochondrion[filter])" \
 --output-dir temp
 
 # remove sequences with 5 or more degen sequences and homopolymers longer than 12
@@ -36,12 +37,12 @@ qiime rescript cull-seqs \
     --i-sequences ./temp/sequences.qza \
     --p-num-degenerates 5 \
     --p-homopolymer-length 12 \
-    --o-clean-sequences ./temp/Vertebrata16S_ambi_hpoly_filtd_seqs.qza
+    --o-clean-sequences ./temp/sequences_culled.qza
 
 # remove any replicates
 echo "Removing replicates"
 qiime rescript dereplicate --verbose \
-  --i-sequences ./temp/sequences.qza \
+  --i-sequences ./temp/sequences_culled.qza \
   --i-taxa ./temp/taxonomy.qza \
   --p-mode 'super' \
   --p-derep-prefix \

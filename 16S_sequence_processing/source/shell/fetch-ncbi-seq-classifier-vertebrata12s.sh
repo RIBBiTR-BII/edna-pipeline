@@ -38,7 +38,7 @@ cd "$c_taxa_dir"
 
 echo "Downloading vertibrate 12S sequences from NCBI"
 qiime rescript get-ncbi-data \
-  --p-query " txid7742[ORGN] AND (12S OR 12S ribosomal RNA OR 12S rRNA) AND (mitochondrion[Filter] OR plastid[Filter]) NOT environmental sample[Title] NOT environmental samples[Title] NOT environmental[Title] NOT uncultured[Title] NOT unclassified[Title] NOT unidentified[Title] NOT unverified[Title]" \
+  --p-query "(txid7742[ORGN] AND (12S[TITLE] OR 12S ribosomal RNA[TITLE] OR 12S rRNA[TITLE] OR rrnS[TITLE] OR rrn12[TITLE] OR s-rRNA[TITLE] OR small subunit ribosomal RNA[TITLE] OR MT-RNR1[TITLE] OR MTRNR1[TITLE] OR RNR1[TITLE]) AND (mitochondrion[Filter]) NOT (environmental sample[TITLE] OR environmental samples[TITLE] OR environmental[TITLE] OR uncultured[TITLE] OR unclassified[TITLE] OR unidentified[TITLE] OR unverified[TITLE]))" \
   --output-dir temp
 
 
@@ -48,12 +48,12 @@ qiime rescript cull-seqs \
     --i-sequences ./temp/sequences.qza \
     --p-num-degenerates 5 \
     --p-homopolymer-length 12 \
-    --o-clean-sequences ./temp/Vertebrata12S_ambi_hpoly_filtd_seqs.qza
+    --o-clean-sequences ./temp/sequences_culled.qza
 
 # remove any replicates
 echo "Removing replicates"
 qiime rescript dereplicate --verbose \
-  --i-sequences ./temp/sequences.qza \
+  --i-sequences ./temp/sequences_culled.qza \
   --i-taxa ./temp/taxonomy.qza \
   --p-mode 'super' \
   --p-derep-prefix \
