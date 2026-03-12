@@ -1,0 +1,104 @@
+---
+title: "Sequence analysis"
+output: html_document
+---
+
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
+# config
+```{r}
+## Load in Libraries (install them in you need them.)
+librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor)
+
+# read in config files
+config_12s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/12S/output/metadata/config.yml"))
+config_16s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/16S/output/metadata/config.yml"))
+
+
+
+```
+
+# load data files
+```{r}
+# feature tables
+## 12s
+feature_table_12s =
+  read_tsv(here("16S_sequence_processing", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/sample_table/feature-table.tsv")), skip = 1) %>%
+  as.data.frame() %>%
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+feature_long_12s = feature_table_12s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "sample_id",
+               values_to = "asv_count") %>%
+  filter(asv_count != 0) %>%
+  arrange(sample_id) %>%
+  select(sample_id,
+         asv_id,
+         asv_count)
+
+asv_totals_12s = feature_long_12s %>%
+  group_by(asv_id) %>%
+  summarise(asv_total_count = sum(asv_count),
+            sample_count = n_distinct(sample_id),
+            samples = paste(sort(unique(sample_id)), collapse = ", ")) %>%
+  arrange(desc(asv_total_count))
+
+## 16S
+feature_table_16s =
+  read_tsv(here("16S_sequence_processing", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/sample_table/feature-table.tsv")), skip = 1) %>%
+  as.data.frame() %>%
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+feature_long_16s = feature_table_16s %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "sample_id",
+               values_to = "asv_count") %>%
+  filter(asv_count != 0) %>%
+  arrange(sample_id) %>%
+  select(sample_id,
+         asv_id,
+         asv_count)
+
+asv_totals_16s = feature_long_16s %>%
+  group_by(asv_id) %>%
+  summarise(asv_total_count = sum(asv_count),
+            sample_count = n_distinct(sample_id),
+            samples = paste(sort(unique(sample_id)), collapse = ", ")) %>%
+  arrange(desc(asv_total_count))
+
+# sequence tables
+## 12s
+asv_seq_12s =
+  read.fasta(here("16S_sequence_processing", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences/", 
+                           list.files(here("16S_sequence_processing", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences"))), 
+                           "/data/dna-sequences.fasta"))) %>%
+  dplyr::rename(asv_id = seq.name) %>%
+  arrange(asv_id) %>%
+  mutate(bp = str_length(seq.text),
+         gene = "12S")
+
+## 16s
+asv_seq_16s =
+  read.fasta(here("16S_sequence_processing", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences/", 
+                           list.files(here("16S_sequence_processing", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences"))), 
+                           "/data/dna-sequences.fasta"))) %>%
+  dplyr::rename(asv_id = seq.name) %>%
+  arrange(asv_id) %>%
+  mutate(bp = str_length(seq.text),
+         gene = "16S")
+
+```
+
+# sequence lengths
+```{r}
+seq_all = bind_rows(asv_seq_12s,
+                    asv_seq_16s)
+
+ggplot(seq_all, aes(x = bp, fill = gene)) +
+  geom_histogram() +
+  facet_wrap("gene", scales = "free_x") +
+  theme_minimal()
+```
