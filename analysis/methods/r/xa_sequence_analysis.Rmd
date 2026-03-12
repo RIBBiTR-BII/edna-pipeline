@@ -69,9 +69,9 @@ asv_totals_16s = feature_long_16s %>%
             samples = paste(sort(unique(sample_id)), collapse = ", ")) %>%
   arrange(desc(asv_total_count))
 
-# sequence tables
+# ASV sequence tables
 ## 12s
-asv_seq_12s =
+seq_asv_12s =
   read.fasta(here("16S_sequence_processing", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences/", 
                            list.files(here("16S_sequence_processing", paste0(config_12s$run$runDir, "/analysis/s06_denoised_", config_12s$taxonomy$gene, "_eDNA/representative_sequences"))), 
                            "/data/dna-sequences.fasta"))) %>%
@@ -81,7 +81,7 @@ asv_seq_12s =
          gene = "12S")
 
 ## 16s
-asv_seq_16s =
+seq_asv_16s =
   read.fasta(here("16S_sequence_processing", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences/", 
                            list.files(here("16S_sequence_processing", paste0(config_16s$run$runDir, "/analysis/s06_denoised_", config_16s$taxonomy$gene, "_eDNA/representative_sequences"))), 
                            "/data/dna-sequences.fasta"))) %>%
@@ -90,15 +90,94 @@ asv_seq_16s =
   mutate(bp = str_length(seq.text),
          gene = "16S")
 
+# classifier sequence tables
+## 12s
+seq_class_12s =
+  read.fasta(here("16S_sequence_processing", "vertebrata12s_classifier", "Vertebrata12S_derep1_seqs_extracted",
+                               list.files(here("16S_sequence_processing", "vertebrata12s_classifier", "Vertebrata12S_derep1_seqs_extracted")), "data", "dna-sequences.fasta")) %>%
+  dplyr::rename(taxon_id = seq.name) %>%
+  arrange(taxon_id) %>%
+  mutate(bp = str_length(seq.text),
+         gene = "12S")
+
+## 16s
+seq_class_16s =
+  read.fasta(here("16S_sequence_processing", "vertebrata16s_classifier", "Vertebrata16S_derep1_seqs_extracted",
+                               list.files(here("16S_sequence_processing", "vertebrata16s_classifier", "Vertebrata16S_derep1_seqs_extracted")), "data", "dna-sequences.fasta")) %>%
+  dplyr::rename(taxon_id = seq.name) %>%
+  arrange(taxon_id) %>%
+  mutate(bp = str_length(seq.text),
+         gene = "16S")
+
+# classifier taxonomy
+## 12s
+taxa_class_12s = read_tsv(here("16S_sequence_processing", "vertebrata12s_classifier", "Vertebrata12S_derep1_taxa_extracted",
+                               list.files(here("16S_sequence_processing", "vertebrata12s_classifier", "Vertebrata12S_derep1_taxa_extracted")), "data", "taxonomy.tsv")) %>%
+  rename(taxon_id = `Feature ID`,
+         taxon = Taxon) %>%
+  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id)
+         # | taxon_id %in% unique(hit_table_blast$taxon_id)
+  ) %>%
+  separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  rename(kingdom = k,
+         phylum = p,
+         class = c,
+         order = o,
+         family = f,
+         genus = g,
+         species = s) %>%
+  mutate(domain = "Eukaryota") %>%
+  arrange(taxon_id) %>%
+  select(taxon_id,
+         domain,
+         everything())
+
+## 16s
+taxa_class_12s = read_tsv(here("16S_sequence_processing", "vertebrata12s_classifier", "Vertebrata16S_derep1_taxa_extracted",
+                               list.files(here("16S_sequence_processing", "vertebrata16s_classifier", "Vertebrata16S_derep1_taxa_extracted")), "data", "taxonomy.tsv")) %>%
+  rename(taxon_id = `Feature ID`,
+         taxon = Taxon) %>%
+  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id)
+         # | taxon_id %in% unique(hit_table_blast$taxon_id)
+  ) %>%
+  separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  rename(kingdom = k,
+         phylum = p,
+         class = c,
+         order = o,
+         family = f,
+         genus = g,
+         species = s) %>%
+  mutate(domain = "Eukaryota") %>%
+  arrange(taxon_id) %>%
+  select(taxon_id,
+         domain,
+         everything())
+
+
 ```
 
 # sequence lengths
 ```{r}
-seq_all = bind_rows(asv_seq_12s,
-                    asv_seq_16s)
+seq_asv = bind_rows(seq_asv_12s,
+                    seq_asv_16s)
 
-ggplot(seq_all, aes(x = bp, fill = gene)) +
+ggplot(seq_asv, aes(x = bp, fill = gene)) +
   geom_histogram() +
   facet_wrap("gene", scales = "free_x") +
   theme_minimal()
+```
+
+# classifier taxonomy sequences
+```{r}
+seq_class = bind_rows(seq_class_12s,
+                      seq_class_16s)
+
+ggplot(seq_class, aes(x = bp, fill = gene)) +
+  geom_histogram() +
+  facet_wrap("gene", scales = "free_x") +
+  theme_minimal()
+
 ```
