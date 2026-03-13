@@ -1,8 +1,8 @@
 ---
 run:
-  name: penn_2026-03-10                # a unique run name
-  runDir: runs/penn_2026-03-10         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
-  description: Run of all current Pennsylvania samples
+  name: methods_2026-03-13_16s               # a unique run name
+  runDir: runs/methods_2026-03-13/16S         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
+  description: Rerun of 16S for methods comparison
                                               # run description
   technician: Cob Staines                     # who is processing these data, for communication
   qiimeEnv: qiime2-amplicon-2025.4            # the name of the conda environment with qiime2 installed (run `conda env list` in terminal to see all environment names)
@@ -14,10 +14,10 @@ trimPaired:
 denoisePaired:
   truncQ: 2              # quality threshold at which to truncate reads
   truncLen: 0            # length at which to truncate reads (forward and reverse)
-# consensusBlast:
-#   maxaccepts: 10         # maximum number of hits to accept
-#   percIdentity: 0.98     # minimum identity for hit acceptance
-#   queryCov: 0.95         # minimum query coverage hit acceptance
+consensusBlast:
+  maxaccepts: 10         # maximum number of hits to accept
+  percIdentity: 0.98     # minimum identity for hit acceptance
+  queryCov: 0.95         # minimum query coverage hit acceptance
 vsearchGlobal:
   maxaccepts: 20         # maximum number of hits to accept
   percIdentity: 0.5      # minimum identity for hit acceptance
