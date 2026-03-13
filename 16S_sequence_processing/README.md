@@ -1,6 +1,6 @@
-# 16S Sequence Processing Pipeline
+# Amphibian 16S Sequence Processing Pipeline
 
-A 16S eDNA amplicon sequence processing workflow
+An amphibian 16S eDNA amplicon sequence processing workflow
 
 *Created by: Brandon Hoenig & [Cob Staines](https://github.com/cob-staines/)*
 
@@ -21,17 +21,15 @@ This workflow makes assumptions and choices which substantially influence the ou
   - You may want to have worked your way through the [Moving Pictures Tutorial](https://docs.qiime2.org/2024.5/tutorials/moving-pictures/) to learn more about this process
   
 3. You'll also need to have [R](https://www.r-project.org/) and the following R libraries on your machine:
-  -qiime2R
-  -tidyverse
-  -yaml
-  -janitor
-  -phylotools
-  -readxl
-  -openxlsx
-  -iucnredlist
-  -rgbif
-  
-Now to the step-by-step guide!
+  - qiime2R
+  - tidyverse
+  - yaml
+  - janitor
+  - phylotools
+  - readxl
+  - openxlsx
+  - iucnredlist
+  - rgbif
   
 ### Preparation
 
