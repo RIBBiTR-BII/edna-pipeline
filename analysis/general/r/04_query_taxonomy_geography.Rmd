@@ -30,6 +30,8 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 # recommend running one system at a time, for cleaner geographic distinction
 study_system = "pennsylvania"
 
+taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_taxonomy_table_gbif_occ.csv"))
+
 ```
 
 # Import taxa
@@ -452,6 +454,5 @@ cat("Done.\n")
 
 # Export results
 ```{r}
-
-write.csv(taxa_out, paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered_geography.csv"), row.names = FALSE)
+write.csv(taxa_out, taxa_out_file, row.names = FALSE)
 ```
