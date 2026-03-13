@@ -181,3 +181,50 @@ ggplot(seq_class, aes(x = bp, fill = gene)) +
   theme_minimal()
 
 ```
+
+# classifier taxonomy read counts
+```{r}
+taxa_class_12s_count = taxa_class_12s %>%
+  group_by(kingdom,
+           phylum,
+           class,
+           order,
+           family,
+           genus,
+           species) %>%
+  count()
+
+
+taxa_class_16s_count = taxa_class_16s %>%
+  group_by(kingdom,
+           phylum,
+           class,
+           order,
+           family,
+           genus,
+           species) %>%
+  count()
+
+cumcount <- function(df, bins, column = "n") {
+  tibble(sequences_n = bins) %>%
+    rowwise() %>%
+    mutate(
+      taxa_n   = sum(df[[column]] == sequences_n, na.rm = TRUE),
+      taxa_cum = sum(df[[column]] >= sequences_n, na.rm = TRUE)
+    ) %>%
+    ungroup()
+}
+
+cumcout_12s_class = cumcount(taxa_class_12s_count, seq(1, 30)) %>%
+  mutate(gene = "12S")
+cumcout_16s_class = cumcount(taxa_class_16s_count, seq(1, 30)) %>%
+  mutate(gene = "16S")
+
+cumcout_12s_class_amph = cumcount(taxa_class_12s_count %>%
+                                    filter(class == "Amphibia"), seq(1, 30)) %>%
+  mutate(gene = "12S")
+cumcout_16s_class_amph = cumcount(taxa_class_16s_count %>%
+                                    filter(class == "Amphibia"), seq(1, 30)) %>%
+  mutate(gene = "16S")
+
+```
