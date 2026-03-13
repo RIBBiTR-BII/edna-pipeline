@@ -9,25 +9,32 @@ Steps:
 1. Register with NCBI and create an Entrez API key
   - obtain a key following this guidance: https://support.nlm.nih.gov/kbArticle/?pn=KA-05317
   - save this key to your local .Renviron file as: ENTREZ_KEY = "your-key-here". This will allow you to look up NCBI taxa through taxize without additional steps.
-2. Locate the ASV representative sequences .fasta file at: `[run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
-3. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
+2. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
   - Visit https://blast.ncbi.nlm.nih.gov/Blast.cgi, click on Nucleotide BLAST
-  - Click `Browse` and navigate to the ASV representatitve sequences .fasta file
+  - Click `Browse` and navigate to the ASV representative sequences .fasta file at: `[run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
+  - Under `Program Selection: Optimize for`, select `More dissimilar sequences (discontiguous megablast)` (ideal for eDNA)
   - Under `Algorithm parameters`
     - adjust the desired max number of hits as desired (10 is ideal)
-    - adjust the `Expect threshold` (0.03 is ideal)
+    - adjust the `Expect threshold` (0.01 is ideal)
   - Click `BLAST` and wait for the query to finish
-4. In the main results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[run-directory]/outout/`
-5. Adjust the parameters in the Config section below to match your needs.
+3. In the main results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[run-directory]/outout/`
+4. Adjust the parameters in the `Config` section below to match your needs.
 
 # Config
 ```{r}
 librarian::shelf(tidyverse, jsonlite, here, taxize)
 
 # import json file
-json_blast_results = fromJSON(here("16S_sequence_processing", "runs", "penn_2026-03-10", "output", "V3SY4J9U014-Alignment.json"))
+json_blast_results = fromJSON(here("16S_sequence_processing", "runs", "penn_2026-03-10", "output", "V8P9ECSP016-Alignment.json"))
 
-output_file = here("16S_sequence_processing", "runs", "penn_2026-03-10", "output", "ncbi_web_blast_hits.csv")
+# import run config file
+run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+
+# read in config file
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+# specify output file
+output_file = here(run_dir, "output", paste0(config$run$name, "ncbi_web_blast_hits.csv"))
 ```
 
 # Parse BLAST results
