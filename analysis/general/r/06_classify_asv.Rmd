@@ -15,18 +15,33 @@ run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
-# output file
-classification_out = here(run_dir, "output", paste0(config$run$name, "_vsearch_hybrid_classification.csv"))
+# output files
+hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
+
 
 ```
 
 # Prepare for classification
 ```{r}
 # read in hits
-hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_eDNA_hits_joined.csv")))
+qiime2_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_qiime2_hits.csv")))
+web_blast_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv")))
+
+backbone = qiime2_hits_raw %>%
+  select(asv_id,
+         asv_total_count,
+         sample_count,
+         samples,
+         sequence) %>%
+  distinct()
+
+hits_raw = bind_rows(qiime2_hits_raw,
+                     backbone %>%
+                     left_join(web_blast_hits_raw, by = "asv_id") %>%
+                       select(all_of(colnames(qiime2_hits_raw))))
 
 # read in taxa + geography
-taxa_geography = read.csv(here(run_dir, "output", paste0(config$run$name, "_taxonomy_table_gbif_occ.csv")))
+taxa_geography = read.csv(here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv")))
 
 # clean hits
 hits_clean = hits_raw %>%
@@ -37,12 +52,12 @@ hits_clean = hits_raw %>%
 
 hits_geography = hits_clean %>%
   left_join(taxa_geography %>%
-              select(taxon_id,
+              select(accession,
                      any_of(c("specificEpithet",
                               "intraspecificEpithet",
                               "gbif_count_family_local",
                               "gbif_count_genus_local",
-                              "gbif_count_species_local"))), by = "taxon_id") %>%
+                              "gbif_count_species_local"))), by = "accession") %>%
   mutate(local_species = case_when(
     gbif_count_species_local > 0 ~ TRUE,
     gbif_count_species_local == 0 ~ FALSE,
@@ -493,7 +508,7 @@ hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
   arrange(desc(asv_total_count), asv_id, method, accept_method, desc(n_hits), desc(p_identical)) %>%
   select("asv_id", "asv_total_count", "sample_count", "samples", "sequence", 
-         "method", "taxon_id", "domain", "kingdom", "phylum", "class", 
+         "method", "accession", "domain", "kingdom", "phylum", "class", 
          "order", "family", "genus", "species", "specificEpithet", "intraspecificEpithet",
          "accept_method", "taxonomic_level",
          "percent_identical", "seq_overlap",
@@ -505,7 +520,7 @@ hits_accept = hits_geography %>%
          "consensus_value", "n_hits_consensus", "identity_th", "consensus_th", 
          "min_consensus_hits")
 
-write.csv(hits_accept, classification_out, row.names = FALSE)
+write.csv(hits_accept, hybrid_classification_out, row.names = FALSE)
 
 ```
 
@@ -514,7 +529,7 @@ write.csv(hits_accept, classification_out, row.names = FALSE)
 # checks
 nonlocal_100p = accept_species_100_consensus_75 %>%
   left_join(taxa_geography %>%
-              select(-taxon_id) %>%
+              select(-accession) %>%
               distinct(), by = c("class", "order", "family", "genus", "species")) %>%
   filter(iucn_reported_species_local %in% FALSE & gbif_count_species_local == 0)
 
