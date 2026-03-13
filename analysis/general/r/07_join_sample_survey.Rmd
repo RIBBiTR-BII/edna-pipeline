@@ -1,21 +1,18 @@
-# Title: Process taxonomic hits to identify species likely found in Panama
-# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+---
+title: "Join samples with survey data"
+author: "Cob Staines"
+output: html_document
+---
 
-## Load in Libraries (install them in you need them.)
-library(tidyverse)
-library(yaml)
-library(dbplyr)
-library(RPostgres)
-library(DBI)
-library(ribbitrrr)
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr)
 
-
-# manual runs
-# setwd("16S_sequence_processing")
-env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
+# import run config file
+run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
 
 # read in config file
-config = read_yaml(env_config_path)
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # establish database connection
 dbcon = hopToDB("ribbitr")
@@ -29,12 +26,15 @@ db_site = tbl(dbcon, Id("survey_data", "site"))
 db_region = tbl(dbcon, Id("survey_data", "region"))
 db_country = tbl(dbcon, Id("survey_data", "country"))
 
-# classified ASVs
-asv_classified = read_csv(paste0(config$run$runDir, "/output/", config$run$name, "_asv_classified.csv"))
+```
+
+```{r}
+# # load classified ASVs
+# asv_classified = read_csv(here(run_dir, "output", paste0(config$run$name, "_hybrid_classification.csv")))
 
 # samples
 feature_table =
-  read_tsv(paste0(config$run$runDir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  read_tsv(here(run_dir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
   as.data.frame() %>%
   rename("asv_id" = "#OTU ID") %>%
   arrange(asv_id)
@@ -165,3 +165,4 @@ sample_filter_all = sample_nc_filter %>%
   mutate(asv_count = if_else(is.na(asv_count), 0, asv_count))
   
 write.csv(sample_filter_all, paste0(config$run$runDir, "/output/", config$run$name, "_all_samples_nc_filter.csv"), row.names = FALSE)
+```
