@@ -53,7 +53,7 @@ hit_table_vsearch =
              header = FALSE, 
              sep = '\t') %>%
   rename(asv_id = V1,
-         taxon_id = V2,
+         accession = V2,
          percent_identical = V3,
          seq_overlap = V4,
          seq_mismatch = V5,
@@ -74,7 +74,7 @@ hit_table_blast =
              header = FALSE,
              sep = '\t') %>%
   rename(asv_id = V1,
-         taxon_id = V2,
+         accession = V2,
          percent_identical = V3,
          seq_overlap = V4,
          seq_mismatch = V5,
@@ -116,10 +116,10 @@ taxonomy_table =
              header = TRUE, 
              sep = '\t',
              quote = '') %>%
-  rename(taxon_id = Feature.ID,
+  rename(accession = Feature.ID,
          taxon = Taxon) %>%
-  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id) |
-         taxon_id %in% unique(hit_table_blast$taxon_id)
+  filter(accession %in% unique(hit_table_vsearch$accession) |
+           accession %in% unique(hit_table_blast$accession)
          ) %>%
   separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
   mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
@@ -131,8 +131,8 @@ taxonomy_table =
          genus = g,
          species = s) %>%
   mutate(domain = "Eukaryota") %>%
-  arrange(taxon_id) %>%
-  select(taxon_id,
+  arrange(accession) %>%
+  select(accession,
          domain,
          everything())
 
@@ -149,20 +149,17 @@ wide_table = asv_totals %>%
   left_join(sequence_table, by = "asv_id") %>%
   left_join(bind_rows(hit_table_blast,
                       hit_table_vsearch), by = "asv_id") %>%
-  left_join(taxonomy_table, by = "taxon_id") %>%
+  left_join(taxonomy_table, by = "accession") %>%
   left_join(consensus_table_blast, by = c("asv_id", "method", "kingdom", "phylum", "class", "order", "family", "genus", "species")) %>%
   select(any_of(colnames(asv_totals)),
          any_of(colnames(sequence_table)),
          method,
-         # consensus,
          any_of(colnames(taxonomy_table)),
-         any_of(colnames(hit_table_vsearch)),
-         -e_value,
-         -bitscore) %>%
+         any_of(colnames(hit_table_vsearch))) %>%
   arrange(desc(asv_total_count), asv_id, method)
 
-write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_hits_joined.csv"), row.names = FALSE)
-write.csv(taxonomy_table, paste0(config$run$runDir, "/output/", config$run$name, "_taxonomy_table_filtered.csv"), row.names = FALSE)
+write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_02_qiime2_hits.csv"), row.names = FALSE)
+write.csv(taxonomy_table, paste0(config$run$runDir, "/output/", config$run$name, "_02_taxonomy_table_filtered.csv"), row.names = FALSE)
 
 ## Write each table for documentation.  Proceed with analysis in R or in Excel.
 list_of_datasets <- list("Feature Table" = feature_table, 
@@ -173,4 +170,4 @@ list_of_datasets <- list("Feature Table" = feature_table,
                          "Consensus BLAST" = consensus_table_blast
                          )
 
-write.xlsx(list_of_datasets, file = paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_result_tables.xlsx"))
+write.xlsx(list_of_datasets, file = paste0(config$run$runDir, "/output/", config$run$name, "_02_eDNA_result_tables.xlsx"))
