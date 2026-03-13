@@ -8,11 +8,11 @@ output: html_document
 # config
 ```{r}
 ## Load in Libraries (install them in you need them.)
-librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor)
+librarian::shelf(tidyverse, yaml, phylotools, here)
 
 # read in config files
-config_12s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/12S/output/metadata/config.yml"))
-config_16s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/16S/output/metadata/config.yml"))
+config_12s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-13/12S/output/metadata/config.yml"))
+config_16s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-13/16S/output/metadata/config.yml"))
 
 
 
@@ -134,7 +134,7 @@ taxa_class_12s = read_tsv(here("16S_sequence_processing", "vertebrata12s_classif
          everything())
 
 ## 16s
-taxa_class_12s = read_tsv(here("16S_sequence_processing", "vertebrata12s_classifier", "Vertebrata16S_derep1_taxa_extracted",
+taxa_class_16s = read_tsv(here("16S_sequence_processing", "vertebrata16s_classifier", "Vertebrata16S_derep1_taxa_extracted",
                                list.files(here("16S_sequence_processing", "vertebrata16s_classifier", "Vertebrata16S_derep1_taxa_extracted")), "data", "taxonomy.tsv")) %>%
   rename(taxon_id = `Feature ID`,
          taxon = Taxon) %>%
@@ -210,21 +210,38 @@ cumcount <- function(df, bins, column = "n") {
     rowwise() %>%
     mutate(
       taxa_n   = sum(df[[column]] == sequences_n, na.rm = TRUE),
-      taxa_cum = sum(df[[column]] >= sequences_n, na.rm = TRUE)
+      taxa_cum_n = sum(df[[column]] >= sequences_n, na.rm = TRUE)
     ) %>%
     ungroup()
 }
 
-cumcout_12s_class = cumcount(taxa_class_12s_count, seq(1, 30)) %>%
-  mutate(gene = "12S")
-cumcout_16s_class = cumcount(taxa_class_16s_count, seq(1, 30)) %>%
-  mutate(gene = "16S")
+cumcount_bins = seq(1, 30)
 
-cumcout_12s_class_amph = cumcount(taxa_class_12s_count %>%
-                                    filter(class == "Amphibia"), seq(1, 30)) %>%
-  mutate(gene = "12S")
-cumcout_16s_class_amph = cumcount(taxa_class_16s_count %>%
-                                    filter(class == "Amphibia"), seq(1, 30)) %>%
-  mutate(gene = "16S")
+cumcount_12s_class = cumcount(taxa_class_12s_count, cumcount_bins) %>%
+  mutate(gene = "12S",
+         taxa = "all")
+cumcount_16s_class = cumcount(taxa_class_16s_count, cumcount_bins) %>%
+  mutate(gene = "16S",
+         taxa = "all")
+
+cumcount_12s_class_amph = cumcount(taxa_class_12s_count %>%
+                                    filter(class == "Amphibia"), cumcount_bins) %>%
+  mutate(gene = "12S",
+         taxa = "Amphibia")
+cumcount_16s_class_amph = cumcount(taxa_class_16s_count %>%
+                                    filter(class == "Amphibia"), cumcount_bins) %>%
+  mutate(gene = "16S",
+         taxa = "Amphibia")
+
+cumcount_class = bind_rows(cumcount_12s_class,
+                           cumcount_16s_class,
+                           cumcount_12s_class_amph,
+                           cumcount_16s_class_amph
+                           )
+
+ggplot(cumcount_class, aes(x = sequences_n, y = taxa_cum_n,  linetype = taxa, color = gene)) +
+  geom_line() +
+  theme_minimal() +
+  scale_y_log10()
 
 ```
