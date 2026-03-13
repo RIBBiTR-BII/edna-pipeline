@@ -64,12 +64,12 @@ qiime tools extract --input-path analysis/s06_denoised_12S_eDNA/representative_s
 
 echo "Classifying sequences"
 
-# # s07-a
-# # Classify Sequences consensus blast
-# qiime feature-classifier classify-consensus-blast --i-query analysis/s06_denoised_12S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata12S_derep1_seqs_extracted.qza" --i-reference-taxonomy "$project_dir/$c_taxa_dir/Vertebrata12S_derep1_taxa_extracted.qza" --p-maxaccepts $c_b_maxaccepts --p-perc-identity $c_b_perc_identity --p-query-cov $c_b_query_cov --output-dir analysis/s07_classified_taxonomy_blast
-# # Extract out classifications.
-# qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/classification.qza --output-path analysis/s07_classified_taxonomy_blast/classification
-# qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/search_results.qza --output-path analysis/s07_classified_taxonomy_blast/search_results
+# s07-a
+# Classify Sequences consensus blast
+qiime feature-classifier classify-consensus-blast --i-query analysis/s06_denoised_12S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata12S_derep1_seqs_extracted.qza" --i-reference-taxonomy "$project_dir/$c_taxa_dir/Vertebrata12S_derep1_taxa_extracted.qza" --p-maxaccepts $c_b_maxaccepts --p-perc-identity $c_b_perc_identity --p-query-cov $c_b_query_cov --output-dir analysis/s07_classified_taxonomy_blast
+# Extract out classifications.
+qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/classification.qza --output-path analysis/s07_classified_taxonomy_blast/classification
+qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/search_results.qza --output-path analysis/s07_classified_taxonomy_blast/search_results
 
 # s07-b
 # Classify Sequences vsearch global
