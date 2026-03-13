@@ -1,11 +1,11 @@
-# eDNA Sequence Analaysis Pipeline
+# 16S Sequence Processing Pipeline
 
 A 16S eDNA amplicon sequence processing workflow
 *Created by: Brandon Hoenig & [Cob Staines](https://github.com/cob-staines/)*
 
 ## Description
 
-This repository contains Bash (for UNIX-like operating systems) and R scripts to process and analyzing eDNA results in the [Richards-Zawacki Lab](https://www.rzlab.pitt.edu/), optimized for characterization of amphibian communities from 16S (and some 12S) ribosomal RNA in water samples across the Americas.
+This folder contains Bash (for UNIX-like operating systems) and R scripts to process and analyzing amphibian eDNA results in the [Richards-Zawacki Lab](https://www.rzlab.pitt.edu/), optimized for characterization of amphibian communities from 16S (and some 12S) ribosomal RNA in water samples across the Americas.
 
 This workflow makes assumptions and choices which substantially influence the outputs, some of which are set up as configuration parameters and some of which are scripted. We encourage you to read this documentation, get to know the scripts, and critically observe the workflow parameters and assumptions to ensure that it is appropriate for your application. Suggestions and contributions are welcome!
 
