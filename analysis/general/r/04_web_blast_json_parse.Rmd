@@ -34,10 +34,10 @@ run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # specify output file
-output_file = here(run_dir, "output", paste0(config$run$name, "ncbi_web_blast_hits.csv"))
+output_file = here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))
 ```
 
-# Parse BLAST results
+# Parse web BLAST results
 ```{r}
 # strip hit taxa
 search_results = json_blast_results$BlastOutput2$report$results$search
@@ -65,7 +65,9 @@ for (ii in 1:length(search_results$hits)) {
              q_start = query_from,
              q_end = query_to,
              s_start = hit_from,
-             s_end = hit_to) %>%
+             s_end = hit_to,
+             e_value = evalue,
+             bitscore = bit_score) %>%
       mutate(percent_identical = 100 * identity / seq_overlap,
              seq_mismatch = seq_overlap - identity,) %>%
       select(hit_id,
@@ -76,7 +78,9 @@ for (ii in 1:length(search_results$hits)) {
              q_start,
              q_end,
              s_start,
-             s_end) %>%
+             s_end,
+             e_value,
+             bitscore) %>%
       group_by(hit_id) %>%
       slice_max(percent_identical, with_ties = FALSE) %>%
       ungroup()
@@ -139,14 +143,13 @@ close(pb)
 ```{r}
 all_hits_out = all_hits %>%
   left_join(all_taxa, by = "taxid") %>%
-  mutate(method = "blast_web") %>%
+  mutate(method = "blast_web",
+         species = coalesce(subspecies, species)) %>%
   select(asv_id,
-         hit_id,
          method,
-         accession,
          taxid,
+         accession,
          title,
-         percent_identical,
          domain,
          kingdom,
          phylum,
@@ -155,7 +158,16 @@ all_hits_out = all_hits %>%
          family,
          genus,
          species,
-         subspecies)
+         percent_identical,
+         seq_overlap,
+         seq_mismatch,
+         gapopen_count,
+         q_start,
+         q_end,
+         s_start,
+         s_end,
+         e_value,
+         bitscore)
 
 write_csv(all_hits_out, output_file)
 
