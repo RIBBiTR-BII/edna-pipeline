@@ -1,6 +1,7 @@
 # Amphibian eDNA Analysis Tools
 
 A compilation of workflows and scripts for processing fo RIBBiTR eDNA sequences
+
 *Created by: Brandon Hoenig & [Cob Staines](https://github.com/cob-staines/)*
 
 ## Description

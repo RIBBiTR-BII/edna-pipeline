@@ -1,6 +1,7 @@
 # 16S Sequence Processing Pipeline
 
 A 16S eDNA amplicon sequence processing workflow
+
 *Created by: Brandon Hoenig & [Cob Staines](https://github.com/cob-staines/)*
 
 ## Description
