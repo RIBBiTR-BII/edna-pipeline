@@ -115,9 +115,6 @@ taxa_class_12s = read_tsv(here("16S_sequence_processing", "vertebrata12s_classif
                                list.files(here("16S_sequence_processing", "vertebrata12s_classifier", "Vertebrata12S_derep1_taxa_extracted")), "data", "taxonomy.tsv")) %>%
   rename(taxon_id = `Feature ID`,
          taxon = Taxon) %>%
-  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id)
-         # | taxon_id %in% unique(hit_table_blast$taxon_id)
-  ) %>%
   separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
   mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
   rename(kingdom = k,
@@ -138,9 +135,6 @@ taxa_class_16s = read_tsv(here("16S_sequence_processing", "vertebrata16s_classif
                                list.files(here("16S_sequence_processing", "vertebrata16s_classifier", "Vertebrata16S_derep1_taxa_extracted")), "data", "taxonomy.tsv")) %>%
   rename(taxon_id = `Feature ID`,
          taxon = Taxon) %>%
-  filter(taxon_id %in% unique(hit_table_vsearch$taxon_id)
-         # | taxon_id %in% unique(hit_table_blast$taxon_id)
-  ) %>%
   separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
   mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
   rename(kingdom = k,
@@ -192,7 +186,8 @@ taxa_class_12s_count = taxa_class_12s %>%
            family,
            genus,
            species) %>%
-  count()
+  count() %>%
+  mutate(gene = "12S")
 
 
 taxa_class_16s_count = taxa_class_16s %>%
@@ -203,7 +198,11 @@ taxa_class_16s_count = taxa_class_16s %>%
            family,
            genus,
            species) %>%
-  count()
+  count() %>%
+  mutate(gene = "16S")
+
+taxa_class_count = bind_rows(taxa_class_12s_count,
+                             taxa_class_16s_count)
 
 cumcount <- function(df, bins, column = "n") {
   tibble(sequences_n = bins) %>%
@@ -215,7 +214,7 @@ cumcount <- function(df, bins, column = "n") {
     ungroup()
 }
 
-cumcount_bins = seq(1, 30)
+cumcount_bins = seq(1, 50)
 
 cumcount_12s_class = cumcount(taxa_class_12s_count, cumcount_bins) %>%
   mutate(gene = "12S",
@@ -238,6 +237,12 @@ cumcount_class = bind_rows(cumcount_12s_class,
                            cumcount_12s_class_amph,
                            cumcount_16s_class_amph
                            )
+
+ggplot(cumcount_class, aes(x = sequences_n, y = taxa_n,  linetype = taxa, color = gene)) +
+  geom_line() +
+  theme_minimal() +
+  scale_y_log10()
+
 
 ggplot(cumcount_class, aes(x = sequences_n, y = taxa_cum_n,  linetype = taxa, color = gene)) +
   geom_line() +
