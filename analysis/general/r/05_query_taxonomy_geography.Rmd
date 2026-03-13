@@ -30,17 +30,23 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 # recommend running one system at a time, for cleaner geographic distinction
 study_system = "pennsylvania"
 
-taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_taxonomy_table_gbif_occ.csv"))
+taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv"))
 
 ```
 
 # Import taxa
 ```{r}
 # load taxonomy table
-taxa_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_taxonomy_table_filtered.csv")))
+taxa_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_taxonomy_table_filtered.csv")))
+
+# load web blast table
+taxa_web_blast_metazoa = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
+  select(all_of(colnames(taxa_raw))) %>%
+  filter(kingdom == "Metazoa")
 
 # clean up taxa
-taxa_clean = taxa_raw %>%
+taxa_clean = bind_rows(taxa_raw,
+                       taxa_web_blast_metazoa)%>%
   mutate(
     scientificName = case_when(
       !is.na(genus) & !is.na(species) ~ paste0(genus, " ", species),
@@ -60,7 +66,7 @@ taxa_out = taxa_clean
 
 # get unique for querying
 taxa_unique = taxa_clean %>%
-  select(-taxon_id,
+  select(-accession,
          -kingdom,
          -phylum) %>%
   distinct() %>%
