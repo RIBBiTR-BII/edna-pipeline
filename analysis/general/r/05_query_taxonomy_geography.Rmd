@@ -13,10 +13,8 @@ Requires API keys/tokens for IUCN (called as `iucn_api_token`) and GBIF (in .Ren
 # Config
 ```{r}
 ## Load in Libraries (install as needed)
-librarian::shelf(tidyverse, yaml, here, iucnredlist, rgbif)
+librarian::shelf(tidyverse, yaml, here, rgbif)
 
-# setup IUCN token
-# iucn_api_token = Sys.getenv("iucn_token")
 # requires GBIF token in .Renviron
 
 # import run config file
@@ -41,6 +39,7 @@ taxa_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_taxonom
 
 # load web blast table
 taxa_web_blast_metazoa = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
+  mutate(species = sub("^\\S+\\s+", "", species)) %>%
   select(all_of(colnames(taxa_raw))) %>%
   filter(kingdom == "Metazoa")
 
