@@ -1,0 +1,99 @@
+---
+title: "x7_methods_controls"
+output: html_document
+---
+
+
+# config
+```{r}
+librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor, phylotools)
+
+# import run config file
+run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+
+# read in config file
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+# asv control threshold factor
+asv_control_th_factor = 100
+
+# control output file
+control_out = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv"))
+
+```
+
+# map samples
+```{r}
+
+sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv"))) %>%
+  rename(field_negative_control = negative_control,
+         field_negative_control_group_id = negative_control_group_id)
+
+feature_table =
+  read_tsv(here(run_dir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
+  as.data.frame() %>%
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+sample_asv = feature_table %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "illumina_sample_raw",
+               values_to = "asv_count") %>%
+  # filter(asv_count != 0) %>%
+  left_join(sample_map, by = "illumina_sample_raw") %>%
+  mutate(control_type = case_when(
+    grepl("^Positive", illumina_sample_raw) ~ "positive_lab",
+    grepl("^Neg|NC", illumina_sample_raw) ~ "negative_lab",
+    field_negative_control %in% c(TRUE) ~ "negative_field",
+    .default = NA))
+  
+```
+
+# controls
+```{r}
+# lab positive controls
+control_asv_pos = sample_asv %>%
+  filter(control_type == "positive_lab") %>%
+  group_by(asv_id, control_type) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop")
+
+# lab negative controls
+control_asv_neg_lab = sample_asv %>%
+  filter(control_type == "negative_lab") %>%
+  group_by(asv_id, control_type) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop")
+
+# field negative controls
+control_asv_neg_field = sample_asv %>%
+  filter(control_type == "negative_field") %>%
+  group_by(asv_id, control_type, field_negative_control_group_id) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop")
+
+# correct asv reads by controls
+control_asv = bind_rows(control_asv_pos,
+                        control_asv_neg_lab) %>%
+  cross_join(bind_rows(control_asv_neg_field %>%
+                         select(field_negative_control_group_id) %>%
+                         distinct(),
+                       tibble(field_negative_control_group_id = NA))) %>%
+  bind_rows(control_asv_neg_field) %>%
+  filter(max_control_asv_count > 0) %>%
+  group_by(asv_id, field_negative_control_group_id) %>%
+  slice_max(max_control_asv_count, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  rename(control_th_type = control_type)
+
+sample_asv_control = sample_asv %>%
+  left_join(control_asv, by = c("asv_id", "field_negative_control_group_id")) %>%
+  mutate(max_control_asv_count = replace_na(max_control_asv_count, 0),
+         asv_control_th = asv_control_th_factor * max_control_asv_count,
+         control_th_below = (asv_count <= asv_control_th),
+         detected = (asv_count > 0),
+         detected_controlled = (detected & !(control_th_below %in% c(TRUE))))
+
+write_csv(sample_asv_control, control_out)
+
+```
