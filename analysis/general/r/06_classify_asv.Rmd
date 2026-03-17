@@ -25,7 +25,8 @@ hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06
 ```{r}
 # read in hits
 qiime2_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_qiime2_hits.csv")))
-web_blast_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv")))
+web_blast_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
+  mutate(species = sub("^\\S+\\s+", "", species))
 
 backbone = qiime2_hits_raw %>%
   select(asv_id,
@@ -317,7 +318,8 @@ accept_species_100_unanimous_local = hits_geography %>%
             gbif_count_species_local = first(gbif_count_species_local),
             local_species = any(local_species, na.rm = TRUE),
             .groups = "drop") %>%
-  mutate(accept_method = "0_species_100p_unanimous_local") %>%
+  mutate(accept_method = "0_species_100p_unanimous_local",
+         taxonomic_level = "species") %>%
   group_by(asv_id) %>%
   mutate(tie = n() > 1) %>%
   ungroup()%>%
@@ -349,7 +351,8 @@ accept_species_100_unanimous = hits_geography %>%
             gbif_count_species_local = first(gbif_count_species_local),
             local_species = any(local_species, na.rm = TRUE),
             .groups = "drop") %>%
-  mutate(accept_method = "0_species_100p_unanimous") %>%
+  mutate(accept_method = "0_species_100p_unanimous",
+         taxonomic_level = "species") %>%
   group_by(asv_id) %>%
   mutate(tie = n() > 1) %>%
   ungroup()%>%
@@ -506,10 +509,12 @@ remainder = hits_geography %>%
 
 hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
+  mutate(species = if_else(!is.na(intraspecificEpithet), paste0(specificEpithet, " ", intraspecificEpithet), species)) %>%
   arrange(desc(asv_total_count), asv_id, method, accept_method, desc(n_hits), desc(p_identical)) %>%
   select("asv_id", "asv_total_count", "sample_count", "samples", "sequence", 
          "method", "accession", "domain", "kingdom", "phylum", "class", 
-         "order", "family", "genus", "species", "specificEpithet", "intraspecificEpithet",
+         "order", "family", "genus", "species",
+         # "specificEpithet", "intraspecificEpithet",
          "accept_method", "taxonomic_level",
          "percent_identical", "seq_overlap",
          "seq_mismatch", "gapopen_count", "q_start", "q_end", "s_start", 
@@ -525,6 +530,40 @@ write.csv(hits_accept, hybrid_classification_out, row.names = FALSE)
 ```
 
 # Checks
+```{r}
+hits_accept_qc = hits_accept %>%
+  filter(!(!is.na(accept_method) & seq_overlap_max < 100))
+
+# accept methods
+all_accept_methods = hits_accept %>%
+  select(accept_method) %>%
+  distinct() %>%
+  arrange(accept_method)
+
+# discrepancies in species-level accepts
+accepts_species = hits_accept_qc %>%
+  filter(grepl("^0|^1|^2", accept_method)) %>%
+  group_by(asv_id) %>%
+  mutate(n_method = n_distinct(method),
+         n_class = n_distinct(family, genus, species)) %>%
+  ungroup()
+
+# accepts_species_wb_only = accepts_species %>%
+#   filter()
+
+accepts_species_conflicts = accepts_species %>%
+  filter(n_class > 1)
+
+peace = hits_accept_qc %>%
+  filter(asv_id == "b70ebc6dfe1b5c252d1bc3add98d0943")
+
+no_conflict_0
+
+no_0
+
+```
+
+
 ```{r}
 # checks
 nonlocal_100p = accept_species_100_consensus_75 %>%
