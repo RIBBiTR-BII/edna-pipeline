@@ -15,6 +15,10 @@ run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
+# minimum sequence overlap
+# seq_overlap_cutoff = 30  # 12S
+seq_overlap_cutoff = 150  # 16S
+
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
 
@@ -53,6 +57,9 @@ hits_clean = hits_raw %>%
   mutate(p_identical = percent_identical / 100,
          p_overlap = seq_overlap / (s_end - s_start + 1))
 
+peace = taxa_geography %>%
+  filter(accession == "PV521810")
+
 hits_geography = hits_clean %>%
   left_join(taxa_geography %>%
               select(accession,
@@ -60,7 +67,8 @@ hits_geography = hits_clean %>%
                               "intraspecificEpithet",
                               "gbif_count_family_local",
                               "gbif_count_genus_local",
-                              "gbif_count_species_local"))), by = "accession") %>%
+                              "gbif_count_species_local"))) %>%
+              distinct(), by = "accession") %>%
   mutate(specificEpithet = coalesce(specificEpithet, species), 
          local_species = case_when(
            gbif_count_species_local > 0 ~ TRUE,
@@ -586,7 +594,7 @@ write.csv(hits_accept, hybrid_classification_out, row.names = FALSE)
 # Checks
 ```{r}
 hits_accept_qc = hits_accept %>%
-  filter(!(!is.na(accept_method) & seq_overlap_max < 150))
+  filter(!(!is.na(accept_method) & seq_overlap_max < seq_overlap_cutoff))
 
 # accept methods
 all_accept_methods = hits_accept %>%
