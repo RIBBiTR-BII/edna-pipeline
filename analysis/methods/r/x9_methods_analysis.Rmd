@@ -7,7 +7,9 @@ output: html_document
 ```{r}
 librarian::shelf(tidyverse, here)
 
-data_combined = read.csv(here("methods_analysis", "output", "edna_methods_12S_16S_feature_sequence_classification_controlled_combined_2026-03-06.csv"))
+run_dir_methods = here("16S_sequence_processing", "runs", "methods_2026-03-13")
+
+data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled.csv")))
 ```
 
 # aggregate by sample

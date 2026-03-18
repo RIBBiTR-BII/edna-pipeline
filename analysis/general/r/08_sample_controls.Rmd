@@ -90,9 +90,12 @@ sample_asv_control = sample_asv %>%
   left_join(control_asv, by = c("asv_id", "field_negative_control_group_id")) %>%
   mutate(max_control_asv_count = replace_na(max_control_asv_count, 0),
          asv_control_th = asv_control_th_factor * max_control_asv_count,
+         asv_count_controlled = asv_count - asv_control_th,
+         asv_count_controlled = if_else(asv_count_controlled < 0, 0, asv_count_controlled),
          control_th_below = (asv_count <= asv_control_th),
          detected = (asv_count > 0),
-         detected_controlled = (detected & !(control_th_below %in% c(TRUE))))
+         detected_controlled = (detected & !(control_th_below %in% c(TRUE)))) %>%
+  rename(asv_count_raw = asv_count)
 
 write_csv(sample_asv_control, control_out)
 

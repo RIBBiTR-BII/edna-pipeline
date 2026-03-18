@@ -11,7 +11,7 @@ library(yaml)
 
 # 
 # # # manual runs
-# env_config_path = "runs/penn_2026-03-10/output/metadata/config.yml"
+# env_config_path = "runs/methods_2026-03-13/12S/output/metadata/config.yml"
 # setwd("16S_sequence_processing")
 
 # inherit env_config_path
