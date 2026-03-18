@@ -302,7 +302,8 @@ taxa_out = taxa_out %>%
   select(-gbif_speciesKey_s,
          -gbif_speciesKey_e,
          -local_gbif_count_species_s,
-         -local_gbif_count_species_e)
+         -local_gbif_count_species_e) %>%
+  distinct()
 
 cat("Done with GBIF.\n")
 
