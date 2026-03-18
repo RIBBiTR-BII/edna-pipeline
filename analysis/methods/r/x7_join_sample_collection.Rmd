@@ -11,10 +11,14 @@ output: html_document
 ## Load in Libraries (install them in you need them.)
 librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor)
 
+run_dir_methods = here("16S_sequence_processing", "runs", "methods_2026-03-13")
+
 # read in config files
-config_12s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/12S/output/metadata/config.yml"))
-config_16s = read_yaml(here("16S_sequence_processing", "runs/methods_2026-03-05/16S/output/metadata/config.yml"))
-file_out = here("16S_sequence_processing", paste0("runs/methods_2026-03-05/12S/output/metadata/edna_env_metadata_", today(),".csv"))
+config_12s = read_yaml(here(run_dir_methods, "12S", "output", "metadata", "config.yml"))
+config_16s = read_yaml(here(run_dir_methods, "16S", "output", "metadata", "config.yml"))
+
+# combined output
+file_out = here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_07_sample_id_map.csv"))
 
 # read in lookup file
 sample_lookup = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-03-05.xlsx")) %>%
@@ -22,7 +26,11 @@ sample_lookup = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina_ru
   mutate(edna_sample_name = if_else(grepl("PAN_22", id_e_dna_sample),
                                     id_e_dna_sample_edited,
                                     id_e_dna_sample),
-         edna_sample_name = gsub("(^[0-9]{6})_", "\\1_eDNA_", edna_sample_name))
+         edna_sample_name = gsub("(^[0-9]{6})_", "\\1_eDNA_", edna_sample_name),
+         edna_sample_name = if_else(grepl("^Pe_eDNA\\d{5}$",edna_sample_name),
+                                    gsub("Pe_eDNA00", "Pe_23_eDNA_", edna_sample_name),
+                                    edna_sample_name),
+         edna_sample_name = if_else(edna_sample_name == "NA", NA, edna_sample_name))
 
 # establish database connection
 dbcon = hopToDB("ribbitr")
@@ -54,7 +62,8 @@ edna_meta = db_edna %>%
   left_join(db_region, by = "region_id") %>%
   left_join(db_country, by = "country_id") %>%
   filter(edna_sample_name %in% sample_names$edna_sample_name) %>%
-  select(edna_sample_name,
+  select(edna_id,
+         edna_sample_name,
          collection_time,
          edna_latitude,
          edna_longitude,
@@ -71,7 +80,7 @@ edna_meta = db_edna %>%
          country) %>%
   collect()
 
-missing = setdiff(sample_names$edna_sample_name, edna_meta$edna_sample_name)
+missing_samps = setdiff(sample_names$edna_sample_name, edna_meta$edna_sample_name)
 
 env_meta = db_env %>%
   left_join(db_survey, by = "survey_id") %>%
