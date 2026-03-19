@@ -31,6 +31,7 @@ classification_out = here(run_dir, "output", paste0(config$run$name, "_06_asv_cl
 ```{r}
 # read in hits
 qiime2_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_qiime2_hits.csv")))
+
 web_blast_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
   mutate(species = sub("^\\S+\\s+", "", species))
 
@@ -56,9 +57,6 @@ hits_clean = hits_raw %>%
          seq_overlap >= 50) %>%
   mutate(p_identical = percent_identical / 100,
          p_overlap = seq_overlap / (s_end - s_start + 1))
-
-peace = taxa_geography %>%
-  filter(accession == "PV521810")
 
 hits_geography = hits_clean %>%
   left_join(taxa_geography %>%
@@ -91,16 +89,19 @@ find_consensus = function(hit_table, taxonomic_rank, identity_th = 0, consensus_
     warning("Using a consensus_th <= 0.5 may result in multiple consensus classification. Consensus classification(s) will be selected with the greatest consensus value, with ties handled according to tie_handling ('error', 'pass', 'drop')")
   }
   
-  if (!(taxonomic_rank %in% c("class", "order", "family", "genus", "species"))) {
-    stop('taxonnomic_rank not recognized, must be one of c("class", "order", "family", "genus", "species")')
+  if (!(taxonomic_rank %in% c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species"))) {
+    stop('taxonnomic_rank not recognized, must be one of c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")')
   }
   
   taxon_groups_list = list(
-    species = c("asv_id", "method", "class", "order", "family", "genus", "species"),
-    genus = c("asv_id", "method", "class", "order", "family", "genus"),
-    family = c("asv_id", "method", "class", "order", "family"),
-    order = c("asv_id", "method", "class", "order"),
-    class = c("asv_id", "method", "class")
+    species = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order", "family", "genus", "species"),
+    genus = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order", "family", "genus"),
+    family = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order", "family"),
+    order = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order"),
+    class = c("asv_id", "method", "domain", "kingdom", "phylum", "class"),
+    phylum = c("asv_id", "method", "domain", "kingdom", "phylum"),
+    kingdom = c("asv_id", "method", "domain", "kingdom"),
+    domain = c("asv_id", "method", "domain")
   )
   
   taxon_group = taxon_groups_list[[taxonomic_rank]]
@@ -426,7 +427,7 @@ accept_species_100_consensus_75_local = find_consensus(hits_geography %>%
                      gbif_count_genus_local,
                      gbif_count_species_local,
                      local_species) %>%
-              distinct(), by = c("asv_id", "method", "class", "order", "family", "genus", "species")) %>%
+              distinct(), by = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")) %>%
   arrange(desc(asv_total_count), asv_id, method, accept_method)
 
 # species consensus >=75% @ p_identity = 1
@@ -454,7 +455,7 @@ accept_species_100_consensus_75 = find_consensus(hits_geography %>%
                      gbif_count_genus_local,
                      gbif_count_species_local,
                      local_species) %>%
-              distinct(), by = c("asv_id", "method", "class", "order", "family", "genus", "species"))
+              distinct(), by = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order", "family", "genus", "species"))
 
 # local species unanimous @ p_identity >= .95, pmax_drop >= 0.03
 accept_species_unambiguous_local = hits_species_local %>%
@@ -524,8 +525,94 @@ accept_order_50_consensus_75 = find_consensus(hits_geography,
                      sample_count,
                      samples,
                      sequence,
-                     method) %>%
-              distinct(), by = c("asv_id", "method"))
+                     method,
+                     domain,
+                     kingdom,
+                     phylum,
+                     class,
+                     order
+                     ) %>%
+              distinct(), by = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order"))
+
+# order consensus >=75% @ p_identity >0.499
+accept_order_50_consensus_95 = find_consensus(hits_geography,
+                                           "order", identity_th = 0.499, consensus_th = 0.95, tie_handling = "drop") %>%
+  mutate(accept_method = "6_order_50p_consensus_95") %>%
+  left_join(hits_geography %>%
+              select(asv_id,
+                     asv_total_count,
+                     sample_count,
+                     samples,
+                     sequence,
+                     method,
+                     domain,
+                     kingdom,
+                     phylum,
+                     class,
+                     order) %>%
+              distinct(), by = c("asv_id", "method", "domain", "kingdom", "phylum", "class", "order"))
+
+# class consensus >=95% @ p_identity >0.499
+accept_class_50_consensus_95 = find_consensus(hits_geography,
+                                           "class", identity_th = 0.499, consensus_th = 0.95, tie_handling = "drop") %>%
+  mutate(accept_method = "7_class_50p_consensus_95") %>%
+  left_join(hits_geography %>%
+              select(asv_id,
+                     asv_total_count,
+                     sample_count,
+                     samples,
+                     sequence,
+                     method,
+                     domain,
+                     kingdom,
+                     phylum,
+                     class) %>%
+              distinct(), by = c("asv_id", "method", "domain", "kingdom", "phylum", "class"))
+
+# phylum consensus >=95% @ p_identity >0.499
+accept_phylum_50_consensus_95 = find_consensus(hits_geography,
+                                           "phylum", identity_th = 0.499, consensus_th = 0.95, tie_handling = "drop") %>%
+  mutate(accept_method = "8_phylum_50p_consensus_95") %>%
+  left_join(hits_geography %>%
+              select(asv_id,
+                     asv_total_count,
+                     sample_count,
+                     samples,
+                     sequence,
+                     method,
+                     domain,
+                     kingdom,
+                     phylum) %>%
+              distinct(), by = c("asv_id", "method", "domain", "kingdom", "phylum"))
+
+# kingdom consensus >=95% @ p_identity >0.499
+accept_kingdom_50_consensus_95 = find_consensus(hits_geography,
+                                           "kingdom", identity_th = 0.499, consensus_th = 0.95, tie_handling = "drop") %>%
+  mutate(accept_method = "9_kingdom_50p_consensus_95") %>%
+  left_join(hits_geography %>%
+              select(asv_id,
+                     asv_total_count,
+                     sample_count,
+                     samples,
+                     sequence,
+                     method,
+                     domain,
+                     kingdom) %>%
+              distinct(), by = c("asv_id", "method", "domain", "kingdom"))
+
+# domain consensus >=95% @ p_identity >0.499
+accept_domain_50_consensus_95 = find_consensus(hits_geography,
+                                           "domain", identity_th = 0.499, consensus_th = 0.95, tie_handling = "drop") %>%
+  mutate(accept_method = "9_domain_50p_consensus_95") %>%
+  left_join(hits_geography %>%
+              select(asv_id,
+                     asv_total_count,
+                     sample_count,
+                     samples,
+                     sequence,
+                     method,
+                     domain) %>%
+              distinct(), by = c("asv_id", "method", "domain"))
 ```
 
 # Combine outputs
@@ -541,7 +628,11 @@ accept_all = bind_rows(accept_species_100_unanimous,
                        accept_family_unambiguous,
                        accept_family_unambiguous_local,
                        accept_order_unambiguous,
-                       accept_order_50_consensus_75) %>%
+                       accept_order_50_consensus_95,
+                       accept_class_50_consensus_95,
+                       accept_phylum_50_consensus_95,
+                       accept_kingdom_50_consensus_95,
+                       accept_domain_50_consensus_95) %>%
   mutate(tie = if_else(is.na(tie), FALSE, tie)) %>%
   arrange(desc(asv_total_count), asv_id, method, accept_method, desc(n_hits), desc(p_identical_max)) %>%
   select(all_of(colnames(accept_species_100_unanimous)),
@@ -554,6 +645,10 @@ asv_count = length(unique(accept_all$asv_id))
 
 remainder = hits_geography %>%
   anti_join(accept_all, by = c("asv_id", "method"))
+
+all_accept_methods = accept_all %>%
+  select(accept_method) %>%
+  distinct()
 
 hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
@@ -571,6 +666,10 @@ hits_accept = hits_geography %>%
                                                 "4_family_80p_pdrop_05" ~ 10,
                                                 "5_order_70p_pdrop_05" ~ 11, 
                                                 "6_order_50p_consensus_75" ~ 12,
+                                                "7_class_50p_consensus_75" ~ 13,
+                                                "8_phylum_50p_consensus_75" ~ 14,
+                                                "9_kingdom_50p_consensus_75" ~ 15,
+                                                "9_domain_50p_consensus_75" ~ 16,
                                                 default = NA)) %>%
   arrange(desc(asv_total_count), asv_id, method, accept_method, desc(n_hits), desc(p_identical)) %>%
   select("asv_id", "asv_total_count", "sample_count", "samples", "sequence", 
