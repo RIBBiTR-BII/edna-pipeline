@@ -5,9 +5,13 @@ output: html_document
 
 # load data
 ```{r}
-librarian::shelf(tidyverse, here)
+librarian::shelf(tidyverse, here, yaml, brms, cmdstanr, tidybayes)
 
 run_dir_methods = here("16S_sequence_processing", "runs", "methods_2026-03-13")
+
+# read in config files
+config_12s = read_yaml(here(run_dir_methods, "12S", "output", "metadata", "config.yml"))
+config_16s = read_yaml(here(run_dir_methods, "16S", "output", "metadata", "config.yml"))
 
 data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled.csv")))
 ```
@@ -30,17 +34,17 @@ sample_taxa_count = data_combined %>%
     # number of ASVs (before controls)
     n_asv = sum(detected),
     # number of ASVs (after controls)
-    n_asv_controlled = sum(detected_controlled),
+    n_asv_controlled = sum(detected_controlled, na.rm = TRUE),
     # number of ASVs classified
-    n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_level)),
+    n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_rank), na.rm = TRUE),
     # number of ASVs classified as amphibians
-    n_asv_controlled_class_amph = sum(detected_controlled & (class == "Amphibia")),
+    n_asv_controlled_class_amph = sum(detected_controlled & (class == "Amphibia"), na.rm = TRUE),
     # number of ASVs classified as amphibians to the species level
-    n_asv_controlled_class_amph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_level == "species")),
+    n_asv_controlled_class_amph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_rank == "species"), na.rm = TRUE),
     .groups = "drop")
 
 # pivot longer for plotting
-sample_taxa_control_count_long = sample_taxa_control_count %>%
+sample_taxa_count_long = sample_taxa_count %>%
   pivot_longer(cols = c(n_asv,
                         n_asv_controlled,
                         n_asv_controlled_class,
@@ -50,13 +54,69 @@ sample_taxa_control_count_long = sample_taxa_control_count %>%
                values_to = "n")
 
 # gene
-ggplot(sample_taxa_control_count_long, aes(x = gene, y = n, color = count_type)) +
+ggplot(sample_taxa_count_long, aes(x = gene, y = n, color = count_type)) +
   geom_boxplot() +
   ylim(0, 15)
 
 # 16s pore size active passive
-ggplot(sample_taxa_control_count %>%
+ggplot(sample_taxa_count %>%
          filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_amph_spp, color = filter_size_um_rz)) +
   geom_boxplot()
+
+```
+
+# model fitting
+```{r}
+set_cmdstan_path(Sys.getenv("cmd_stan_path"))
+
+m1_znb <- brm(
+  formula = bf(n_asv ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               shape ~ 1),
+  data = sample_taxa_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+```
+
+# model checks
+```{r}
+model_select = m1_znb
+
+pp_check(model_select,
+         type = "dens_overlay",
+         prefix = "ppc",
+         ndraws = 100) +
+  scale_x_log10()
+```
+
+# model interpretation
+```{r}
+summary(model_select)
+```
+
+# hypothesis testing
+```{r}
+newdata_gene = expand_grid(gene = c("12S", "16S")) %>%
+  mutate(passive_active_rz = "Active",
+         filter_size_um_rz = 5.0,
+         crispr = FALSE,
+         block = FALSE,
+         extraction_type = "Tissue")
+
+epred_gene = epred_draws(model_select,
+                         newdata = newdata_gene,
+                         re_formula = NA)
+
+ggplot(epred_gene, aes(y = .epred, x = gene)) +
+  geom_boxplot() +
+  theme_minimal()
 
 ```
