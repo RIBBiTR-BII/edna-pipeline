@@ -5,9 +5,11 @@ output: html_document
 
 # load data
 ```{r}
-librarian::shelf(tidyverse, here, yaml, brms, cmdstanr, tidybayes)
+librarian::shelf(tidyverse, here, yaml, brms, cmdstanr, tidybayes, emmeans)
 
 run_dir_methods = here("16S_sequence_processing", "runs", "methods_2026-03-13")
+
+model_dir = here("analysis", "methods", "output", "models")
 
 # read in config files
 config_12s = read_yaml(here(run_dir_methods, "12S", "output", "metadata", "config.yml"))
@@ -37,10 +39,12 @@ sample_taxa_count = data_combined %>%
     n_asv_controlled = sum(detected_controlled, na.rm = TRUE),
     # number of ASVs classified
     n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_rank), na.rm = TRUE),
+    # number of ASVs classified chordata
+    n_asv_controlled_class_chord = sum(detected_controlled & (phylum == "Chordata"), na.rm = TRUE),
     # number of ASVs classified as amphibians
-    n_asv_controlled_class_amph = sum(detected_controlled & (class == "Amphibia"), na.rm = TRUE),
+    n_asv_controlled_class_xamph = sum(detected_controlled & (class == "Amphibia"), na.rm = TRUE),
     # number of ASVs classified as amphibians to the species level
-    n_asv_controlled_class_amph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_rank == "species"), na.rm = TRUE),
+    n_asv_controlled_class_xamph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_rank == "species"), na.rm = TRUE),
     .groups = "drop")
 
 # pivot longer for plotting
@@ -48,8 +52,9 @@ sample_taxa_count_long = sample_taxa_count %>%
   pivot_longer(cols = c(n_asv,
                         n_asv_controlled,
                         n_asv_controlled_class,
-                        n_asv_controlled_class_amph,
-                        n_asv_controlled_class_amph_spp),
+                        n_asv_controlled_class_chord,
+                        n_asv_controlled_class_xamph,
+                        n_asv_controlled_class_xamph_spp),
                names_to = "count_type",
                values_to = "n")
 
@@ -69,8 +74,8 @@ ggplot(sample_taxa_count %>%
 ```{r}
 set_cmdstan_path(Sys.getenv("cmd_stan_path"))
 
-m1_znb <- brm(
-  formula = bf(n_asv ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+m1_znb_asv_cntr <- brm(
+  formula = bf(n_asv_controlled ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
                hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
                shape ~ 1),
   data = sample_taxa_count,
@@ -84,11 +89,58 @@ m1_znb <- brm(
   backend = "cmdstanr"
 )
 
+m1_znb_asv_cntr <- add_criterion(m1_znb_asv_cntr, "loo")
+
+saveRDS(m1_znb_asv_cntr, file = here(model_dir, "m1_znb_asv_cntr.rds"))
+m1_znb_asv_cntr = readRDS(file = here(model_dir, "m1_znb_asv_cntr.rds"))
+
+m1_znb_asv_cont_chord <- brm(
+  formula = bf(n_asv_controlled_class_chord ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               shape ~ 1),
+  data = sample_taxa_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m1_znb_asv_cont_chord <- add_criterion(m1_znb_asv_cont_chord, "loo")
+
+saveRDS(m1_znb_asv_cont_chord, file = here(model_dir, "m1_znb_asv_cont_chord.rds"))
+m1_znb_asv_cont_chord = readRDS(file = here(model_dir, "m1_znb_asv_cont_chord.rds"))
+
+m1_znb_asv_cont_amph <- brm(
+  formula = bf(n_asv_controlled_class_xamph ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               shape ~ 1),
+  data = sample_taxa_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m1_znb_asv_cont_amph <- add_criterion(m1_znb_asv_cont_amph, "loo")
+
+saveRDS(m1_znb_asv_cont_amph, file = here(model_dir, "m1_znb_asv_cont_amph.rds"))
+m1_znb_asv_cont_amph = readRDS(file = here(model_dir, "m1_znb_asv_cont_amph.rds"))
+
 ```
 
 # model checks
 ```{r}
-model_select = m1_znb
+# model_select = m1_znb_asv_cntr
+# model_select = m1_znb_asv_cont_chord
+model_select = m1_znb_asv_cont_amph
 
 pp_check(model_select,
          type = "dens_overlay",
@@ -102,21 +154,156 @@ pp_check(model_select,
 summary(model_select)
 ```
 
+# extract & organize draws
+```{r}
+# hu
+hu_specs = emmeans(model_select, 
+                   ~ gene | crispr, 
+                   dpar = "hu",
+                   re_formula = NA)
+
+hu_contrasts_specs = contrast(hu_specs, method = "revpairwise")
+
+hu_group_draws = hu_specs %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu = .value) %>%
+  mutate(p_detect = 1 - plogis(hu))
+
+hu_contrast_draws = hu_contrasts_specs %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu_gene = .value)
+
+hu_contrast_agg = hu_contrast_draws %>%
+  group_by(contrast) %>%
+  summarize(hdi_50 = hdi(hu_gene, ci = 0.50),
+            hdi_89 = hdi(hu_gene, ci = 0.89),
+            hdi_95 = hdi(hu_gene, ci = 0.95),
+            ratio_positive = sum(hu_gene > 0) / n(),
+            hu_median = median(hu_gene),
+            .groups = "drop") %>%
+  mutate(
+    hdi_zero_50 = case_when(
+      hdi_50[1] > 0 | hdi_50[2] < 0 ~ TRUE,
+      .default = FALSE
+    ),
+    hdi_zero_89 = case_when(
+      hdi_89[1] > 0 | hdi_89[2] < 0 ~ TRUE,
+      .default = FALSE
+    ),
+    hdi_zero_95 = case_when(
+      hdi_95[1] > 0 | hdi_95[2]< 0 ~ TRUE,
+      .default = FALSE
+    ))
+
+# newdata_gene = expand_grid(gene = c("12S", "16S")) %>%
+#   mutate(passive_active_rz = "Active",
+#          filter_size_um_rz = 5.0,
+#          crispr = FALSE,
+#          block = FALSE,
+#          extraction_type = "Tissue")
+# 
+# epred_gene = epred_draws(model_select,
+#                          newdata = newdata_gene,
+#                          re_formula = NA)
+
+# distrivbution
+mu_specs = emmeans(model_select, 
+                   ~ gene | crispr, 
+                   dpar = "mu",
+                   re_formula = NA)
+
+mu_contrasts_specs = contrast(mu_specs, method = "revpairwise")
+
+mu_group_draws = mu_specs %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu = .value)
+
+mu_contrast_draws = mu_contrasts_specs %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu_gene = .value)
+
+mu_contrast_agg = mu_contrast_draws %>%
+  group_by(contrast) %>%
+  summarize(hdi_50 = hdi(mu_gene, ci = 0.50),
+            hdi_89 = hdi(mu_gene, ci = 0.89),
+            hdi_95 = hdi(mu_gene, ci = 0.95),
+            ratio_positive = sum(mu_gene > 0) / n(),
+            mu_median = median(mu_gene),
+            .groups = "drop") %>%
+  mutate(
+    hdi_zero_50 = case_when(
+      hdi_50[1] > 0 | hdi_50[2] < 0 ~ TRUE,
+      .default = FALSE
+    ),
+    hdi_zero_89 = case_when(
+      hdi_89[1] > 0 | hdi_89[2] < 0 ~ TRUE,
+      .default = FALSE
+    ),
+    hdi_zero_95 = case_when(
+      hdi_95[1] > 0 | hdi_95[2]< 0 ~ TRUE,
+      .default = FALSE
+    ))
+
+# newdata_gene = expand_grid(gene = c("12S", "16S")) %>%
+#   mutate(passive_active_rz = "Active",
+#          filter_size_um_rz = 5.0,
+#          crispr = FALSE,
+#          block = FALSE,
+#          extraction_type = "Tissue")
+# 
+# epred_gene = epred_draws(model_select,
+#                          newdata = newdata_gene,
+#                          re_formula = NA)
+
+```
+
 # hypothesis testing
 ```{r}
-newdata_gene = expand_grid(gene = c("12S", "16S")) %>%
-  mutate(passive_active_rz = "Active",
-         filter_size_um_rz = 5.0,
-         crispr = FALSE,
-         block = FALSE,
-         extraction_type = "Tissue")
 
-epred_gene = epred_draws(model_select,
-                         newdata = newdata_gene,
-                         re_formula = NA)
+# ggplot(epred_gene, aes(y = .epred, x = gene)) +
+#   geom_boxplot() +
+#   theme_minimal()
 
-ggplot(epred_gene, aes(y = .epred, x = gene)) +
-  geom_boxplot() +
-  theme_minimal()
+# hu
+ggplot(hu_group_draws, aes(y = p_detect, x = gene, fill = crispr)) +
+  geom_violin() +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+
+
+ggplot(hu_contrast_draws, aes(x = -hu_gene)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("crispr") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Gene effect on amphibian detection (16S - 12S)",
+       x = "Probability density",
+       y = "Probability of detection (logit scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+# number of reads
+ggplot(mu_group_draws, aes(y = mu, x = gene, fill = crispr)) +
+  geom_violin() +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2")
+
+
+ggplot(mu_contrast_draws, aes(x = mu_gene)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("crispr") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Gene effect on amphibian reads (16S - 12S)",
+       x = "Probability density",
+       y = "Number of reads (log scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
 
 ```
