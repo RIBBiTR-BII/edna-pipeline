@@ -3,9 +3,7 @@
 
 ## Load in Libraries (install as needed)
 library(tidyverse)
-library(ape)
 library(phylotools)
-library(readxl)
 library(openxlsx)
 library(yaml)
 
