@@ -19,8 +19,8 @@ c_v_query_cov=$(yq e '.vsearchGlobal.queryCov' "$env_config_path")
 project_dir=$(pwd)\
 
 # load qiime2 environment 
-echo "Activating qiime2 environment"
-source activate $c_qiime_env
+# echo "Activating qiime2 environment"
+# source activate $c_qiime_env
 # visit https://docs.qiime2.org/2024.5/ to install QIIME2 & learn more about it.
 
 # navigate to run folder
