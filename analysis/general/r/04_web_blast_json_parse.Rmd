@@ -2,9 +2,13 @@
 title: "x8_genbank_json_export"
 output: html_document
 ---
-# Genbank BLAST submission
+# Description
 
-Steps:
+This script takes in results from a Genbank Web BLAST results file (single file .json), strips the information of interest for this workflow, and structures it similar to local BLAST or vsearch hits tables for subsequent analysis.
+
+# Genbank Web BLAST submission
+
+You will first need to manually submit a Genbank Web BLAST query, and download the results file following the steps below:
 
 1. Register with NCBI and create an Entrez API key
   - obtain a key following this guidance: https://support.nlm.nih.gov/kbArticle/?pn=KA-05317
@@ -18,20 +22,20 @@ Steps:
     - adjust the `Expect threshold` (0.01 is ideal)
   - Click `BLAST` and wait for the query to finish
 3. In the main results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[run-directory]/outout/`
-4. Adjust the parameters in the `Config` section below to match your needs.
+4. Once you have the results file, adjust the parameters in the `Config` section below to match your needs. You can then run this script ot strip and structure the results for downstream analysis.
 
 # Config
 ```{r}
 librarian::shelf(tidyverse, jsonlite, here, taxize)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "16S")
+run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "12S")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # import json file
-json_blast_results = fromJSON(here(run_dir, "output", "VJF6H2MJ014-Alignment.json"))
+json_blast_results = fromJSON(here(run_dir, "output", "VJF1C0G5016-Alignment.json"))
 
 # specify output file
 output_file = here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))
