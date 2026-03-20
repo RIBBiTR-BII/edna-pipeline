@@ -1,11 +1,9 @@
 ---
 run:
-  name: test_10               # a unique run name
-  runDir: runs/test_10         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
-  description: Rerun of 16S for methods comparison
-                                              # run description
-  technician: Cob Staines                     # who is processing these data, for communication
-  # qiimeEnv: qiime2-amplicon-2025.4            # the name of the conda environment with qiime2 installed (run `conda env list` in terminal to see all environment names)
+  name: test_run_01               # a unique run name
+  runDir: runs/test_run_01         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
+  description: A test run with example data  # run description
+  technician: your-name-here                     # who is processing these data, for communication
 taxonomy:
   gene: 16S                                   # 12S or 16S
   classifierDir: vertebrata16s_classifier     # subfolder containing the taxonomic classifier
