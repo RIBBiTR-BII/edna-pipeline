@@ -4,20 +4,27 @@ author: "Cob Staines"
 output: html_document
 ---
 
+# Description
 
-# Setup
+This script takes in hits from any search method (e.g. vsearch, blast, web blast), and optionally gbif taxonomic occurance data, and assigns a likely taxonomy to each ASV following a hierarchy `accept_method`s. All assigned taxonomy from all methods, along with all hits, are exported to `hybrid_classification_out`. The single best classifications by the most specific `accept_method` for each ASV are exported to `classification_out`.
+
+See the algorithm below for details on each `accept_method` and to adjust parameters.
+
+# Config
 ```{r}
 librarian::shelf(tidyverse, yaml, here)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "16S")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
-# minimum sequence overlap
-# seq_overlap_cutoff = 30  # 12S
-seq_overlap_cutoff = 150  # 16S
+# minimum sequence overlap (0 -> no filtering) [units of Bp]
+sequence_overlap_cutoff = 0
+
+# Did you run a gbif query (script 05) for local taxa, which you want incorporated in classification?
+gbif_query = TRUE
 
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
@@ -29,12 +36,14 @@ classification_out = here(run_dir, "output", paste0(config$run$name, "_06_asv_cl
 
 # Prepare for classification
 ```{r}
-# read in hits
+# read in hits from qiime2 (blast & vsearch)
 qiime2_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_qiime2_hits.csv")))
 
+# read in hits from web blast (script 04)
 web_blast_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
   mutate(species = sub("^\\S+\\s+", "", species))
 
+# pull in asv data
 backbone = qiime2_hits_raw %>%
   select(asv_id,
          asv_total_count,
@@ -43,13 +52,11 @@ backbone = qiime2_hits_raw %>%
          sequence) %>%
   distinct()
 
+# bind with web blast
 hits_raw = bind_rows(qiime2_hits_raw,
                      backbone %>%
                      left_join(web_blast_hits_raw, by = "asv_id") %>%
                        select(all_of(colnames(qiime2_hits_raw))))
-
-# read in taxa + geography
-taxa_geography = read.csv(here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv")))
 
 # clean hits
 hits_clean = hits_raw %>%
@@ -58,24 +65,43 @@ hits_clean = hits_raw %>%
   mutate(p_identical = percent_identical / 100,
          p_overlap = seq_overlap / (s_end - s_start + 1))
 
-hits_geography = hits_clean %>%
-  left_join(taxa_geography %>%
-              select(accession,
-                     any_of(c("specificEpithet",
-                              "intraspecificEpithet",
-                              "gbif_count_family_local",
-                              "gbif_count_genus_local",
-                              "gbif_count_species_local"))) %>%
-              distinct(), by = "accession") %>%
-  mutate(specificEpithet = coalesce(specificEpithet, species), 
-         local_species = case_when(
-           gbif_count_species_local > 0 ~ TRUE,
-           gbif_count_species_local == 0 ~ FALSE,
-           gbif_count_genus_local == 0 ~ FALSE,
-           gbif_count_family_local == 0 ~ FALSE,
-           .default = NA))
+# handle gbif geographic query
+if (gbif_query) {
+  # read in taxa + geography
+  taxa_geography = read.csv(here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv")))
+  
+  hits_geography = hits_clean %>%
+    left_join(taxa_geography %>%
+                select(accession,
+                       any_of(c("specificEpithet",
+                                "intraspecificEpithet",
+                                "gbif_count_family_local",
+                                "gbif_count_genus_local",
+                                "gbif_count_species_local"))) %>%
+                distinct(), by = "accession") %>%
+    mutate(specificEpithet = coalesce(specificEpithet, species), 
+           local_species = case_when(
+             gbif_count_species_local > 0 ~ TRUE,
+             gbif_count_species_local == 0 ~ FALSE,
+             gbif_count_genus_local == 0 ~ FALSE,
+             gbif_count_family_local == 0 ~ FALSE,
+             .default = NA))
+  
+} else {
+  # set gbif data to NA
+  hits_geography = hits_clean %>%
+    mutate(specificEpithet = species,
+           intraspecificEpithet = NA,
+           gbif_count_family_local = NA,
+           gbif_count_genus_local = NA,
+           gbif_count_species_local = NA,
+           local_species = NA)
+}
+
 
 # define classification functions
+
+## consensus function at a specified taxonomic rank, identity threshold, and consensus threshold
 find_consensus = function(hit_table, taxonomic_rank, identity_th = 0, consensus_th = 0.5, min_consensus_hits = 1, tie_handling = "error") {
   
   if (!(tie_handling %in% c("error", "pass", "drop"))) {
@@ -159,7 +185,7 @@ find_consensus = function(hit_table, taxonomic_rank, identity_th = 0, consensus_
   return(consensus_table)
 }
 
-# calculate stats for each hit group
+# calculate stats for taxonomic hit groups
 hits_group_calc = function(hits_df, group_cols, agg_cols = c()) {
   hits_df %>%
     group_by_at(group_cols) %>%
@@ -189,7 +215,9 @@ hits_group_calc = function(hits_df, group_cols, agg_cols = c()) {
 ```
 
 # Group hits by taxonomy
-```{r}
+```{r warning=FALSE}
+# collect hits of common taxonomies into one candidate row, with descriptive stats
+
 hits_species_local = hits_group_calc(hits_geography %>%
                                        filter(!(local_species %in% FALSE),
                                               !is.na(specificEpithet)),
@@ -211,14 +239,6 @@ hits_species_local = hits_group_calc(hits_geography %>%
                                        "gbif_count_genus_local",
                                        "gbif_count_species_local",
                                        "local_species"))
-
-# 
-# peace = hits_species %>%
-#   filter(asv_id == "c8dd4e33be2aebdb443390bdf9a2cc7f")
-# 
-# peace = hits_geography %>%
-#   filter(asv_id == "c8dd4e33be2aebdb443390bdf9a2cc7f")
-
 
 hits_species = hits_group_calc(hits_geography %>%
                                  filter(!is.na(specificEpithet)),
@@ -327,6 +347,8 @@ hits_order = hits_group_calc(hits_geography %>%
 ```
 
 # Classify
+
+Accept candidate hit groups according to a hierarchy of `accept_method`s
 ```{r}
 # local species unanimous @ p_identical = 1
 accept_species_100_unanimous_local = hits_geography %>%
@@ -616,6 +638,8 @@ accept_domain_50_consensus_95 = find_consensus(hits_geography,
 ```
 
 # Combine outputs
+
+Join accepted classifications from all `accept_method`s
 ```{r}
 accept_all = bind_rows(accept_species_100_unanimous,
                        accept_species_100_unanimous_local,
@@ -641,15 +665,20 @@ accept_all = bind_rows(accept_species_100_unanimous,
          -next_pimax,
          -pimax_rank)
 
+# how many ASVs were classified?
 asv_count = length(unique(accept_all$asv_id))
 
+# which ASVs were not classified?
 remainder = hits_geography %>%
   anti_join(accept_all, by = c("asv_id", "method"))
 
-all_accept_methods = accept_all %>%
+# list of all accept methods
+all_accept_methods = hits_accept %>%
   select(accept_method) %>%
-  distinct()
+  distinct() %>%
+  arrange(accept_method)
 
+# collect hits and accepted classifications
 hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
   mutate(species = if_else(!is.na(intraspecificEpithet), paste0(specificEpithet, " ", intraspecificEpithet), species),
@@ -686,20 +715,16 @@ hits_accept = hits_geography %>%
          "consensus_value", "n_hits_consensus", "identity_th", "consensus_th", 
          "min_consensus_hits")
 
+# write to file
 write.csv(hits_accept, hybrid_classification_out, row.names = FALSE)
 
 ```
 
 # Checks
 ```{r}
+# Drop ASV classifications with overlap length below seq_overlap_cutoff
 hits_accept_qc = hits_accept %>%
   filter(!(!is.na(accept_method) & seq_overlap_max < seq_overlap_cutoff))
-
-# accept methods
-all_accept_methods = hits_accept %>%
-  select(accept_method) %>%
-  distinct() %>%
-  arrange(accept_method)
 
 # species-level discrepancies
 accepts_species = hits_accept_qc %>%
@@ -709,35 +734,39 @@ accepts_species = hits_accept_qc %>%
          n_class = n_distinct(family, genus, species)) %>%
   ungroup()
 
-
-# summarize by search method
+## multiple classification between methods
 accepts_species_conflicts = accepts_species %>%
   filter(n_class > 1)
 
+## only classified by web blast
 accepts_species_wbo = accepts_species %>%
   filter(n_method == 1,
          method == "blast_web")
 
+## only classified by local blast
 accepts_species_bo = accepts_species %>%
   filter(n_method == 1,
          method == "blast")
 
+## only classified by vsearch
 accepts_species_vo = accepts_species %>%
   filter(n_method == 1,
          method == "vsearch")
 
+## counts by search method
 accepts_species_counts = accepts_species %>%
   group_by(asv_id) %>%
   summarize(bool_wb = any(method == "blast_web"),
-         bool_b = any(method == "blast"),
-         bool_v = any(method == "vsearch"),
-         .groups = "drop")
+            bool_b = any(method == "blast"),
+            bool_v = any(method == "vsearch"),
+            .groups = "drop")
 
 accepts_species_counts_summary = accepts_species_counts %>%
   summarize(spp_wb = sum(bool_wb),
             spp_b = sum(bool_b),
             spp_v = sum(bool_v))
 
+## classifications where web blast returned nothing
 accepts_species_not_wb = accepts_species_counts %>%
   filter((bool_b | bool_v) & !bool_wb) %>%
   left_join(hits_accept_qc, by = "asv_id")
@@ -769,7 +798,6 @@ asm_1_not_2 = accepts_species_method %>%
   left_join(hits_accept_qc, by = c("asv_id", "method"))
 
 # genus level
-# species-level discrepancies
 accepts_genus = hits_accept_qc %>%
   filter(grepl("^3", accept_method)) %>%
   group_by(asv_id) %>%
@@ -780,6 +808,7 @@ accepts_genus = hits_accept_qc %>%
 accepts_genus_conflicts = accepts_genus %>%
   filter(n_class > 1)
 
+## cases where web blast could only classify to genus (and not species)
 accepts_genus_first_wb = accepts_genus %>%
   filter(method == "blast_web") %>%
   anti_join(accepts_species, by = c("asv_id", "method")) %>%
@@ -791,6 +820,8 @@ accepts_genus_first_wb = accepts_genus %>%
 
 # accepted classifications
 ```{r}
+# filter to method of choice
+# select the best classification according to hierarchy of `accept_method`s
 accept_out = hits_accept_qc %>%
   filter(method == "blast_web",
          !is.na(accept_method)) %>%
@@ -814,5 +845,6 @@ accept_out = hits_accept_qc %>%
          seq_overlap_max,
          consensus_value)
 
+# export classifications
 write.csv(accept_out, classification_out, row.names = FALSE)
 ```
