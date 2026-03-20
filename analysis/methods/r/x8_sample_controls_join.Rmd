@@ -1,10 +1,14 @@
 ---
-title: "x7_methods_controls"
+title: "Sample controls (methods)"
+author: "Cob Staines"
 output: html_document
 ---
 
+# Description
 
-# setup
+This script calculates controlled ASV reads for each sample by subtracting any read counts found in controls (multiplied by a scaling factor `asv_control_th_factor`), with minimum controlled reads of 0. Lab positive and negative controls are applied to all samples globally, field negative controls are applied to corresponding field samples only.
+
+# Config
 ```{r}
 librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor, phylotools)
 
@@ -24,7 +28,7 @@ asv_control_th_factor = 100
 control_out = here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled_joined.csv"))
 ```
 
-# load data
+# Load data
 ## metadata
 ```{r}
 # sample metadata file
@@ -120,7 +124,7 @@ sample_stats = sample_simple %>%
 
 ```
 
-## feature tables
+## Feature tables
 ```{r}
 ## 12s
 feature_table_12s =
@@ -183,7 +187,7 @@ samples_16s = feature_long_16s %>%
 ```
 
 
-## sequence tables
+## Sequence tables
 ```{r}
 ## 12s
 asv_seq_12s =
@@ -202,14 +206,14 @@ asv_seq_16s =
   arrange(asv_id)
 ```
 
-## classification tables
+## Classification tables
 ```{r}
 classified_12s = read.csv(here(run_dir_methods, "12S", "output", "methods_2026-03-13_12s_06_asv_classification.csv"))
 classified_16s = read.csv(here(run_dir_methods, "16S", "output", "methods_2026-03-13_16s_06_asv_classification.csv"))
 
 ```
 
-# controls
+# Controls
 ```{r}
 sample_asv = sample_simple %>%
   left_join(bind_rows(feature_long_12s,

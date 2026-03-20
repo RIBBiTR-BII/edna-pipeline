@@ -1,5 +1,6 @@
 ---
-title: "08_sample_controls"
+title: "Sample controls"
+author: "Cob Staines"
 output: html_document
 ---
 

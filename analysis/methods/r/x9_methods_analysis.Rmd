@@ -1,5 +1,6 @@
 ---
-title: "x8_methods analysis"
+title: "Methods modeling & analysis"
+author: "Cob Staines"
 output: html_document
 ---
 

@@ -1,10 +1,12 @@
 ---
-title: "06_join_sample_survey"
+title: "Join samples with survey data (methods)"
+author: "Cob Staines"
 output: html_document
 ---
 
-# Title: Process taxonomic hits to identify species likely found in Panama
-# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+# Description
+
+This script aligns illumina samples with sample names and IDs in the RIBBiTR database, and pulls collection metadata and concurrent environmental measurements for downstream analysis.
 
 # load data
 ```{r}
