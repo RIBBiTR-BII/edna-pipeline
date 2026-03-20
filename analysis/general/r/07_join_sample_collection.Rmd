@@ -3,10 +3,16 @@ title: "Join samples with survey data"
 author: "Cob Staines"
 output: html_document
 ---
+# Description
+
+This script aligns illumina samples with sample names and IDs in the RIBBiTR database, and pulls collection metadata and concurrent environmental measurements for downstream analysis.
 
 # Config
 ```{r}
 librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janitor, rio)
+
+# methods samples lookup file
+methods_lookup_in = here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-03-05.xlsx")
 
 # import run config file
 run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
@@ -20,6 +26,11 @@ map_out = here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv
 # establish database connection
 dbcon = hopToDB("ribbitr")
 
+```
+
+# Load data
+```{r}
+
 # db table pointers
 db_edna = tbl(dbcon, Id("survey_data", "edna_collection"))
 db_env = tbl(dbcon, Id("survey_data", "environmental"))
@@ -29,14 +40,8 @@ db_site = tbl(dbcon, Id("survey_data", "site"))
 db_region = tbl(dbcon, Id("survey_data", "region"))
 db_country = tbl(dbcon, Id("survey_data", "country"))
 
-```
-
-```{r}
-# # load classified ASVs
-# asv_classified = read_csv(here(run_dir, "output", paste0(config$run$name, "_hybrid_classification.csv")))
-
 # read in methods lookup file
-methods_lookup = import(here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-03-05.xlsx")) %>%
+methods_lookup = import(methods_lookup_in) %>%
   clean_names() %>%
   mutate(sequencing_sample_name = if_else(grepl("PENN_", sequencing_sample_name),
                                           gsub("PENN-", "PENN_", gsub("_", "-", sequencing_sample_name)),
@@ -81,7 +86,10 @@ unique_samples = feature_long %>%
          illumina_sample_raw) %>%
   distinct() %>%
   arrange(edna_sample_name)
+```
 
+# Query database
+```{r}
 # survey data
 edna_collection = db_edna %>%
   left_join(db_survey, by = "survey_id") %>%
@@ -97,7 +105,10 @@ edna_collection = db_edna %>%
          region,
          country) %>%
   collect()
+```
 
+# Join and export
+```{r}
 samps_joined = unique_samples %>%
   left_join(edna_collection, by = "edna_sample_name") %>%
   mutate(lab_control = case_when(
