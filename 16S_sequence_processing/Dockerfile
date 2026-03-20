@@ -12,7 +12,7 @@
 # NOTE: Pin the QIIME2 epoch below to match the version you use in production.
 # =============================================================================
 
-FROM quay.io/qiime2/amplicon:2026.1
+FROM quay.io/qiime2/amplicon:2025.4
 
 # -----------------------------------------------------------------------------
 # System labels
@@ -59,10 +59,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------------
-# yq — YAML processor for bash
-# Pinned to a stable release; update the version tag as needed.
-# We grab the static linux_amd64 binary directly from GitHub releases.
+# yq — YAML processor for bash (mikefarah/yq, Go-based)
+#
+# The QIIME2 base image ships a Python-based yq (kislyuk/yq) via conda,
+# which uses different syntax and will break scripts written for mikefarah/yq.
+# We: (1) remove the conda yq, (2) install the correct static binary,
+# (3) place it in /usr/bin so it wins regardless of how conda reorders PATH.
 # -----------------------------------------------------------------------------
+RUN conda run pip uninstall -y yq 2>/dev/null || true \
+    && conda remove -n base --force -y yq 2>/dev/null || true
 RUN wget -qO /usr/local/bin/yq \
     https://github.com/mikefarah/yq/releases/download/v4.44.2/yq_linux_amd64 \
     && chmod +x /usr/local/bin/yq \
