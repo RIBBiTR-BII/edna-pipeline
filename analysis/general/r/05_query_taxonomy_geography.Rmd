@@ -4,11 +4,13 @@ author: "Cob Staines"
 output: html_document
 ---
 
-# Setup
+# Description
 
 This script queries the geographic range of taxonomies corresponding to vsearch hits, to support a more accurate, locally informed classification.
 
-Requires API keys/tokens for IUCN (called as `iucn_api_token`) and GBIF (in .Renviron)
+This script requires API keys for GBIF in .Renviron (see this [Tutorial](https://docs.ropensci.org/rgbif/articles/gbif_credentials.html)).
+
+If you want to skip this step you can, just set the parameter `gbif_query` to `FALSE` in the subsequent script (`06_classify_asv.Rmd`).
 
 # Config
 ```{r}
