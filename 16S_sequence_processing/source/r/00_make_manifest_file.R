@@ -1,6 +1,10 @@
 library(tidyverse)
 library(yaml)
 
+## manual runs
+# env_config_path = "runs/test_run_01/output/metadata/config.yml"
+# setwd("16S_sequence_processing")
+
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)
 env_config_path = args[1]
