@@ -3,8 +3,11 @@ title: "08_sample_controls"
 output: html_document
 ---
 
+# Description
 
-# config
+This script calculates controlled ASV reads for each sample by subtracting any read counts found in controls (multiplied by a scaling factor `asv_control_th_factor`), with minimum controlled reads of 0. Lab positive and negative controls are applied to all samples globally, field negative controls are applied to corresponding field samples only.
+
+# Config
 ```{r}
 librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor, phylotools)
 
@@ -22,7 +25,7 @@ control_out = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlle
 
 ```
 
-# map samples
+# Load data
 ```{r}
 
 sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv"))) %>%
@@ -49,7 +52,7 @@ sample_asv = feature_table %>%
   
 ```
 
-# controls
+# Identify control ASVs
 ```{r}
 # lab positive controls
 control_asv_pos = sample_asv %>%
@@ -71,7 +74,10 @@ control_asv_neg_field = sample_asv %>%
   group_by(asv_id, control_type, field_negative_control_group_id) %>%
   summarise(max_control_asv_count = max(asv_count),
             .groups = "drop")
+```
 
+# Calculate controlled reads & export
+```{r}
 # correct asv reads by controls
 control_asv = bind_rows(control_asv_pos,
                         control_asv_neg_lab) %>%
