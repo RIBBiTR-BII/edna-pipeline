@@ -1,17 +1,18 @@
-# Title: Process taxonomic hits to identify species likely found in Panama
-# Created by: Cob Staines (cobstainesconsulting@gmail.com)
-
-## Load in Libraries (install them in you need them.)
-library(tidyverse)
-library(yaml)
-library(dbplyr)
-library(RPostgres)
-library(DBI)
-library(ribbitrrr)
+---
+title: "10_abundance_estimate"
+output: html_document
+---
 
 
-# manual runs
-# setwd("16S_sequence_processing")
+# Description
+
+This script is an implementation of the abundance estimate in [Brandão-Dias et al. 2025](https://doi.org/10.1101/2025.06.30.662414).
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml)
+
+
 env_config_path = "runs/methods_2025-12-29/output/metadata/config.yml"
 
 # read in config file
@@ -48,3 +49,4 @@ estimate_species = sample_species_asv %>%
             big_n = n()/sum((sample_haplotype_frequency - pop_haplotype_frequency)^2/(pop_haplotype_frequency*(1 - pop_haplotype_frequency))),
             .groups = "drop") %>%
   arrange(site, species, date)
+```
