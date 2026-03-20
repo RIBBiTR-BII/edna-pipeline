@@ -21,7 +21,7 @@ config_16s = read_yaml(here(run_dir_methods, "16S", "output", "metadata", "confi
 asv_control_th_factor = 100
 
 # control output file
-control_out = here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled.csv"))
+control_out = here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled_joined.csv"))
 ```
 
 # load data
@@ -245,17 +245,38 @@ control_asv = bind_rows(control_asv_pos,
 
 sample_asv_control = sample_asv %>%
   left_join(control_asv, by = "asv_id") %>%
-  mutate(control_th_below = (asv_count <= asv_control_th),
+  mutate(asv_count_controlled = asv_count - asv_control_th,
+         asv_count_controlled = if_else(asv_count_controlled < 0, 0, asv_count_controlled),
+         control_th_below = (asv_count <= asv_control_th),
          detected = (asv_count > 0),
          detected_controlled = (detected & !(control_th_below %in% c(TRUE))))
+
 
 sample_asv_control_seq_class = sample_asv_control %>%
   left_join(bind_rows(asv_seq_12s,
                       asv_seq_16s), by = "asv_id") %>%
   left_join(bind_rows(classified_12s,
                       classified_16s), by = "asv_id") %>%
+  left_join(sample_lookup %>%
+              select(sample_id,
+                     edna_id,
+                     collection_time,
+                     filter_volume_ml,
+                     air_temp_c,
+                     wind_speed_m_s,
+                     cloud_cover_percent,
+                     water_temp_c,
+                     p_h,
+                     tds_ppm,
+                     conductivity_us_cm,
+                     stream_side_rz_lab,
+                     date,
+                     site,
+                     region,
+                     country), by = "sample_id") %>%
   rename(seq = seq.text)
 
-write_csv(sample_asv_control_seq_class, control_out)
 
+
+write_csv(sample_asv_control_seq_class, control_out)
 ```
