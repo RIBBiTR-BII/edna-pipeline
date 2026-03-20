@@ -19,8 +19,8 @@ c_v_query_cov=$(yq e '.vsearchGlobal.queryCov' "$env_config_path")
 project_dir=$(pwd)\
 
 # load qiime2 environment 
-echo "Activating qiime2 environment"
-source activate $c_qiime_env
+# echo "Activating qiime2 environment"
+# source activate $c_qiime_env
 # visit https://docs.qiime2.org/2024.5/ to install QIIME2 & learn more about it.
 
 # navigate to run folder
@@ -66,10 +66,10 @@ echo "Classifying sequences"
 
 # # s07-a
 # # Classify Sequences consensus blast
-# qiime feature-classifier classify-consensus-blast --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza" --i-reference-taxonomy "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_taxa_extracted.qza" --p-maxaccepts $c_b_maxaccepts --p-perc-identity $c_b_perc_identity --p-query-cov $c_b_query_cov --output-dir analysis/s07_classified_taxonomy_blast
-# # Extract out classifications.
-# qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/classification.qza --output-path analysis/s07_classified_taxonomy_blast/classification
-# qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/search_results.qza --output-path analysis/s07_classified_taxonomy_blast/search_results
+qiime feature-classifier classify-consensus-blast --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_seqs_extracted.qza" --i-reference-taxonomy "$project_dir/$c_taxa_dir/Vertebrata16S_derep1_taxa_extracted.qza" --p-maxaccepts $c_b_maxaccepts --p-perc-identity $c_b_perc_identity --p-query-cov $c_b_query_cov --output-dir analysis/s07_classified_taxonomy_blast
+# Extract out classifications.
+qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/classification.qza --output-path analysis/s07_classified_taxonomy_blast/classification
+qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/search_results.qza --output-path analysis/s07_classified_taxonomy_blast/search_results
 
 # s07-b
 # Classify Sequences vsearch global

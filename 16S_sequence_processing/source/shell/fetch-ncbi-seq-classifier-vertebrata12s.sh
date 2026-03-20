@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Activate the Qiime environment
-source activate qiime2-amplicon-2025.4
+# source activate qiime2-amplicon-2025.4
 
 c_taxa_dir="vertebrata12s_classifier"
 
