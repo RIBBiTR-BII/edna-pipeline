@@ -1,0 +1,65 @@
+---
+title: "10_abundance_estimate"
+output: html_document
+---
+
+
+# Description
+
+This script is an implementation of the eDNA abundance estimate methods in [Brandão-Dias et al. 2025](https://doi.org/10.1101/2025.06.30.662414).
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, here)
+
+# import run config file
+run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+
+# read in config file
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+```
+
+# Load data
+```{r}
+# results file
+asv_results = read_csv(here(run_dir, "output", paste0(config$run$name, "_20_prelim_results.csv")))
+
+# sample metadata
+asv_meta = read_csv(here(run_dir, "output", paste0(config$run$name, "_20_prelim_results_metadata.csv")))
+
+
+# join
+asv_wide = asv_results %>%
+  left_join(asv_meta, by = c("edna_id", "edna_sample_name"))
+
+# taxon of interest
+data_amphibia_species = asv_wide %>%
+  filter(class == "Amphibia",
+         taxonomic_rank == "species")
+
+sample_species_asv = data_amphibia_species %>%
+  group_by(site, genus, species) %>%
+  mutate(pop_haplotype_n = n(),
+         pop_asv_total = sum(asv_reads_controlled),
+         pop_haplotype_frequency = asv_reads_controlled / pop_asv_total) %>%
+  ungroup() %>%
+  group_by(site, date, genus, species) %>%
+  mutate(sample_haplotype_n = n(),
+         sample_asv_total = sum(asv_reads_controlled),
+         sample_haplotype_frequency = asv_reads_controlled / sample_asv_total) %>%
+  ungroup() %>%
+  arrange(desc(sample_haplotype_n),
+          site,
+          date)
+
+estimate_species = sample_species_asv %>%
+  group_by(site, date, genus, species) %>%
+  summarize(pop_haplotype_n = first(pop_haplotype_n),
+            sample_n = n_distinct(edna_sample_name),
+            sample_asv_total = first(sample_asv_total),
+            sample_haplotype_n = n(),
+            sample_asv_total = sum(asv_count),
+            big_n = n()/sum((sample_haplotype_frequency - pop_haplotype_frequency)^2/(pop_haplotype_frequency*(1 - pop_haplotype_frequency))),
+            .groups = "drop") %>%
+  arrange(site, species, date)
+```
