@@ -14,10 +14,10 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ### Setup
 
-1. Docker -- Choose one of the options below:
+1. Install Docker -- Choose one of the options below:
   
-  a. [Docker Desktop (Windows/Mac/Linux)](https://docs.docker.com/get-started/introduction/get-docker-desktop/): Docker Desktop establishes a dedicated Linux virtual machine on which to run Docker Engine.
-  b. [Docker Engine (Linux)](https://docs.docker.com/engine/install/): If you already have a Linux machine or virtual machine (e.g. WSL), you can install Docker Engine there directly without having to establish a new Linux virtual machine.
+  - [Docker Desktop (Windows/Mac/Linux)](https://docs.docker.com/get-started/introduction/get-docker-desktop/): Docker Desktop establishes a dedicated Linux virtual machine on which to run Docker Engine.
+  - [Docker Engine (Linux)](https://docs.docker.com/engine/install/): If you already have a Linux machine or virtual machine (e.g. WSL), you can install Docker Engine there directly without having to establish a new Linux virtual machine.
 
   Confirm your Docker installation in the command line (terminal/PowerShell/Command Prompt.)  with: `docker --version`
   Should return: `Docker version xx.x.x, build xxxxxxx`
@@ -34,10 +34,10 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 1. Navigate to the `16S_sequence_processing` subfolder in the command line, and build the Docker environment with `docker build -t edna-pipeline .` *This only needs to be done once at the start of a new session. If you are preceding from the Setup steps above, skip to Step 2..*
 
-2. Locate sequences for your run.
+2. Locate sequences for your run, electing one of the following
   
-  a. To test the pipeline, an existing run folder `16S_sequence_processing/runs/test_run_01` has been included which contains test sequences. Move on to Step 3.
-  b. To run the pipeline on your own sequences, create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd`). Create a `sequences` subfolder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd/sequences`) and copy your .fastq or .fastq.gz amplicon sequence files here. Sequence files can be nested in subfolders without issue.
+  - To test the pipeline, an existing run folder `16S_sequence_processing/runs/test_run_01` has been included which contains test sequences. Move on to Step 3.
+  - To run the pipeline on your own sequences, create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd`). Create a `sequences` subfolder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd/sequences`) and copy your .fastq or .fastq.gz amplicon sequence files here. Sequence files can be nested in subfolders without issue.
 
 3. Build a local 16S classifier *(Optional)*: In the command line, run the following command:
   
