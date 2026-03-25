@@ -38,18 +38,18 @@ Confirm your Docker installation in the command line (terminal/PowerShell/Comman
   b. To run the pipeline on your own sequences, create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd`). Create a `sequences` subfolder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd/sequences`) and copy your .fastq or .fastq.gz amplicon sequence files here. Sequence files can be nested in subfolders without issue.
 
 3. Build a local 16S classifier *(Optional)*: In the command line, run the following command:
-  - **Windows PowerShell:** `docker run -it --rm -v ${PWD}:/data edna-pipeline bash build-amphibia16s-classifier.sh`
-  - **Windows Command Prompt:** `docker run -it --rm -v %cd%:/data edna-pipeline bash build-amphibia16s-classifier.sh`
-  - **macOS/Linux:** `docker run -it --rm -v $(pwd):/data edna-pipeline bash build-amphibia16s-classifier.sh`
+  - **Windows PowerShell:** `docker run -it --rm --user $(id -u):$(id -g) -v ${PWD}:/data edna-pipeline bash build-amphibia16s-classifier.sh`
+  - **Windows Command Prompt:** `docker run -it --rm --user $(id -u):$(id -g) -v %cd%:/data edna-pipeline bash build-amphibia16s-classifier.sh`
+  - **macOS/Linux:** `docker run -it --rm --user $(id -u):$(id -g) -v $(pwd):/data edna-pipeline bash build-amphibia16s-classifier.sh`
   
 You can alternatively copy your own classifier to the `16S_sequence_processing` folder, or skip using a local classifier.
 
 4. Open `config.yml` in a text browser, and confirm the configuration settings for your run. Save this file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, specify the run directory containing your sequences.
 
 5. Run sequence processing:
-  - **Windows PowerShell:** `docker run -it --rm -v ${PWD}:/data edna-pipeline bash run-seq-processing.sh`
-  - **Windows Command Prompt:** `docker run -it --rm -v %cd%:/data edna-pipeline bash run-seq-processing.sh`
-  - **macOS/Linux:** `docker run -it --rm -v $(pwd):/data edna-pipeline bash run-seq-processing.sh`
+  - **Windows PowerShell:** `docker run -it --rm --user $(id -u):$(id -g) -v ${PWD}:/data edna-pipeline bash run-seq-processing.sh`
+  - **Windows Command Prompt:** `docker run -it --rm --user $(id -u):$(id -g) -v %cd%:/data edna-pipeline bash run-seq-processing.sh`
+  - **macOS/Linux:** `docker run -it --rm --user $(id -u):$(id -g) -v $(pwd):/data edna-pipeline bash run-seq-processing.sh`
 
 ## Tools and Tips
 
