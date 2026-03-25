@@ -43,68 +43,57 @@ asv_totals = feature_long %>%
             samples = paste(sort(unique(sample_id)), collapse = ", ")) %>%
   arrange(desc(asv_total_count))
 
-## Read in taxonomic classifications (vsearch global results)
-hit_table_vsearch =
-  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/", 
-                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_vsearch/search_results')), 
-                    "/data/blast6.tsv"),
-             header = FALSE, 
-             sep = '\t') %>%
-  rename(asv_id = V1,
-         accession = V2,
-         percent_identical = V3,
-         seq_overlap = V4,
-         seq_mismatch = V5,
-         gapopen_count = V6,
-         q_start = V7,
-         q_end = V8,
-         s_start = V9,
-         s_end = V10,
-         e_value = V11,
-         bitscore = V12) %>%
-  arrange(asv_id) %>%
-  mutate(method = "vsearch")
+## Read in taxonomic classifications (vsearch global results) if existing
 
-hit_table_blast =
-  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/search_results/",
-                    list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/search_results')),
-                    "/data/blast6.tsv"),
-             header = FALSE,
-             sep = '\t') %>%
-  rename(asv_id = V1,
-         accession = V2,
-         percent_identical = V3,
-         seq_overlap = V4,
-         seq_mismatch = V5,
-         gapopen_count = V6,
-         q_start = V7,
-         q_end = V8,
-         s_start = V9,
-         s_end = V10,
-         e_value = V11,
-         bitscore = V12) %>%
-  arrange(asv_id) %>%
-  mutate(method = "blast")
+if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch"))) {
+  hit_table_vsearch =
+    read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/", 
+                      list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_vsearch/search_results')), 
+                      "/data/blast6.tsv"),
+               header = FALSE, 
+               sep = '\t') %>%
+    rename(asv_id = V1,
+           accession = V2,
+           percent_identical = V3,
+           seq_overlap = V4,
+           seq_mismatch = V5,
+           gapopen_count = V6,
+           q_start = V7,
+           q_end = V8,
+           s_start = V9,
+           s_end = V10,
+           e_value = V11,
+           bitscore = V12) %>%
+    arrange(asv_id) %>%
+    mutate(method = "vsearch")
+} else {
+  hit_table_vsearch = tibble(asv_id = NA)
+}
 
-consensus_table_blast =
-  read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/",
-                                          list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')),
-                                          "/data/taxonomy.tsv"),
-             header = TRUE,
-             sep = '\t') %>%
-  separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";", fill = "right") %>%
-  mutate(method = "blast",
-         across(everything(), ~ str_remove(., "^[a-z]__")),
-         k = if_else(k == "Unassigned", NA, k)) %>%
-  rename(asv_id = Feature.ID,
-         kingdom = k,
-         phylum = p,
-         class = c,
-         order = o,
-         family = f,
-         genus = g,
-         species = s,
-         consensus = Consensus)
+if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast"))) {
+  hit_table_blast =
+    read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/search_results/",
+                      list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/search_results')),
+                      "/data/blast6.tsv"),
+               header = FALSE,
+               sep = '\t') %>%
+    rename(asv_id = V1,
+           accession = V2,
+           percent_identical = V3,
+           seq_overlap = V4,
+           seq_mismatch = V5,
+           gapopen_count = V6,
+           q_start = V7,
+           q_end = V8,
+           s_start = V9,
+           s_end = V10,
+           e_value = V11,
+           bitscore = V12) %>%
+    arrange(asv_id) %>%
+    mutate(method = "blast")
+} else {
+  hit_table_blast = tibble(asv_id = NA)
+}
 
 # Read in taxonomies and filter to flagged taxa
 taxonomy_table =
@@ -148,8 +137,7 @@ wide_table = asv_totals %>%
   left_join(bind_rows(hit_table_blast,
                       hit_table_vsearch), by = "asv_id") %>%
   left_join(taxonomy_table, by = "accession") %>%
-  left_join(consensus_table_blast, by = c("asv_id", "method", "kingdom", "phylum", "class", "order", "family", "genus", "species")) %>%
-  select(any_of(colnames(asv_totals)),
+ select(any_of(colnames(asv_totals)),
          any_of(colnames(sequence_table)),
          method,
          any_of(colnames(taxonomy_table)),

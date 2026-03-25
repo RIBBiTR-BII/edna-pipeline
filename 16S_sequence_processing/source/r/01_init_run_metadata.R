@@ -3,6 +3,10 @@
 
 library(yaml)
 
+# # manual runs
+# env_config_path = "runs/test_run_01/output/metadata/config.yml"
+# setwd("16S_sequence_processing")
+
 # inherit env_config_path
 args = commandArgs(trailingOnly = TRUE)
 env_config_path = args[1]
@@ -10,9 +14,14 @@ env_config_path = args[1]
 metadata = list()
 # read in config file, use as basis for metadata
 metadata$config = read_yaml(env_config_path)
-# scrape classifier metadata
-classifier_md = read_yaml(paste0(metadata$config$taxonomy$classifierDir, "/classifier_metadata.yml"))
-metadata$post$classifier = classifier_md$classifier
+
+# check if classifier specified
+if (!is.null(metadata$config$taxonomy$classifierDir)) {
+  # scrape classifier metadata
+  classifier_md = read_yaml(paste0(metadata$config$taxonomy$classifierDir, "/classifier_metadata.yml"))
+  metadata$post$classifier = classifier_md$classifier
+}
+
 # scrape manifest file
 manifest = read.csv(paste0(metadata$config$run$runDir, "/output/metadata/manifest.csv"))
 metadata$post$sequences$sampleCount = length(unique(manifest$sample.id))
