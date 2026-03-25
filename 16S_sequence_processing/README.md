@@ -15,13 +15,14 @@ This workflow makes assumptions and choices which substantially influence the ou
 ### Setup
 
 1. Docker -- Choose one of the options below:
+  
   a. [Docker Desktop (Windows/Mac/Linux)](https://docs.docker.com/get-started/introduction/get-docker-desktop/): Docker Desktop establishes a dedicated Linux virtual machine on which to run Docker Engine.
   b. [Docker Engine (Linux)](https://docs.docker.com/engine/install/): If you already have a Linux machine or virtual machine (e.g. WSL), you can install Docker Engine there directly without having to establish a new Linux virtual machine.
 
-Confirm your Docker installation in the command line (terminal/PowerShell/Command Prompt.)  with: `docker --version`
+  Confirm your Docker installation in the command line (terminal/PowerShell/Command Prompt.)  with: `docker --version`
   Should return: `Docker version xx.x.x, build xxxxxxx`
 
-*Note: If you installed Docker Engine within a Linux virtual machine, you will need to run all subsequent steps within this virtual machine.* 
+  *Note: If you installed Docker Engine within a Linux virtual machine, you will need to run all subsequent steps within this virtual machine.* 
 
 2: [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local directory which is accessible to your Bash shell.
 
@@ -34,19 +35,22 @@ Confirm your Docker installation in the command line (terminal/PowerShell/Comman
 1. Navigate to the `16S_sequence_processing` subfolder in the command line, and build the Docker environment with `docker build -t edna-pipeline .` *This only needs to be done once at the start of a new session. If you are preceding from the Setup steps above, skip to Step 2..*
 
 2. Locate sequences for your run.
+  
   a. To test the pipeline, an existing run folder `16S_sequence_processing/runs/test_run_01` has been included which contains test sequences. Move on to Step 3.
   b. To run the pipeline on your own sequences, create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd`). Create a `sequences` subfolder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd/sequences`) and copy your .fastq or .fastq.gz amplicon sequence files here. Sequence files can be nested in subfolders without issue.
 
 3. Build a local 16S classifier *(Optional)*: In the command line, run the following command:
+  
   - **Windows PowerShell:** `docker run -it --rm --user $(id -u):$(id -g) -v ${PWD}:/data edna-pipeline bash build-amphibia16s-classifier.sh`
   - **Windows Command Prompt:** `docker run -it --rm --user $(id -u):$(id -g) -v %cd%:/data edna-pipeline bash build-amphibia16s-classifier.sh`
   - **macOS/Linux:** `docker run -it --rm --user $(id -u):$(id -g) -v $(pwd):/data edna-pipeline bash build-amphibia16s-classifier.sh`
   
-You can alternatively copy your own classifier to the `16S_sequence_processing` folder, or skip using a local classifier.
+  You can alternatively copy your own classifier to the `16S_sequence_processing` folder, or skip using a local classifier.
 
 4. Open `config.yml` in a text browser, and confirm the configuration settings for your run. Save this file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, specify the run directory containing your sequences.
 
 5. Run sequence processing:
+  
   - **Windows PowerShell:** `docker run -it --rm --user $(id -u):$(id -g) -v ${PWD}:/data edna-pipeline bash run-seq-processing.sh`
   - **Windows Command Prompt:** `docker run -it --rm --user $(id -u):$(id -g) -v %cd%:/data edna-pipeline bash run-seq-processing.sh`
   - **macOS/Linux:** `docker run -it --rm --user $(id -u):$(id -g) -v $(pwd):/data edna-pipeline bash run-seq-processing.sh`
