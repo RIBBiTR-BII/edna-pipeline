@@ -1,22 +1,25 @@
 ---
 run:
-  name: test_run_01               # a unique run name
-  runDir: runs/test_run_01         # the run folder of interest. This folder should have a subfolder `sequences\` which contains all sequence files 
+  name: test_run_01                          # a unique run name
+  runDir: runs/test_run_01                   # the run folder of interest. This folder should have a subfolder `sequences/` which contains all sequence files 
   description: A test run with example data  # run description
-  technician: your-name-here                     # who is processing these data, for communication
+  technician: your-name-here                 # who is processing these data, for communication
 taxonomy:
-  gene: 16S                                   # 12S or 16S
-  classifierDir: vertebrata16s_classifier     # subfolder containing the taxonomic classifier
+  gene: 16S                # 12S or 16S
+  classifierDir: null      # subfolder containing the taxonomic classifier: `null` skips classification, `amphibia16s_classifier`, etc.
 trimPaired:
-  errorRate: 0.3         # error rate for trimming of primers
+  errorRate: 0.3           # error rate for trimming of primers
 denoisePaired:
-  truncQ: 2              # quality threshold at which to truncate reads
-  truncLen: 0            # length at which to truncate reads (forward and reverse)
-consensusBlast:
-  maxaccepts: 10         # maximum number of hits to accept
-  percIdentity: 0.98     # minimum identity for hit acceptance
-  queryCov: 0.95         # minimum query coverage hit acceptance
-vsearchGlobal:
-  maxaccepts: 20         # maximum number of hits to accept
-  percIdentity: 0.5      # minimum identity for hit acceptance
-  queryCov: 0.5          # minimum query coverage hit acceptance
+  truncQ: 2                # quality threshold at which to truncate reads
+  truncLen: 0              # length at which to truncate reads (forward and reverse)
+classification:
+  localBlastBool: false    # do you want to conduct a local blast on your classifer?
+  localBlast:
+    maxaccepts: 20         # maximum number of hits to accept
+    percIdentity: 0.97     # minimum identity for hit acceptance
+    queryCov: 0.95         # minimum query coverage hit acceptance
+  localVsearchBool: false  # do you want to conduct a local vsearch on your classifer?
+  localVsearch:
+    maxaccepts: 20         # maximum number of hits to accept
+    percIdentity: 0.5      # minimum identity for hit acceptance
+    queryCov: 0.5          # minimum query coverage hit acceptance
