@@ -15,6 +15,5 @@
 */metadata/*
 */analysis/*
 */runs/*
-*/vertebrata12s_classifier/*
-*/vertebrata16s_classifier/*
+*_classifier
 .Rproj.user
