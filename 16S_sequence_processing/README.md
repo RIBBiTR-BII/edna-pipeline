@@ -24,7 +24,7 @@ This workflow makes assumptions and choices which substantially influence the ou
 
   *Note: If you installed Docker Engine within a Linux virtual machine, you will need to run all subsequent steps within this virtual machine.* 
 
-2. [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local directory which is accessible to your Bash shell.
+2. [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`git clone https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local directory which is accessible to your command line.
 
 3. Navigate to the `16S_sequence_processing` subfolder in the command line (e.g. `cd your/path/to/16S_sequence_processing`) 
 
