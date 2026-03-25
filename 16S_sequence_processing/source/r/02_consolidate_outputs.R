@@ -9,7 +9,7 @@ library(yaml)
 
 # 
 # # # manual runs
-# env_config_path = "runs/methods_2026-03-13/12S/output/metadata/config.yml"
+# env_config_path = "runs/test_run_01/output/metadata/config.yml"
 # setwd("16S_sequence_processing")
 
 # inherit env_config_path
@@ -43,33 +43,7 @@ asv_totals = feature_long %>%
             samples = paste(sort(unique(sample_id)), collapse = ", ")) %>%
   arrange(desc(asv_total_count))
 
-## Read in taxonomic classifications (vsearch global results) if existing
-
-if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch"))) {
-  hit_table_vsearch =
-    read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/", 
-                      list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_vsearch/search_results')), 
-                      "/data/blast6.tsv"),
-               header = FALSE, 
-               sep = '\t') %>%
-    rename(asv_id = V1,
-           accession = V2,
-           percent_identical = V3,
-           seq_overlap = V4,
-           seq_mismatch = V5,
-           gapopen_count = V6,
-           q_start = V7,
-           q_end = V8,
-           s_start = V9,
-           s_end = V10,
-           e_value = V11,
-           bitscore = V12) %>%
-    arrange(asv_id) %>%
-    mutate(method = "vsearch")
-} else {
-  hit_table_vsearch = tibble(asv_id = NA)
-}
-
+## Read in taxonomic classifications (BLAST results) if existing
 if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast"))) {
   hit_table_blast =
     read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/search_results/",
@@ -92,36 +66,70 @@ if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blas
     arrange(asv_id) %>%
     mutate(method = "blast")
 } else {
-  hit_table_blast = tibble(asv_id = NA)
+  hit_table_blast = tibble(asv_id = NA,
+                           accession = NA,
+                           method = NA)
 }
 
-# Read in taxonomies and filter to flagged taxa
-taxonomy_table =
-  read.table(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted/", 
-                    list.files(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted")), 
-                    "/data/taxonomy.tsv"),
-             header = TRUE, 
-             sep = '\t',
-             quote = '') %>%
-  rename(accession = Feature.ID,
-         taxon = Taxon) %>%
-  filter(accession %in% unique(hit_table_vsearch$accession) |
-           accession %in% unique(hit_table_blast$accession)
-         ) %>%
-  separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
-  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
-  rename(kingdom = k,
-         phylum = p,
-         class = c,
-         order = o,
-         family = f,
-         genus = g,
-         species = s) %>%
-  mutate(domain = "Eukaryota") %>%
-  arrange(accession) %>%
-  select(accession,
-         domain,
-         everything())
+## Read in taxonomic classifications (Vsearch results) if existing
+if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch"))) {
+  hit_table_vsearch =
+    read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/", 
+                      list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_vsearch/search_results')), 
+                      "/data/blast6.tsv"),
+               header = FALSE, 
+               sep = '\t') %>%
+    rename(asv_id = V1,
+           accession = V2,
+           percent_identical = V3,
+           seq_overlap = V4,
+           seq_mismatch = V5,
+           gapopen_count = V6,
+           q_start = V7,
+           q_end = V8,
+           s_start = V9,
+           s_end = V10,
+           e_value = V11,
+           bitscore = V12) %>%
+    arrange(asv_id) %>%
+    mutate(method = "vsearch")
+} else {
+  hit_table_vsearch = tibble(asv_id = NA,
+                             accession = NA,
+                             method = NA)
+}
+
+if (!is.null(config$taxonomy$classifierDir)) {
+  # Read in taxonomies and filter to flagged taxa
+  taxonomy_table =
+    read.table(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted/", 
+                      list.files(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted")), 
+                      "/data/taxonomy.tsv"),
+               header = TRUE, 
+               sep = '\t',
+               quote = '') %>%
+    rename(accession = Feature.ID,
+           taxon = Taxon) %>%
+    filter(accession %in% unique(hit_table_vsearch$accession) |
+             accession %in% unique(hit_table_blast$accession)
+    ) %>%
+    separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+    mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+    rename(kingdom = k,
+           phylum = p,
+           class = c,
+           order = o,
+           family = f,
+           genus = g,
+           species = s) %>%
+    mutate(domain = "Eukaryota") %>%
+    arrange(accession) %>%
+    select(accession,
+           domain,
+           everything())
+} else {
+  taxonomy_table = tibble(accession = NA)
+}
 
 # Read in DNA sequences 
 sequence_table =
@@ -137,12 +145,14 @@ wide_table = asv_totals %>%
   left_join(bind_rows(hit_table_blast,
                       hit_table_vsearch), by = "asv_id") %>%
   left_join(taxonomy_table, by = "accession") %>%
- select(any_of(colnames(asv_totals)),
+  select(any_of(colnames(asv_totals)),
          any_of(colnames(sequence_table)),
          method,
          any_of(colnames(taxonomy_table)),
          any_of(colnames(hit_table_vsearch))) %>%
-  arrange(desc(asv_total_count), asv_id, method)
+  arrange(desc(asv_total_count),
+          asv_id,
+          method)
 
 write.csv(wide_table, paste0(config$run$runDir, "/output/", config$run$name, "_02_qiime2_hits.csv"), row.names = FALSE)
 write.csv(taxonomy_table, paste0(config$run$runDir, "/output/", config$run$name, "_02_taxonomy_table_filtered.csv"), row.names = FALSE)
