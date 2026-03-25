@@ -1,7 +1,10 @@
+# Title: Make manifest file
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
 library(tidyverse)
 library(yaml)
 
-## manual runs
+# # manual runs
 # env_config_path = "runs/test_run_01/output/metadata/config.yml"
 # setwd("16S_sequence_processing")
 

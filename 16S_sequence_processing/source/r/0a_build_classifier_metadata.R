@@ -1,3 +1,6 @@
+# Title: Build metadata classifier
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
 library(yaml)
 
 # inherit env_config_path
