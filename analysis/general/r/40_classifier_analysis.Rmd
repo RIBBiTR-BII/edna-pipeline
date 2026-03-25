@@ -1,0 +1,45 @@
+---
+title: "40_classifier_analysis"
+output: html_document
+---
+
+
+# Created by: Cob Staines (cobstainesconsulting@gmail.com)
+
+# config
+```{r}
+## Load in Libraries (install them in you need them.)
+librarian::shelf(tidyverse, yaml, phylotools, here)
+
+```
+
+# Load data
+```{r}
+seq_class =
+  read.fasta(here("16S_sequence_processing", "amphibia16s_classifier", "Amphibia16S_derep1_seqs_extracted",
+                               list.files(here("16S_sequence_processing", "amphibia16s_classifier", "Amphibia16S_derep1_seqs_extracted")), "data", "dna-sequences.fasta")) %>%
+  dplyr::rename(taxon_id = seq.name) %>%
+  arrange(taxon_id) %>%
+  mutate(bp = str_length(seq.text),
+         gene = "16S")
+
+taxa_class = read_tsv(here("16S_sequence_processing", "amphibia16s_classifier", "Amphibia16S_derep1_taxa_extracted",
+                               list.files(here("16S_sequence_processing", "amphibia16s_classifier", "Amphibia16S_derep1_taxa_extracted")), "data", "taxonomy.tsv")) %>%
+  rename(taxon_id = `Feature ID`,
+         taxon = Taxon) %>%
+  separate(taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";") %>%
+  mutate(across(everything(), ~ str_remove(., "^[a-z]__"))) %>%
+  rename(kingdom = k,
+         phylum = p,
+         class = c,
+         order = o,
+         family = f,
+         genus = g,
+         species = s) %>%
+  mutate(domain = "Eukaryota") %>%
+  arrange(taxon_id) %>%
+  select(taxon_id,
+         domain,
+         everything())
+
+```
