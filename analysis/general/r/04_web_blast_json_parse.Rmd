@@ -1,5 +1,6 @@
 ---
-title: "x8_genbank_json_export"
+title: "04_web_blast_json_parse"
+author: "Cob Staines"
 output: html_document
 ---
 # Description
