@@ -72,5 +72,23 @@ asv_out = asv_controlled %>%
   arrange(edna_sample_name,
           desc(asv_reads_controlled))
 
+# peace = asv_controlled %>%
+#   filter(is.na(control_type),
+#          asv_count_controlled > 0) %>%
+#   left_join(asv_seq, by = "asv_id") %>%
+#   left_join(asv_classification, by = "asv_id") %>%
+#   filter(!is.na(taxonomic_rank)) %>%
+#   full_join(sample_map %>%
+#               select(edna_id,
+#                      edna_sample_name) %>%
+#               distinct(), by = c("edna_id", "edna_sample_name")) %>%
+#   rename(asv_reads_controlled = asv_count_controlled) %>%
+#   filter(asv_count_raw > 0) %>%
+#   arrange(species,
+#           desc(asv_count_raw))
+# 
+# old_peace = read_csv(here(run_dir, "output", paste0(config$run$name, "_20_prelim_results_2026-03-18.csv"))) %>%
+#   filter(asv_reads_controlled > 0)
+
 write_csv(asv_out, results_out)
 ```
