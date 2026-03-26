@@ -37,13 +37,23 @@ taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_ta
 # Import taxa
 ```{r}
 # load taxonomy table
-taxa_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_taxonomy_table_filtered.csv")))
+if (file.exists(here(run_dir, "output", paste0(config$run$name, "_02_taxonomy_table_filtered.csv")))) {
+  taxa_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_taxonomy_table_filtered.csv")))
+} else {
+  cat("No taxonomy table found, skipping.\n")
+  taxa_raw = tibble(c())
+}
 
 # load web blast table
-taxa_web_blast_metazoa = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
-  mutate(species = sub("^\\S+\\s+", "", species)) %>%
-  select(all_of(colnames(taxa_raw))) %>%
-  filter(kingdom == "Metazoa")
+if (file.exists(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv")))) {
+  taxa_web_blast_metazoa = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
+    mutate(species = sub("^\\S+\\s+", "", species)) %>%
+    select(all_of(colnames(taxa_raw))) %>%
+    filter(kingdom == "Metazoa")
+} else {
+  cat("No web blast results found, skipping.\n")
+  taxa_web_blast_metazoa = tibble(c())
+}
 
 # clean up taxa
 taxa_clean = bind_rows(taxa_raw,
@@ -219,7 +229,7 @@ for (ii in 1:nrow(gbif_backbone_key)) {
     gbif_backbone_key$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
                                                       country = gbif_country_code,
                                                       stateProvince = gbif_state_province)
-    Sys.sleep(0.5)
+    Sys.sleep(1)
     setTxtProgressBar(pb, ii)
   }
 }

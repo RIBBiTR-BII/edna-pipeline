@@ -12,10 +12,10 @@ See the algorithm below for details on each `accept_method` and to adjust parame
 
 # Config
 ```{r}
-librarian::shelf(tidyverse, yaml, here)
+librarian::shelf(tidyverse, yaml, here, phylotools)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "16S")
+run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -36,32 +36,73 @@ classification_out = here(run_dir, "output", paste0(config$run$name, "_06_asv_cl
 
 # Prepare for classification
 ```{r}
-# read in hits from qiime2 (blast & vsearch)
-qiime2_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_qiime2_hits.csv")))
+# read in feature table
+feature_table =
+  read_tsv(here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "sample_table/feature-table.tsv"), skip = 1) %>%
+  as.data.frame() %>%
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
 
-# read in hits from web blast (script 04)
-web_blast_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
-  mutate(species = sub("^\\S+\\s+", "", species))
+feature_long = feature_table %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "sample_id",
+               values_to = "asv_count") %>%
+  filter(asv_count != 0) %>%
+  arrange(sample_id) %>%
+  select(sample_id,
+         asv_id,
+         asv_count)
 
-# pull in asv data
-backbone = qiime2_hits_raw %>%
-  select(asv_id,
-         asv_total_count,
-         sample_count,
-         samples,
-         sequence) %>%
-  distinct()
+asv_totals = feature_long %>%
+  group_by(asv_id) %>%
+  summarise(asv_total_count = sum(asv_count),
+            sample_count = n_distinct(sample_id),
+            samples = paste(sort(unique(sample_id)), collapse = ", ")) %>%
+  arrange(desc(asv_total_count))
+
+# read in sequences
+sequence_table =
+  read.fasta(file = here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "representative_sequences", 
+                           list.files(here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "representative_sequences")), 
+                           "data/dna-sequences.fasta"))%>%
+  rename(asv_id = seq.name, 
+         sequence = seq.text) %>%
+  arrange(asv_id)
+
+# build backbone
+backbone = asv_totals %>%
+  left_join(sequence_table, by = "asv_id")
+
+# load hits
+## QIIME2
+if (file.exists(here(run_dir, "output", paste0(config$run$name, "_02_qiime2_hits.csv")))) {
+  qiime2_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_qiime2_hits.csv")))
+} else {
+  cat("No QIIME2 hits table found, skipping.\n")
+  qiime2_hits_raw = tibble(asv_id = NA)
+}
+
+## Web BLAST
+if (file.exists(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv")))) {
+  web_blast_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
+    mutate(species = sub("^\\S+\\s+", "", species))
+} else {
+  cat("No QIIME2 hits table found, skipping.\n")
+  web_blast_hits_raw = tibble(asv_id = NA)
+}
 
 # bind with web blast
-hits_raw = bind_rows(qiime2_hits_raw,
-                     backbone %>%
-                     left_join(web_blast_hits_raw, by = "asv_id") %>%
-                       select(all_of(colnames(qiime2_hits_raw))))
+hits_raw = backbone %>%
+  left_join(bind_rows(qiime2_hits_raw,
+                      web_blast_hits_raw) %>%
+              select(-any_of(c("asv_total_count",
+                               "sample_count",
+                               "samples",
+                               "sequence"))), by = "asv_id")
 
 # clean hits
 hits_clean = hits_raw %>%
-  filter(!is.na(class),
-         seq_overlap >= 50) %>%
+  filter(accession != "*") %>%
   mutate(p_identical = percent_identical / 100,
          p_overlap = seq_overlap / (s_end - s_start + 1))
 
@@ -672,12 +713,6 @@ asv_count = length(unique(accept_all$asv_id))
 remainder = hits_geography %>%
   anti_join(accept_all, by = c("asv_id", "method"))
 
-# list of all accept methods
-all_accept_methods = hits_accept %>%
-  select(accept_method) %>%
-  distinct() %>%
-  arrange(accept_method)
-
 # collect hits and accepted classifications
 hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
@@ -699,13 +734,17 @@ hits_accept = hits_geography %>%
                                                 "8_phylum_50p_consensus_75" ~ 14,
                                                 "9_kingdom_50p_consensus_75" ~ 15,
                                                 "9_domain_50p_consensus_75" ~ 16,
-                                                default = NA)) %>%
+                                                default = NA),
+         search_method_priority = recode_values(method,
+                                                "blast_web" ~ 1,
+                                                "vsearch" ~ 2,
+                                                "blast" ~ 3)) %>%
   arrange(desc(asv_total_count), asv_id, method, accept_method, desc(n_hits), desc(p_identical)) %>%
   select("asv_id", "asv_total_count", "sample_count", "samples", "sequence", 
          "method", "accession", "domain", "kingdom", "phylum", "class", 
          "order", "family", "genus", "species",
          # "specificEpithet", "intraspecificEpithet",
-         "accept_method","accept_method_priority", "taxonomic_rank",
+         "search_method_priority", "accept_method","accept_method_priority", "taxonomic_rank",
          "percent_identical", "seq_overlap",
          "seq_mismatch", "gapopen_count", "q_start", "q_end", "s_start", 
          "s_end", "p_identical", "p_overlap",  
@@ -722,9 +761,15 @@ write.csv(hits_accept, hybrid_classification_out, row.names = FALSE)
 
 # Checks
 ```{r}
+# list of all accept methods
+all_accept_methods = hits_accept %>%
+  select(accept_method) %>%
+  distinct() %>%
+  arrange(accept_method)
+
 # Drop ASV classifications with overlap length below seq_overlap_cutoff
 hits_accept_qc = hits_accept %>%
-  filter(!(!is.na(accept_method) & seq_overlap_max < seq_overlap_cutoff))
+  filter(!(!is.na(accept_method) & seq_overlap_max < sequence_overlap_cutoff))
 
 # species-level discrepancies
 accepts_species = hits_accept_qc %>%
@@ -822,11 +867,13 @@ accepts_genus_first_wb = accepts_genus %>%
 ```{r}
 # filter to method of choice
 # select the best classification according to hierarchy of `accept_method`s
+max_search_method_priority = max(hits_accept_qc$search_method_priority)
+
 accept_out = hits_accept_qc %>%
-  filter(method == "blast_web",
-         !is.na(accept_method)) %>%
+  mutate(priority = accept_method_priority + search_method_priority / max_search_method_priority) %>%
+  filter(!is.na(accept_method)) %>%
   group_by(asv_id) %>%
-  slice_min(accept_method_priority, n = 1, with_ties = FALSE) %>%
+  slice_min(priority, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
   select(asv_id,
          method,
