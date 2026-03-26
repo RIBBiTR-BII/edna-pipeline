@@ -14,49 +14,94 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ### Setup
 
-1. Install Docker -- Choose one of the options below:
-  
-  - [Docker Desktop (Windows/Mac/Linux)](https://docs.docker.com/get-started/introduction/get-docker-desktop/): Docker Desktop establishes a dedicated Linux virtual machine on which to run Docker Engine.
-  - [Docker Engine (Linux)](https://docs.docker.com/engine/install/): If you already have a Linux machine or virtual machine (e.g. WSL), you can install Docker Engine there directly without having to establish a new Linux virtual machine.
+1. Install Podman -- Choose one of the options below:
 
-  Confirm your Docker installation in the command line (terminal/PowerShell/Command Prompt.)  with: `docker --version`
-  Should return: `Docker version xx.x.x, build xxxxxxx`
+   - **Windows:** Install [Podman Desktop for Windows](https://podman-desktop.io/). This will also set up Podman Machine, a lightweight Linux virtual machine (VM) that Podman uses on Windows. During first launch, follow the prompt to initialise Podman Machine.
+   - **macOS:** Install [Podman Desktop for Mac](https://podman-desktop.io/). After installation, initialise Podman Machine from the Podman Desktop interface or run `podman machine init && podman machine start` in the terminal.
+   - **Linux:** Install Podman Engine directly — no VM required:
+     ```bash
+     sudo apt-get update && sudo apt-get install -y podman   # Debian/Ubuntu
+     ```
 
-  *Note: If you installed Docker Engine within a Linux virtual machine, you will need to run all subsequent steps within this virtual machine.* 
+   Confirm your Podman installation in the command line (terminal/PowerShell/Command Prompt) with: `podman --version`  
+   Should return: `podman version x.x.x`
 
-2. [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`git clone https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local directory which is accessible to your command line.
+   > **Docker alternative:** This workflow is also fully compatible with [Docker](https://docs.docker.com/get-started/introduction/get-docker-desktop/). Simply substitute `podman` for `docker` in all commands below.
 
-3. Navigate to the `16S_sequence_processing` subfolder in the command line (e.g. `cd your/path/to/16S_sequence_processing`) 
+   > **Note for WSL2 users:** If you are running a Linux virtual machine on Windows via WSL2, you can install Podman Engine inside the VM directly and run all commands from within the VM terminal, without needing Podman Desktop.
 
-4. Build the initial temporary docker environment with: `docker build -t edna-pipeline .` This will create a local environment for the workflow following the `dDckerfile` instructions. This will require an active internet connection. It will also take some time the first time you build, as the image must install QIIME, R, and a few other dependencies. A wired internet connection will speed this up.
+2. [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`git clone https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local directory accessible to your command line.
+
+3. Navigate to the `16S_sequence_processing` subfolder in the command line:
+   ```bash
+   cd your/path/to/16S_sequence_processing
+   ```
+
+4. Build the container image:
+   ```bash
+   podman build -t edna-pipeline .
+   ```
+   This creates a local container image following the `Dockerfile` instructions, installing QIIME2, R, and all required dependencies. An active internet connection is required. **This only needs to be done once** — or until the Dockerfile changes. A wired connection will speed this up considerably as the base image is several gigabytes.
+
+---
 
 ### Run Sequence Processing
 
-1. Navigate to the `16S_sequence_processing` subfolder in the command line, and build the Docker environment with `docker build -t edna-pipeline .` *This only needs to be done once at the start of a new session. If you are preceding from the Setup steps above, skip to Step 2..*
+1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
 
-2. Locate sequences for your run, electing one of the following
-  
-  - To test the pipeline, an existing run folder `16S_sequence_processing/runs/test_run_01` has been included which contains test sequences. Move on to Step 3.
-  - To run the pipeline on your own sequences, create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd`). Create a `sequences` subfolder (e.g. `16S_sequence_processing/runs/run-name_yyy-mm-dd/sequences`) and copy your .fastq or .fastq.gz amplicon sequence files here. Sequence files can be nested in subfolders without issue.
+2. Locate sequences for your run, selecting one of the following:
 
-3. Build a local 16S classifier *(Optional)*: In the command line, run the following command:
-  
-  - **Windows PowerShell:** `docker run -it --rm --user $(id -u):$(id -g) -v ${PWD}:/data edna-pipeline bash build-amphibia16s-classifier.sh`
-  - **Windows Command Prompt:** `docker run -it --rm --user $(id -u):$(id -g) -v %cd%:/data edna-pipeline bash build-amphibia16s-classifier.sh`
-  - **macOS/Linux:** `docker run -it --rm --user $(id -u):$(id -g) -v $(pwd):/data edna-pipeline bash build-amphibia16s-classifier.sh`
-  
-  You can alternatively copy your own classifier to the `16S_sequence_processing` folder, or skip using a local classifier.
+   - **Test the pipeline:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
+   - **Your own sequences:** Create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyyy-mm-dd`), create a `sequences` subfolder inside it, and copy your `.fastq` or `.fastq.gz` paired amplicon sequence files there. Sequence files can be nested in subfolders without issue.
 
-4. Open `config.yml` in a text browser, and confirm the configuration settings for your run. Save this file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, specify the run directory containing your sequences.
+3. Build a local 16S classifier *(Optional)*: Run the following command:
+
+   - **Windows PowerShell:**
+     ```powershell
+     podman run -it --rm -v ${PWD}:/data:z edna-pipeline bash build-amphibia16s-classifier.sh
+     ```
+   - **Windows Command Prompt:**
+     ```cmd
+     podman run -it --rm -v %cd%:/data:z edna-pipeline bash build-amphibia16s-classifier.sh
+     ```
+   - **macOS/Linux:**
+     ```bash
+     podman run -it --rm -v $(pwd):/data:z edna-pipeline bash build-amphibia16s-classifier.sh
+     ```
+
+   You can alternatively copy your own classifier to the `16S_sequence_processing` folder, or skip this step to run without a local classifier.
+
+4. Open `config.yml` in a text editor and confirm the configuration settings for your run. Save the file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, update the run directory and any other relevant parameters.
 
 5. Run sequence processing:
-  
-  - **Windows PowerShell:** `docker run -it --rm --user $(id -u):$(id -g) -v ${PWD}:/data edna-pipeline bash run-seq-processing.sh`
-  - **Windows Command Prompt:** `docker run -it --rm --user $(id -u):$(id -g) -v %cd%:/data edna-pipeline bash run-seq-processing.sh`
-  - **macOS/Linux:** `docker run -it --rm --user $(id -u):$(id -g) -v $(pwd):/data edna-pipeline bash run-seq-processing.sh`
+
+   - **Windows PowerShell:**
+     ```powershell
+     podman run -it --rm -v ${PWD}:/data:z edna-pipeline bash run-seq-processing.sh
+     ```
+   - **Windows Command Prompt:**
+     ```cmd
+     podman run -it --rm -v %cd%:/data:z edna-pipeline bash run-seq-processing.sh
+     ```
+   - **macOS/Linux:**
+     ```bash
+     podman run -it --rm -v $(pwd):/data:z edna-pipeline bash run-seq-processing.sh
+     ```
+
+---
 
 ## Tools and Tips
 
- - When you initiate this workflow, the configuration file (`16S_sequence_processing/config.yml`) is copied to `[YOUR RUN DIR]/output/metadata/config.yml` where it is referenced by the workflow scripts. You can therefore subsequently revise the configuration file and run additional workflows simultaneously, with each run referencing its own local configuration parameters. You then also have a copy of the configuration file to reference and rerun the analysis in the future.
- - When the workflow terminates, a run metadata file `your-run-dir/output/metadata/run_metadata.yml` is generated which contains all of the configuration parameters, as well as some run statistics and diagnostics.
+- When you initiate this workflow, the configuration file (`16S_sequence_processing/config.yml`) is copied to `[YOUR RUN DIR]/output/metadata/config.yml` where it is referenced by the workflow scripts. You can therefore subsequently revise the configuration file and run additional workflows simultaneously, with each run referencing its own local configuration parameters. You also have a copy of the configuration file to reference and rerun the analysis in the future.
 
+- When the workflow terminates, a run metadata file `your-run-dir/output/metadata/run_metadata.yml` is generated which contains all configuration parameters, as well as run statistics and diagnostics.
+
+- **File permissions:** Podman runs containers as your own user by default (rootless), so output files and folders created by the pipeline will be owned by you and fully accessible after the run. If you are using Docker instead and encounter permission issues on output folders, add `--user $(id -u):$(id -g)` to your `docker run` commands, or reclaim ownership of existing folders with `sudo chown -R $USER:$USER runs/`.
+
+- **The `:z` volume flag** on the `-v` mount option sets the correct SELinux label on Linux systems, allowing the container to read and write your project files. It is safely ignored on macOS and Windows.
+
+- **Debugging interactively:** To open a shell inside the container for manual testing or troubleshooting, run:
+  ```bash
+  podman run -it --rm -v $(pwd):/data:z edna-pipeline bash   # macOS/Linux
+  ```
+  Your project files will be visible at `/data`. Type `exit` to leave.
