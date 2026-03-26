@@ -102,7 +102,8 @@ sample_asv_control = sample_asv %>%
          control_th_below = (asv_count <= asv_control_th),
          detected = (asv_count > 0),
          detected_controlled = (detected & !(control_th_below %in% c(TRUE)))) %>%
-  rename(asv_count_raw = asv_count)
+  rename(asv_count_raw = asv_count) %>%
+  arrange(asv_id, desc(asv_count_raw))
 
 write_csv(sample_asv_control, control_out)
 
