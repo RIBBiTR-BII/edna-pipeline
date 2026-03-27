@@ -16,10 +16,10 @@ model_dir = here("analysis", "methods", "output", "models")
 config_12s = read_yaml(here(run_dir_methods, "12S", "output", "metadata", "config.yml"))
 config_16s = read_yaml(here(run_dir_methods, "16S", "output", "metadata", "config.yml"))
 
-data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled.csv")))
+data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled_joined.csv")))
 ```
 
-# aggregate by sample
+# aggregate ASV counts
 ```{r}
 # summary stats for samples (ignoring controls)
 sample_taxa_count = data_combined %>%
@@ -61,12 +61,63 @@ sample_taxa_count_long = sample_taxa_count %>%
 
 # gene
 ggplot(sample_taxa_count_long, aes(x = gene, y = n, color = count_type)) +
-  geom_boxplot() +
-  ylim(0, 15)
+  geom_boxplot()
 
 # 16s pore size active passive
 ggplot(sample_taxa_count %>%
-         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_amph_spp, color = filter_size_um_rz)) +
+         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_xamph_spp, color = filter_size_um_rz)) +
+  geom_boxplot()
+
+```
+
+# aggregate ASV reads
+```{r}
+# summary stats for samples (including controls)
+sample_read_count = data_combined %>%
+  # drop all controls
+  filter(is.na(control_type)) %>%
+  group_by(sample_id,
+           gene,
+           filter_size_um_rz,
+           passive_active_rz,
+           crispr,
+           block,
+           extraction_type,
+           control_type) %>%
+  summarize(
+    # number of reads
+    n_reads = sum(asv_count),
+    # number of reads classified
+    n_reads_class = sum(if_else(!is.na(taxonomic_rank), asv_count, 0L), na.rm = TRUE),
+    # number of reads classified chordata
+    n_reads_class_chord = sum(if_else(phylum == "Chordata", asv_count, 0L), na.rm = TRUE),
+    # number of reads classified as amphibians
+    n_reads_class_chord_amph = sum(if_else(class == "Amphibia", asv_count, 0L), na.rm = TRUE),
+    # number of reads classified as amphibians to the species level
+    n_reads_class_chord_amph_spp = sum(if_else((class == "Amphibia") & (taxonomic_rank == "species"), asv_count, 0L), na.rm = TRUE),
+    # number of reads classified as human
+    n_reads_class_chord_sapien = sum(if_else((species == "sapiens"), asv_count, 0L), na.rm = TRUE),
+    .groups = "drop")
+
+# pivot longer for plotting
+sample_read_count_long = sample_read_count %>%
+  pivot_longer(cols = c(n_reads,
+                        n_reads_class,
+                        n_reads_class_chord,
+                        n_reads_class_chord_amph,
+                        n_reads_class_chord_amph_spp,
+                        n_reads_class_chord_sapien),
+               names_to = "count_type",
+               values_to = "n") %>%
+  mutate(log10_n = log10(n + 1))
+
+# gene
+ggplot(sample_read_count_long, aes(x = gene, y = log10_n, color = count_type)) +
+  geom_boxplot()
+
+# 16s pore size active passive
+ggplot(sample_taxa_count %>%
+         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_xamph_spp, color = filter_size_um_rz)) +
   geom_boxplot()
 
 ```
@@ -135,13 +186,55 @@ m1_znb_asv_cont_amph <- add_criterion(m1_znb_asv_cont_amph, "loo")
 saveRDS(m1_znb_asv_cont_amph, file = here(model_dir, "m1_znb_asv_cont_amph.rds"))
 m1_znb_asv_cont_amph = readRDS(file = here(model_dir, "m1_znb_asv_cont_amph.rds"))
 
+m1_znb_read_amph <- brm(
+  formula = bf(n_reads_class_chord_amph_spp ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               shape ~ 1),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m1_znb_read_amph <- add_criterion(m1_znb_read_amph, "loo")
+
+saveRDS(m1_znb_read_amph, file = here(model_dir, "m1_znb_read_amph.rds"))
+m1_znb_read_amph = readRDS(file = here(model_dir, "m1_znb_read_amph.rds"))
+
+m1_znb_read_sapiens <- brm(
+  formula = bf(n_reads_class_chord_sapien ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+               shape ~ 1),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m1_znb_read_sapiens <- add_criterion(m1_znb_read_sapiens, "loo")
+
+saveRDS(m1_znb_read_sapiens, file = here(model_dir, "m1_znb_read_sapiens.rds"))
+m1_znb_read_sapiens = readRDS(file = here(model_dir, "m1_znb_read_sapiens.rds"))
+
 ```
 
 # model checks
 ```{r}
 # model_select = m1_znb_asv_cntr
 # model_select = m1_znb_asv_cont_chord
-model_select = m1_znb_asv_cont_amph
+# model_select = m1_znb_asv_cont_amph
+# model_select = m1_znb_read_amph
+model_select = m1_znb_read_sapiens
 
 pp_check(model_select,
          type = "dens_overlay",
@@ -159,7 +252,7 @@ summary(model_select)
 ```{r}
 # hu
 hu_specs = emmeans(model_select, 
-                   ~ gene | crispr, 
+                   ~ gene | crispr:block, 
                    dpar = "hu",
                    re_formula = NA)
 
@@ -209,7 +302,7 @@ hu_contrast_agg = hu_contrast_draws %>%
 
 # distrivbution
 mu_specs = emmeans(model_select, 
-                   ~ gene | crispr, 
+                   ~ gene | crispr:block, 
                    dpar = "mu",
                    re_formula = NA)
 
@@ -266,17 +359,19 @@ mu_contrast_agg = mu_contrast_draws %>%
 #   theme_minimal()
 
 # hu
-ggplot(hu_group_draws, aes(y = p_detect, x = gene, fill = crispr)) +
+ggplot(hu_group_draws, aes(y = p_detect, x = gene)) +
   geom_violin() +
   theme_minimal() +
-  scale_fill_brewer(palette = "Set2")
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block) +
+  labs(x = "crispr", y = "block")
 
 
 ggplot(hu_contrast_draws, aes(x = -hu_gene)) +
   stat_halfeye(fill = "#66c2a5",
                .width = c(0.5, 0.95),
                point_interval = mode_hdi) +
-  facet_wrap("crispr") +
+  facet_grid(crispr ~ block) +
   geom_vline(xintercept = 0, alpha = 1) +
   theme_minimal() +
   labs(
@@ -287,17 +382,18 @@ ggplot(hu_contrast_draws, aes(x = -hu_gene)) +
   theme(text=element_text(size=14))
 
 # number of reads
-ggplot(mu_group_draws, aes(y = mu, x = gene, fill = crispr)) +
+ggplot(mu_group_draws, aes(y = mu, x = gene)) +
   geom_violin() +
   theme_minimal() +
-  scale_fill_brewer(palette = "Set2")
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
 
 
 ggplot(mu_contrast_draws, aes(x = mu_gene)) +
   stat_halfeye(fill = "#8da0cb",
                .width = c(0.5, 0.95),
                point_interval = mode_hdi) +
-  facet_wrap("crispr") +
+  facet_grid(crispr ~ block) +
   geom_vline(xintercept = 0, alpha = 1) +
   theme_minimal() +
   labs(
