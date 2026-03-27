@@ -77,11 +77,9 @@ taxa_out = taxa_clean
 
 # get unique for querying
 taxa_unique = taxa_clean %>%
-  select(-accession,
-         -kingdom,
-         -phylum) %>%
+  select(-accession) %>%
   distinct() %>%
-  arrange(class, order, family, genus, species)
+  arrange(domain, kingdom, phylum, class, order, family, genus, species)
 ```
 
 
@@ -220,24 +218,72 @@ gbif_state_province = recode_values(study_system,
                                     "california" ~ "California",
                                     "pennsylvania" ~ "Pennsylvania")
 
+# SQL query
+valid_keys = na.omit(gbif_backbone_key$usageKey)
+keys_sql = paste(valid_keys, collapse = ", ")
 
-pb = txtProgressBar(min = 1, max = nrow(gbif_backbone_key), style = 3)
-for (ii in 1:nrow(gbif_backbone_key)) {
-  if (!is.na(gbif_backbone_key$usageKey[ii])) {
-    # gbif_backbone_key$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
-    #                                                   country = country_codes_gbif)
-    gbif_backbone_key$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
-                                                      country = gbif_country_code,
-                                                      stateProvince = gbif_state_province)
-    Sys.sleep(1)
-    setTxtProgressBar(pb, ii)
-  }
+if (is.na(gbif_state_province)) {
+  sql_query = paste0("
+    SELECT taxonKey, speciesKey, familyKey, orderKey, 
+           species, genus, family,
+           COUNT(*) AS occ_count
+    FROM occurrence
+    WHERE countryCode = '", gbif_country_code, "'
+    AND taxonKey IN (", keys_sql, ")
+    GROUP BY taxonKey, speciesKey, familyKey, orderKey,
+             species, genus, family
+  ")
+} else {
+    sql_query = paste0("
+    SELECT taxonKey, speciesKey, familyKey, orderKey, 
+           species, genus, family,
+           COUNT(*) AS occ_count
+    FROM occurrence
+    WHERE countryCode = '", gbif_country_code, "'
+    AND stateProvince = '", gbif_state_province, "'
+    AND taxonKey IN (", keys_sql, ")
+    GROUP BY taxonKey, speciesKey, familyKey, orderKey,
+             species, genus, family
+  ")
 }
-close(pb)
+
+# submit query
+sql_submission = occ_download_sql(sql_query)
+
+# Wait until query is complete
+occ_download_wait(sql_submission)
+
+# download data
+occ_download_file = occ_download_get(sql_submission, path = here(run_dir, "output"))
+
+# import data
+occ_data = occ_download_import(occ_download_file)
+
+# export with reusable name
+write_csv(pa_data, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))
+
+# drop downloads to reduce clutter
+if (file.exists(as.character(occ_download_file)) & file.exists(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))) {
+  file.remove(as.character(occ_download_file))
+} else {
+  stop("Download file error (Panama), stopping.")
+}
+```
+
+# Process GBIF data
+```{r}
+occ_data = read_csv(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv"))) %>%
+  mutate(usageKey = as.character(taxonkey)) %>%
+  select(usageKey,
+         occ_count)
+
+gbif_backbone_key_occ = gbif_backbone_key %>%
+  left_join(occ_data, by = "usageKey") %>%
+  mutate(local_occ_count = ifelse(is.na(occ_count), 0, occ_count))
 
 # join with taxa_out
 taxa_out = taxa_out %>%
-  left_join(gbif_backbone_key %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank == "FAMILY") %>%
               rename(gbif_count_family_local = local_occ_count,
                      gbif_familyKey = familyKey) %>%
@@ -249,7 +295,7 @@ taxa_out = taxa_out %>%
             by = c("class" = "class_q",
                    "order" = "order_q",
                    "family" = "family_q")) %>%
-  left_join(gbif_backbone_key %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank == "GENUS") %>%
               rename(gbif_count_genus_local = local_occ_count,
                      gbif_genusKey = genusKey) %>%
@@ -263,7 +309,7 @@ taxa_out = taxa_out %>%
                    "order" = "order_q",
                    "family" = "family_q",
                    "genus" = "genus_q")) %>%
-  left_join(gbif_backbone_key %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank %in% c("SPECIES", "SUBSPECIES"),
                      !is.na(scientific_name_q)) %>%
               rename(local_gbif_count_species = local_occ_count,
@@ -280,7 +326,7 @@ taxa_out = taxa_out %>%
                    "order" = "order_q",
                    "family" = "family_q",
                    "scientificName" = "scientific_name_q")) %>%
-  left_join(gbif_backbone_key %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank %in% c("SPECIES", "SUBSPECIES"),
                      !is.na(specific_epithet_q)) %>%
               rename(local_gbif_count_species = local_occ_count,

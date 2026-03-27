@@ -20,7 +20,7 @@ librarian::shelf(tidyverse, yaml, here, rgbif)
 # requires GBIF token in .Renviron
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "16S")
+run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "12S")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -67,11 +67,9 @@ taxa_out = taxa_clean
 
 # get unique for querying
 taxa_unique = taxa_clean %>%
-  select(-accession,
-         -kingdom,
-         -phylum) %>%
+  select(-accession) %>%
   distinct() %>%
-  arrange(class, order, family, genus, species)
+  arrange(domain, kingdom, phylum, class, order, family, genus, species)
 ```
 
 
@@ -201,47 +199,100 @@ gbif_backbone_key_pe = gbif_backbone_key
 
 cat("\tQuerying local taxa occurences\n")
 
-# gbif_country_code = recode_values(study_system,
-#                                   "brazil" ~ "BR",
-#                                   "panama" ~ "PA",
-#                                   "california" ~ "US",
-#                                   "pennsylvania" ~ "US")
-# 
-# gbif_state_province = recode_values(study_system,
-#                                     "brazil" ~ NA,
-#                                     "panama" ~ NA,
-#                                     "california" ~ "California",
-#                                     "pennsylvania" ~ "Pennsylvania")
+valid_keys = na.omit(gbif_backbone_key$usageKey)
 
+# SQL query
+keys_sql = paste(valid_keys, collapse = ", ")
 
-pb = txtProgressBar(min = 1, max = nrow(gbif_backbone_key), style = 3)
-for (ii in 1:nrow(gbif_backbone_key)) {
-  if (!is.na(gbif_backbone_key$usageKey[ii])) {
-    gbif_backbone_key_pa$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
-                                                         country = "PA")
-    Sys.sleep(5)
-    gbif_backbone_key_pe$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
-                                                         country = "US",
-                                                         stateProvince = "Pennsylvania")
-    Sys.sleep(5)
-    setTxtProgressBar(pb, ii)
-  }
+# Panama counts
+pa_sql_download = occ_download_sql(
+  paste0("
+    SELECT taxonKey, speciesKey, familyKey, orderKey, 
+           species, genus, family,
+           COUNT(*) AS occ_count
+    FROM occurrence
+    WHERE countryCode = 'PA'
+    AND taxonKey IN (", keys_sql, ")
+    GROUP BY taxonKey, speciesKey, familyKey, orderKey,
+             species, genus, family
+  ")
+)
+
+# Pennsylvania counts
+penn_sql_download = occ_download_sql(
+  paste0("
+    SELECT taxonKey, speciesKey, familyKey, orderKey, 
+           species, genus, family,
+           COUNT(*) AS occ_count
+    FROM occurrence
+    WHERE countryCode = 'US'
+    AND stateProvince = 'Pennsylvania'
+    AND taxonKey IN (", keys_sql, ")
+    GROUP BY taxonKey, speciesKey, familyKey, orderKey,
+             species, genus, family
+  ")
+)
+    #   OR speciesKey IN (", keys_sql, ")
+    #   OR genusKey IN (", keys_sql, ")
+    #   OR familyKey IN (", keys_sql, ")
+    #   OR orderKey IN (", keys_sql, ")
+    #   OR classKey IN (", keys_sql, ")
+    # )
+# Wait and import
+occ_download_wait(pa_sql_download)
+occ_download_wait(penn_sql_download)
+
+# bulk download
+pa_counts = occ_download_get(pa_sql_download, path = here(run_dir, "output"))
+penn_counts = occ_download_get(penn_sql_download, path = here(run_dir, "output"))
+
+# import data
+pa_data = occ_download_import(pa_counts)
+penn_data = occ_download_import(penn_counts)
+
+# export with reusable name
+write_csv(pa_data, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_panama.csv")))
+write_csv(penn_data, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_pennsylvania.csv")))
+
+# drop downloads to reduce clutter
+if (file.exists(as.character(pa_counts)) & file.exists(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_panama.csv")))) {
+  file.remove(as.character(pa_counts))
+} else {
+  stop("Download file error (Panama), stopping.")
 }
-close(pb)
+if (file.exists(as.character(penn_counts)) & file.exists(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_pennsylvania.csv")))) {
+  file.remove(as.character(penn_counts))
+} else {
+  stop("Download file error (Pennsylvania), stopping.")
+}
+```
 
-gbif_backbone_key_pa = gbif_backbone_key_pa %>%
-  rename(occ_count_pa = local_occ_count)
-gbif_backbone_key_pe = gbif_backbone_key_pe %>%
-  rename(occ_count_pe = local_occ_count)
+# Process GBIF downloads
+```{r}
 
-gbif_backbone_key = bind_cols(gbif_backbone_key_pa,
-                              gbif_backbone_key_pe %>%
-                                select(occ_count_pe)) %>%
-  mutate(local_occ_count = sum(occ_count_pa, occ_count_pe, na.rm = TRUE))
+gbif_backbone_key_pa = read_csv(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_panama.csv"))) %>%
+  rename(occ_count_pa = occ_count) %>%
+  mutate(usageKey = as.character(taxonkey)) %>%
+  select(usageKey,
+         occ_count_pa)
+
+gbif_backbone_key_pe = read_csv(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_pennsylvania.csv"))) %>%
+  rename(occ_count_pe = occ_count) %>%
+  mutate(usageKey = as.character(taxonkey)) %>%
+  select(usageKey,
+         occ_count_pe)
+
+
+gbif_backbone_key_occ = gbif_backbone_key %>%
+  left_join(gbif_backbone_key_pa, by = "usageKey") %>%
+  left_join(gbif_backbone_key_pe, by = "usageKey") %>%
+  mutate(occ_count_pa = ifelse(is.na(occ_count_pa), 0, occ_count_pa),
+         occ_count_pe = ifelse(is.na(occ_count_pe), 0, occ_count_pe),
+         local_occ_count = occ_count_pa + occ_count_pe)
 
 # join with taxa_out
-taxa_out = taxa_out %>%
-  left_join(gbif_backbone_key %>%
+taxa_out_final = taxa_out %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank == "FAMILY") %>%
               rename(gbif_count_family_local = local_occ_count,
                      gbif_familyKey = familyKey) %>%
@@ -253,7 +304,7 @@ taxa_out = taxa_out %>%
             by = c("class" = "class_q",
                    "order" = "order_q",
                    "family" = "family_q")) %>%
-  left_join(gbif_backbone_key %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank == "GENUS") %>%
               rename(gbif_count_genus_local = local_occ_count,
                      gbif_genusKey = genusKey) %>%
@@ -267,7 +318,7 @@ taxa_out = taxa_out %>%
                    "order" = "order_q",
                    "family" = "family_q",
                    "genus" = "genus_q")) %>%
-  left_join(gbif_backbone_key %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank %in% c("SPECIES", "SUBSPECIES"),
                      !is.na(scientific_name_q)) %>%
               rename(local_gbif_count_species = local_occ_count,
@@ -284,7 +335,7 @@ taxa_out = taxa_out %>%
                    "order" = "order_q",
                    "family" = "family_q",
                    "scientificName" = "scientific_name_q")) %>%
-  left_join(gbif_backbone_key %>%
+  left_join(gbif_backbone_key_occ %>%
               filter(rank %in% c("SPECIES", "SUBSPECIES"),
                      !is.na(specific_epithet_q)) %>%
               rename(local_gbif_count_species = local_occ_count,
@@ -326,5 +377,5 @@ cat("Done with GBIF.\n")
 
 # Export results
 ```{r}
-write.csv(taxa_out, taxa_out_file, row.names = FALSE)
+write.csv(taxa_out_final, taxa_out_file, row.names = FALSE)
 ```
