@@ -30,13 +30,13 @@ You will first need to manually submit a Genbank Web BLAST query, and download t
 librarian::shelf(tidyverse, jsonlite, here, yaml, taxize)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "16S")
+run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # import json file
-json_blast_results = fromJSON(here(run_dir, "output", "WB54P190016-Alignment.json"))
+json_blast_results = fromJSON(here(run_dir, "output", "WDRZDG0R014-Alignment.json"))
 
 # specify output file
 output_file = here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))
