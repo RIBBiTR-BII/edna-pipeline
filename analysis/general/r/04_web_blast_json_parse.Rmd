@@ -19,24 +19,24 @@ You will first need to manually submit a Genbank Web BLAST query, and download t
   - Click `Browse` and navigate to the ASV representative sequences .fasta file at: `[run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
   - Under `Program Selection: Optimize for`, select `More dissimilar sequences (discontiguous megablast)` (ideal for eDNA)
   - Under `Algorithm parameters`
-    - adjust the desired max number of hits as desired (10 is ideal)
-    - adjust the `Expect threshold` (0.01 is ideal)
+    - adjust the max number of hits as desired (10 - 100 is fine)
+    - adjust the `Expect threshold` (0.03 is recommended)
   - Click `BLAST` and wait for the query to finish
 3. In the main results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[run-directory]/outout/`
 4. Once you have the results file, adjust the parameters in the `Config` section below to match your needs. You can then run this script ot strip and structure the results for downstream analysis.
 
 # Config
 ```{r}
-librarian::shelf(tidyverse, jsonlite, here, taxize)
+librarian::shelf(tidyverse, jsonlite, here, yaml, taxize)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "12S")
+run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "16S")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # import json file
-json_blast_results = fromJSON(here(run_dir, "output", "VJF1C0G5016-Alignment.json"))
+json_blast_results = fromJSON(here(run_dir, "output", "WB54P190016-Alignment.json"))
 
 # specify output file
 output_file = here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))
