@@ -260,7 +260,7 @@ occ_download_file = occ_download_get(sql_submission, path = here(run_dir, "outpu
 occ_data = occ_download_import(occ_download_file)
 
 # export with reusable name
-write_csv(pa_data, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))
+write_csv(occ_data, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))
 
 # drop downloads to reduce clutter
 if (file.exists(as.character(occ_download_file)) & file.exists(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))) {

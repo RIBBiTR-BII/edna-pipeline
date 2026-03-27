@@ -15,7 +15,7 @@ See the algorithm below for details on each `accept_method` and to adjust parame
 librarian::shelf(tidyverse, yaml, here, phylotools)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "methods_2026-03-13", "12S")
+run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
