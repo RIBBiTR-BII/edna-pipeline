@@ -65,10 +65,32 @@ if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blas
            bitscore = V12) %>%
     arrange(asv_id) %>%
     mutate(method = "blast")
+  
+  consensus_table_blast =
+    read.table(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_blast/classification/",
+                      list.files(paste0(config$run$runDir, '/analysis/s07_classified_taxonomy_blast/classification')),
+                      "/data/taxonomy.tsv"),
+               header = TRUE,
+               sep = '\t') %>%
+    separate(Taxon, into = c("k", "p", "c", "o", "f", "g", "s"), sep = ";", fill = "right") %>%
+    mutate(method = "blast",
+           across(everything(), ~ str_remove(., "^[a-z]__")),
+           k = if_else(k == "Unassigned", NA, k)) %>%
+    rename(asv_id = Feature.ID,
+           kingdom = k,
+           phylum = p,
+           class = c,
+           order = o,
+           family = f,
+           genus = g,
+           species = s,
+           consensus = Consensus)
 } else {
   hit_table_blast = tibble(asv_id = NA,
                            accession = NA,
                            method = NA)
+  
+  consensus_table_blast = tibble(c())
 }
 
 ## Read in taxonomic classifications (Vsearch results) if existing
@@ -102,8 +124,8 @@ if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsea
 if (!is.null(config$taxonomy$classifierDir)) {
   # Read in taxonomies and filter to flagged taxa
   taxonomy_table =
-    read.table(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted/", 
-                      list.files(paste0(config$taxonomy$classifierDir, "/Vertebrata", config$taxonomy$gene, "_derep1_taxa_extracted")), 
+    read.table(paste0(config$taxonomy$classifierDir, "/derep1_taxa_extracted/", 
+                      list.files(paste0(config$taxonomy$classifierDir, "/derep1_taxa_extracted")), 
                       "/data/taxonomy.tsv"),
                header = TRUE, 
                sep = '\t',
