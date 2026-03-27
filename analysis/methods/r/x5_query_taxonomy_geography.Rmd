@@ -219,11 +219,11 @@ for (ii in 1:nrow(gbif_backbone_key)) {
   if (!is.na(gbif_backbone_key$usageKey[ii])) {
     gbif_backbone_key_pa$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
                                                          country = "PA")
-    Sys.sleep(2)
+    Sys.sleep(5)
     gbif_backbone_key_pe$local_occ_count[ii] = occ_count(taxonKey = gbif_backbone_key$usageKey[ii],
                                                          country = "US",
                                                          stateProvince = "Pennsylvania")
-    Sys.sleep(2)
+    Sys.sleep(5)
     setTxtProgressBar(pb, ii)
   }
 }
