@@ -62,26 +62,26 @@ qiime tools extract --input-path analysis/s06_denoised_12S_eDNA/representative_s
 if [ -n "$c_taxa_dir" ] && [[ "$c_taxa_dir" != "null" ]]; then
 
 	# if localBlastBool
-    if [ -n "$c_b_bool" ] || [[ "$c_b_bool" == "true" ]]; then
+    if [[ "$c_b_bool" == "true" ]]; then
 
 		echo "Classifying sequences locally with BLAST"
 
 		# s07-a
 		# Classify Sequences consensus blast
-		qiime feature-classifier classify-consensus-blast --i-query analysis/s06_denoised_12S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata12S_derep1_seqs_extracted.qza" --i-reference-taxonomy "$project_dir/$c_taxa_dir/Vertebrata12S_derep1_taxa_extracted.qza" --p-maxaccepts $c_b_maxaccepts --p-perc-identity $c_b_perc_identity --p-query-cov $c_b_query_cov --output-dir analysis/s07_classified_taxonomy_blast
+		qiime feature-classifier classify-consensus-blast --i-query analysis/s06_denoised_12S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/derep1_seqs_extracted.qza" --i-reference-taxonomy "$project_dir/$c_taxa_dir/derep1_taxa_extracted.qza" --p-maxaccepts $c_b_maxaccepts --p-perc-identity $c_b_perc_identity --p-query-cov $c_b_query_cov --output-dir analysis/s07_classified_taxonomy_blast
 		# Extract out classifications.
 		qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/classification.qza --output-path analysis/s07_classified_taxonomy_blast/classification
 		qiime tools extract  --input-path analysis/s07_classified_taxonomy_blast/search_results.qza --output-path analysis/s07_classified_taxonomy_blast/search_results
     fi
 
     # if localVsearchBool
-    if [ -n "$c_b_bool" ] || [[ "$c_b_bool" == "true" ]]; then
+    if [[ "$c_v_bool" == "true" ]]; then
 
 		echo "Classifying sequences locally with Vsearch"
 
 		# s07-b
 		# Classify Sequences vsearch global
-		qiime feature-classifier vsearch-global --i-query analysis/s06_denoised_12S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/Vertebrata12S_derep1_seqs_extracted.qza" --p-maxaccepts $c_v_maxaccepts --p-perc-identity $c_v_perc_identity --p-query-cov $c_v_query_cov --output-dir analysis/s07_classified_taxonomy_vsearch
+		qiime feature-classifier vsearch-global --i-query analysis/s06_denoised_12S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/derep1_seqs_extracted.qza" --p-maxaccepts $c_v_maxaccepts --p-perc-identity $c_v_perc_identity --p-query-cov $c_v_query_cov --output-dir analysis/s07_classified_taxonomy_vsearch
 		# Extract out classifications. 
 		qiime tools extract  --input-path analysis/s07_classified_taxonomy_vsearch/search_results.qza --output-path analysis/s07_classified_taxonomy_vsearch/search_results
 	fi

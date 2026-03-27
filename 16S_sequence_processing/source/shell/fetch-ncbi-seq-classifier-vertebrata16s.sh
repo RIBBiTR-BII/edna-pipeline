@@ -58,23 +58,23 @@ qiime feature-classifier extract-reads \
 --p-r-primer ATCCAACATCGAGGTCGTAA \
 --p-min-length 150 \
 --p-max-length 450 \
---o-reads Vertebrata16S_derep1_seqs_extracted.qza
+--o-reads derep1_seqs_extracted.qza
 
 # filter taxa to filtered sequences
 qiime rescript filter-taxa \
     --i-taxonomy ./temp/Vertebrata16S_derep1_taxa.qza \
-    --m-ids-to-keep-file Vertebrata16S_derep1_seqs_extracted.qza \
-    --o-filtered-taxonomy Vertebrata16S_derep1_taxa_extracted.qza
+    --m-ids-to-keep-file derep1_seqs_extracted.qza \
+    --o-filtered-taxonomy derep1_taxa_extracted.qza
 
 # extract taxa
 qiime tools extract \
-    --input-path Vertebrata16S_derep1_taxa_extracted.qza \
-    --output-path Vertebrata16S_derep1_taxa_extracted
+    --input-path derep1_taxa_extracted.qza \
+    --output-path derep1_taxa_extracted
 
 # extract sequences
 qiime tools extract \
-    --input-path Vertebrata16S_derep1_seqs_extracted.qza \
-    --output-path Vertebrata16S_derep1_seqs_extracted
+    --input-path derep1_seqs_extracted.qza \
+    --output-path derep1_seqs_extracted
 
 # drop temp folder
 echo "deleting temporary files"
