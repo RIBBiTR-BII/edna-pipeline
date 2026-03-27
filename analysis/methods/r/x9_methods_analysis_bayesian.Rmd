@@ -126,66 +126,7 @@ ggplot(sample_taxa_count %>%
 ```{r}
 set_cmdstan_path(Sys.getenv("cmd_stan_path"))
 
-m1_znb_asv_cntr <- brm(
-  formula = bf(n_asv_controlled ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               shape ~ 1),
-  data = sample_taxa_count,
-  family = hurdle_negbinomial(),
-  control = list(adapt_delta = 0.95, max_treedepth = 12),
-  chains = 4,
-  iter = 2000,
-  warmup = 1000,
-  seed = 124,
-  cores = 4,
-  backend = "cmdstanr"
-)
-
-m1_znb_asv_cntr <- add_criterion(m1_znb_asv_cntr, "loo")
-
-saveRDS(m1_znb_asv_cntr, file = here(model_dir, "m1_znb_asv_cntr.rds"))
-m1_znb_asv_cntr = readRDS(file = here(model_dir, "m1_znb_asv_cntr.rds"))
-
-m1_znb_asv_cont_chord <- brm(
-  formula = bf(n_asv_controlled_class_chord ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               shape ~ 1),
-  data = sample_taxa_count,
-  family = hurdle_negbinomial(),
-  control = list(adapt_delta = 0.95, max_treedepth = 12),
-  chains = 4,
-  iter = 2000,
-  warmup = 1000,
-  seed = 124,
-  cores = 4,
-  backend = "cmdstanr"
-)
-
-m1_znb_asv_cont_chord <- add_criterion(m1_znb_asv_cont_chord, "loo")
-
-saveRDS(m1_znb_asv_cont_chord, file = here(model_dir, "m1_znb_asv_cont_chord.rds"))
-m1_znb_asv_cont_chord = readRDS(file = here(model_dir, "m1_znb_asv_cont_chord.rds"))
-
-m1_znb_asv_cont_amph <- brm(
-  formula = bf(n_asv_controlled_class_xamph ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               shape ~ 1),
-  data = sample_taxa_count,
-  family = hurdle_negbinomial(),
-  control = list(adapt_delta = 0.95, max_treedepth = 12),
-  chains = 4,
-  iter = 2000,
-  warmup = 1000,
-  seed = 124,
-  cores = 4,
-  backend = "cmdstanr"
-)
-
-m1_znb_asv_cont_amph <- add_criterion(m1_znb_asv_cont_amph, "loo")
-
-saveRDS(m1_znb_asv_cont_amph, file = here(model_dir, "m1_znb_asv_cont_amph.rds"))
-m1_znb_asv_cont_amph = readRDS(file = here(model_dir, "m1_znb_asv_cont_amph.rds"))
-
+# model 1
 m1_znb_read_amph <- brm(
   formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block +filter_size_um_rz + passive_active_rz + extraction_type,
                hu ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
@@ -225,6 +166,47 @@ m1_znb_read_sapiens <- add_criterion(m1_znb_read_sapiens, "loo")
 
 saveRDS(m1_znb_read_sapiens, file = here(model_dir, "m1_znb_read_sapiens.rds"))
 m1_znb_read_sapiens = readRDS(file = here(model_dir, "m1_znb_read_sapiens.rds"))
+
+# model 2
+m2_znb_read_amph <- brm(
+  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block,
+               hu ~ gene:crispr + gene:block,
+               shape ~ gene:crispr + gene:block),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m2_znb_read_amph <- add_criterion(m2_znb_read_amph, "loo")
+
+saveRDS(m2_znb_read_amph, file = here(model_dir, "m2_znb_read_amph.rds"))
+m2_znb_read_amph = readRDS(file = here(model_dir, "m2_znb_read_amph.rds"))
+
+m2_znb_read_sapiens <- brm(
+  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block,
+               hu ~ gene:crispr + gene:block,
+               shape ~ gene:crispr + gene:block),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  chains = 4,
+  iter = 2000,
+  warmup = 1000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m2_znb_read_sapiens <- add_criterion(m2_znb_read_sapiens, "loo")
+
+saveRDS(m2_znb_read_sapiens, file = here(model_dir, "m2_znb_read_sapiens.rds"))
+m2_znb_read_sapiens = readRDS(file = here(model_dir, "m2_znb_read_sapiens.rds"))
 
 ```
 
