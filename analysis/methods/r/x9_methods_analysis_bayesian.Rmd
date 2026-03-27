@@ -187,8 +187,8 @@ saveRDS(m1_znb_asv_cont_amph, file = here(model_dir, "m1_znb_asv_cont_amph.rds")
 m1_znb_asv_cont_amph = readRDS(file = here(model_dir, "m1_znb_asv_cont_amph.rds"))
 
 m1_znb_read_amph <- brm(
-  formula = bf(n_reads_class_chord_amph_spp ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block +filter_size_um_rz + passive_active_rz + extraction_type,
+               hu ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
                shape ~ 1),
   data = sample_read_count,
   family = hurdle_negbinomial(),
@@ -207,8 +207,8 @@ saveRDS(m1_znb_read_amph, file = here(model_dir, "m1_znb_read_amph.rds"))
 m1_znb_read_amph = readRDS(file = here(model_dir, "m1_znb_read_amph.rds"))
 
 m1_znb_read_sapiens <- brm(
-  formula = bf(n_reads_class_chord_sapien ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
-               hu ~ gene + filter_size_um_rz + passive_active_rz + crispr + block + extraction_type,
+  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
+               hu ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
                shape ~ 1),
   data = sample_read_count,
   family = hurdle_negbinomial(),
@@ -247,48 +247,334 @@ pp_check(model_select,
 ```{r}
 summary(model_select)
 ```
-
-# extract & organize draws
+# human reads
+## extract & organize draws
 ```{r}
+model_select = m1_znb_read_sapiens
+
 # hu
-hu_specs = emmeans(model_select, 
-                   ~ gene | crispr:block, 
+# crispr
+hu_specs_crispr_sap = emmeans(model_select, 
+                   ~ crispr | gene, 
                    dpar = "hu",
                    re_formula = NA)
 
-hu_contrasts_specs = contrast(hu_specs, method = "revpairwise")
+hu_contrasts_specs_crispr_sap = contrast(hu_specs_crispr_sap, method = "revpairwise")
 
-hu_group_draws = hu_specs %>%
+hu_group_draws_crispr_sap = hu_specs_crispr_sap %>%
   gather_emmeans_draws() %>%
   dplyr::rename(hu = .value) %>%
   mutate(p_detect = 1 - plogis(hu))
 
-hu_contrast_draws = hu_contrasts_specs %>%
+hu_contrast_draws_crispr_sap = hu_contrasts_specs_crispr_sap %>%
   gather_emmeans_draws() %>%
-  dplyr::rename(hu_gene = .value)
+  dplyr::rename(hu_crispr = .value)
 
-hu_contrast_agg = hu_contrast_draws %>%
-  group_by(contrast) %>%
-  summarize(hdi_50 = hdi(hu_gene, ci = 0.50),
-            hdi_89 = hdi(hu_gene, ci = 0.89),
-            hdi_95 = hdi(hu_gene, ci = 0.95),
-            ratio_positive = sum(hu_gene > 0) / n(),
-            hu_median = median(hu_gene),
-            .groups = "drop") %>%
-  mutate(
-    hdi_zero_50 = case_when(
-      hdi_50[1] > 0 | hdi_50[2] < 0 ~ TRUE,
-      .default = FALSE
-    ),
-    hdi_zero_89 = case_when(
-      hdi_89[1] > 0 | hdi_89[2] < 0 ~ TRUE,
-      .default = FALSE
-    ),
-    hdi_zero_95 = case_when(
-      hdi_95[1] > 0 | hdi_95[2]< 0 ~ TRUE,
-      .default = FALSE
-    ))
+## block
+hu_specs_block_sap = emmeans(model_select, 
+                   ~ block | gene, 
+                   dpar = "hu",
+                   re_formula = NA)
 
+hu_contrasts_specs_block_sap = contrast(hu_specs_block_sap, method = "revpairwise")
+
+hu_group_draws_block_sap = hu_specs_block_sap %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu = .value) %>%
+  mutate(p_detect = 1 - plogis(hu))
+
+hu_contrast_draws_block_sap = hu_contrasts_specs_block_sap %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu_block = .value)
+
+
+# mu
+# crispr
+mu_specs_crispr_sap = emmeans(model_select, 
+                   ~ crispr | gene, 
+                   dpar = "mu",
+                   re_formula = NA)
+
+mu_contrasts_specs_crispr_sap = contrast(mu_specs_crispr_sap, method = "revpairwise")
+
+mu_group_draws_crispr_sap = mu_specs_crispr_sap %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu = .value)
+
+mu_contrast_draws_crispr_sap = mu_contrasts_specs_crispr_sap %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu_crispr = .value)
+
+## block
+mu_specs_block_sap = emmeans(model_select, 
+                   ~ block | gene, 
+                   dpar = "mu",
+                   re_formula = NA)
+
+mu_contrasts_specs_block_sap = contrast(mu_specs_block_sap, method = "revpairwise")
+
+mu_group_draws_block_sap = mu_specs_block_sap %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu = .value)
+
+mu_contrast_draws_block_sap = mu_contrasts_specs_block_sap %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu_block = .value)
+```
+
+# amphibian reads
+## extract & organize draws
+```{r}
+model_select = m1_znb_read_amph
+
+# hu
+# crispr
+hu_specs_crispr_amph = emmeans(model_select, 
+                   ~ crispr | gene:block, 
+                   dpar = "hu",
+                   re_formula = NA)
+
+hu_contrasts_specs_crispr_amph = contrast(hu_specs_crispr_amph, method = "revpairwise")
+
+hu_group_draws_crispr_amph = hu_specs_crispr_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu = .value) %>%
+  mutate(p_detect = 1 - plogis(hu))
+
+hu_contrast_draws_crispr_amph = hu_contrasts_specs_crispr_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu_crispr = .value)
+
+## block
+hu_specs_block_amph = emmeans(model_select, 
+                   ~ block | gene:crispr, 
+                   dpar = "hu",
+                   re_formula = NA)
+
+hu_contrasts_specs_block_amph = contrast(hu_specs_block_amph, method = "revpairwise")
+
+hu_contrast_draws_block_amph = hu_contrasts_specs_block_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu_block = .value)
+
+
+# mu
+# crispr
+mu_specs_crispr_amph = emmeans(model_select, 
+                   ~ crispr | gene:block, 
+                   dpar = "mu",
+                   re_formula = NA)
+
+mu_contrasts_specs_crispr_amph = contrast(mu_specs_crispr_amph, method = "revpairwise")
+
+mu_group_draws_crispr_amph = mu_specs_crispr_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu = .value)
+
+mu_contrast_draws_crispr_amph = mu_contrasts_specs_crispr_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu_crispr = .value)
+
+## block
+mu_specs_block_amph = emmeans(model_select, 
+                   ~ block | gene:crispr, 
+                   dpar = "mu",
+                   re_formula = NA)
+
+mu_contrasts_specs_block_amph = contrast(mu_specs_block_amph, method = "revpairwise")
+
+mu_contrast_draws_block_amph = mu_contrasts_specs_block_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu_block = .value)
+```
+
+# visualize
+```{r}
+# hu
+ggplot(hu_group_draws_crispr_sap, aes(y = p_detect, x = crispr)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(hu_contrast_draws_crispr_sap, aes(x = -hu_crispr)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR effect on human detection (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Probability of detection (logit scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+# number of reads
+ggplot(mu_group_draws_crispr_sap, aes(y = mu, x = crispr)) +
+  geom_violin(fill = "#8da0cb") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(mu_contrast_draws_crispr_sap, aes(x = mu_crispr)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR effect on human reads (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Number of reads (log scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+# hu
+ggplot(hu_group_draws_block_sap, aes(y = p_detect, x = block)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(hu_contrast_draws_block_sap, aes(x = -hu_block)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "block effect on human detection (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Probability of detection (logit scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+# number of reads
+ggplot(mu_group_draws_block_sap, aes(y = mu, x = block)) +
+  geom_violin(fill = "#8da0cb") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(mu_contrast_draws_block_sap, aes(x = mu_block)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "block effect on human reads (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Number of reads (log scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+
+```
+
+# visualize amphibians
+```{r}
+# hu
+ggplot(hu_group_draws_crispr_amph, aes(y = p_detect, x = crispr)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(hu_contrast_draws_crispr_amph, aes(x = -hu_crispr)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR effect on human detection (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Probability of detection (logit scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+# number of reads
+ggplot(mu_group_draws_crispr_amph, aes(y = mu, x = crispr)) +
+  geom_violin(fill = "#8da0cb") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(mu_contrast_draws_crispr_amph, aes(x = mu_crispr)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR effect on human reads (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Number of reads (log scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+# hu
+ggplot(hu_group_draws_crispr_amph, aes(y = p_detect, x = block)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(hu_contrast_draws_block_amph, aes(x = -hu_block)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "block effect on human detection (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Probability of detection (logit scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+# number of reads
+ggplot(mu_group_draws_crispr_amph, aes(y = mu, x = block)) +
+  geom_violin(fill = "#8da0cb") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("gene")
+
+
+ggplot(mu_contrast_draws_block_amph, aes(x = mu_block)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = mode_hdi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "block effect on human reads (TRUE - FALSE)",
+       x = "Probability density",
+       y = "Number of reads (log scale) [-]"
+       ) +
+  theme(text=element_text(size=14))
+
+
+```
+
+```{r}
 # newdata_gene = expand_grid(gene = c("12S", "16S")) %>%
 #   mutate(passive_active_rz = "Active",
 #          filter_size_um_rz = 5.0,
