@@ -125,51 +125,51 @@ ggplot(sample_taxa_count %>%
 # model fitting
 ```{r}
 set_cmdstan_path(Sys.getenv("cmd_stan_path"))
-
-# model 1
-m1_znb_read_amph <- brm(
-  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block +filter_size_um_rz + passive_active_rz + extraction_type,
-               hu ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
-               shape ~ 1),
-  data = sample_read_count,
-  family = hurdle_negbinomial(),
-  control = list(adapt_delta = 0.95, max_treedepth = 12),
-  chains = 4,
-  iter = 2000,
-  warmup = 1000,
-  seed = 124,
-  cores = 4,
-  backend = "cmdstanr"
-)
-
-m1_znb_read_amph <- add_criterion(m1_znb_read_amph, "loo")
-
-saveRDS(m1_znb_read_amph, file = here(model_dir, "m1_znb_read_amph.rds"))
-m1_znb_read_amph = readRDS(file = here(model_dir, "m1_znb_read_amph.rds"))
-
-m1_znb_read_sapiens <- brm(
-  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
-               hu ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
-               shape ~ 1),
-  data = sample_read_count,
-  family = hurdle_negbinomial(),
-  control = list(adapt_delta = 0.95, max_treedepth = 12),
-  chains = 4,
-  iter = 2000,
-  warmup = 1000,
-  seed = 124,
-  cores = 4,
-  backend = "cmdstanr"
-)
-
-m1_znb_read_sapiens <- add_criterion(m1_znb_read_sapiens, "loo")
-
-saveRDS(m1_znb_read_sapiens, file = here(model_dir, "m1_znb_read_sapiens.rds"))
-m1_znb_read_sapiens = readRDS(file = here(model_dir, "m1_znb_read_sapiens.rds"))
+# 
+# # model 1
+# m1_znb_read_amph <- brm(
+#   formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block +filter_size_um_rz + passive_active_rz + extraction_type,
+#                hu ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
+#                shape ~ 1),
+#   data = sample_read_count,
+#   family = hurdle_negbinomial(),
+#   control = list(adapt_delta = 0.95, max_treedepth = 12),
+#   chains = 4,
+#   iter = 2000,
+#   warmup = 1000,
+#   seed = 124,
+#   cores = 4,
+#   backend = "cmdstanr"
+# )
+# 
+# m1_znb_read_amph <- add_criterion(m1_znb_read_amph, "loo")
+# 
+# saveRDS(m1_znb_read_amph, file = here(model_dir, "m1_znb_read_amph.rds"))
+# m1_znb_read_amph = readRDS(file = here(model_dir, "m1_znb_read_amph.rds"))
+# 
+# m1_znb_read_sapiens <- brm(
+#   formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
+#                hu ~ gene:crispr + gene:block + filter_size_um_rz + passive_active_rz + extraction_type,
+#                shape ~ 1),
+#   data = sample_read_count,
+#   family = hurdle_negbinomial(),
+#   control = list(adapt_delta = 0.95, max_treedepth = 12),
+#   chains = 4,
+#   iter = 2000,
+#   warmup = 1000,
+#   seed = 124,
+#   cores = 4,
+#   backend = "cmdstanr"
+# )
+# 
+# m1_znb_read_sapiens <- add_criterion(m1_znb_read_sapiens, "loo")
+# 
+# saveRDS(m1_znb_read_sapiens, file = here(model_dir, "m1_znb_read_sapiens.rds"))
+# m1_znb_read_sapiens = readRDS(file = here(model_dir, "m1_znb_read_sapiens.rds"))
 
 # model 2
 m2_znb_read_amph <- brm(
-  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block,
+  formula = bf(n_reads_class_chord_amph ~ gene:crispr + gene:block,
                hu ~ gene:crispr + gene:block,
                shape ~ gene:crispr + gene:block),
   data = sample_read_count,
@@ -216,7 +216,8 @@ m2_znb_read_sapiens = readRDS(file = here(model_dir, "m2_znb_read_sapiens.rds"))
 # model_select = m1_znb_asv_cont_chord
 # model_select = m1_znb_asv_cont_amph
 # model_select = m1_znb_read_amph
-model_select = m1_znb_read_sapiens
+# model_select = m2_znb_read_sapiens
+model_select = m2_znb_read_amph
 
 pp_check(model_select,
          type = "dens_overlay",
@@ -232,7 +233,7 @@ summary(model_select)
 # human reads
 ## extract & organize draws
 ```{r}
-model_select = m1_znb_read_sapiens
+model_select = m2_znb_read_sapiens
 
 # hu
 # crispr
@@ -307,7 +308,7 @@ mu_contrast_draws_block_sap = mu_contrasts_specs_block_sap %>%
 # amphibian reads
 ## extract & organize draws
 ```{r}
-model_select = m1_znb_read_amph
+model_select = m2_znb_read_amph
 
 # hu
 # crispr
@@ -334,6 +335,11 @@ hu_specs_block_amph = emmeans(model_select,
                    re_formula = NA)
 
 hu_contrasts_specs_block_amph = contrast(hu_specs_block_amph, method = "revpairwise")
+
+hu_group_draws_block_amph = hu_specs_block_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(hu = .value) %>%
+  mutate(p_detect = 1 - plogis(hu))
 
 hu_contrast_draws_block_amph = hu_contrasts_specs_block_amph %>%
   gather_emmeans_draws() %>%
@@ -364,6 +370,10 @@ mu_specs_block_amph = emmeans(model_select,
                    re_formula = NA)
 
 mu_contrasts_specs_block_amph = contrast(mu_specs_block_amph, method = "revpairwise")
+
+mu_group_draws_block_amph = mu_specs_block_amph %>%
+  gather_emmeans_draws() %>%
+  dplyr::rename(mu = .value)
 
 mu_contrast_draws_block_amph = mu_contrasts_specs_block_amph %>%
   gather_emmeans_draws() %>%
@@ -510,7 +520,7 @@ ggplot(mu_contrast_draws_crispr_amph, aes(x = mu_crispr)) +
   theme(text=element_text(size=14))
 
 # hu
-ggplot(hu_group_draws_crispr_amph, aes(y = p_detect, x = block)) +
+ggplot(hu_group_draws_block_amph, aes(y = p_detect, x = block)) +
   geom_violin(fill = "#66c2a5") +
   theme_minimal() +
   scale_fill_brewer(palette = "Set2") +
@@ -532,7 +542,7 @@ ggplot(hu_contrast_draws_block_amph, aes(x = -hu_block)) +
   theme(text=element_text(size=14))
 
 # number of reads
-ggplot(mu_group_draws_crispr_amph, aes(y = mu, x = block)) +
+ggplot(mu_group_draws_block_amph, aes(y = mu, x = block)) +
   geom_violin(fill = "#8da0cb") +
   theme_minimal() +
   scale_fill_brewer(palette = "Set2") +
