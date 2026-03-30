@@ -5,7 +5,7 @@ output: html_document
 ---
 # Description
 
-This script aligns illumina samples with sample names and IDs in the RIBBiTR database, and pulls collection metadata and concurrent environmental measurements for downstream analysis. To establish a connection with the RIBBiTR database (for the first time) check out this [Connection Tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html)
+This script aligns illumina samples with sample names and IDs in the RIBBiTR database, for easy lookups and referencing of eDNA collection downstream. To establish a connection with the RIBBiTR database (for the first time) check out this [Connection Tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html)
 
 # Config
 ```{r}
