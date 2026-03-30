@@ -45,7 +45,7 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ---
 
-### Test Sequence Processing Run
+### Test Run
 
 1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
 
@@ -66,7 +66,7 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ---
 
-### Personalized Sequence Processing Run
+### Sequence Processing Run
 
 1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
 
