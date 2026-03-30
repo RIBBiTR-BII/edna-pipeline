@@ -1,0 +1,59 @@
+---
+title: "eDNA Processing & Analysis Workflow"
+format: pdf
+---
+
+# Overview
+
+This document is designed to guide you through the steps to set up, process and analyze a set of sequences using the tools in this pipeline. Let's get started!
+
+# Setup
+
+1. **Pipeline setup:** If you have not already done so, follow the `Setup` and `Test Run` instructions in the [16S_sequence_processing README.md](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/16S_sequence_processing).
+
+2. **Set up GBIF API access:** This will allow you to look up GBIF occurrences of taxa of interest without additional steps (used in `analysis/general/r/05_query_taxonomy_geography.Rmd`):
+
+    - [Register with GBIF](https://www.gbif.org/) -> Login *(top right)* -> Register (If you have not already)
+    - Follow [this tutorial](//docs.ropensci.org/rgbif/articles/gbif_credentials.html) to save your GBIF login where it can be accessed by the package `rgbif`.
+
+3. **Create an Entrez API key:** This will allow you to look up NCBI taxa through the `taxize` package without additional steps (used in `analysis/general/r/04_web_blast_json_parse.Rmd`):
+
+    - [Register with NCBI](https://account.ncbi.nlm.nih.gov/signup/) (if you have not already)
+    - Log in and generate an Entrez API key following [this guidance](https://support.nlm.nih.gov/kbArticle/?pn=KA-05317). Copy your API key.
+    - Save this key to your local `.Renviron` file. In RStudio, run the following lines:
+    
+4. **Establish a connection to RIBBiTR database:** This will allow you to link eDNA results with collection metadata (used in `analysis/general/r/07_join_sample_collection.Rmd`):
+
+    - Follow the [RIBBiTR DB connection tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html) to connect in RStudio.
+  
+```{r}
+#| eval: false
+#| include: true
+install.packages("usethis")  # if not already installed
+usethis::edit_r_environ()
+```
+  
+    In the .Renviron document that is opened, save your copied API key as: 
+
+        `ENTREZ_KEY = "your-key-here".`
+
+# Processing
+To conduct your own personalized sequence processing run, follow the `Sequence Processing Run` instructions in the [16S_sequence_processing README.md](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/16S_sequence_processing) file. A few tips:
+
+  - If you are doing this for the first time, consider building a local classifier (step 2) to become familiar with the complete process.
+  - When copying your sequences to the run folder (step 3), if you want to process only sequences from a given RIBBiTR study system (recommended), consider using the `utilities/copy_seqs_by_system.Rmd` utility to help copy sequences from the desired system(s) to the destination folder.
+  - When the processing finishes, you can navigate to `16S_sequence_processing/runs/your-run-folder/output/` and inspect the outputs. Each output is named with the name of your run (specified in `config.yml`), followed by a number (e.g. `test_run_01_02_eDNA_result_tables.xlsx`). Here "...02..." tells us which script generated this output. If we navigate to `16S_sequence_processing/source/r/` we can see a sequence of `.R` scripts, including `02_consolidate_outputs.R`, the "02_..." indicating this was the script which generated the above output. This will be helpful in the analysis stage below.
+
+# Analysis
+Your personalized Sequence Processing Run completed successfully, congrats! Now what? This repository contains a sequence of R scripts to begin to analyze the results. These scripts have not (yet) been automated, as they contain more decisions for users to consider as they conduct the analysis. To begin, navigate to the `analysis/general/r/` folder. Each script here corresponds to the steps below. In general open the scrip in RStudio, look at the notes, set the config section to meet your needs and run the script:
+
+4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions to upload the representative sequences to NCBI's Web Blast service, and download the .json query results. Run the script to parse the .json outputs.
+
+5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in the study system of interest, to prioritize classification of local species.
+
+6. **Classify ASVs** *(06_classify_asv.Rmd)*: This script uses a hierarchy of classification methods to assign taxonomic hits to each ASV.
+
+7. **Join with Sample Collection Metadata** *(07_join_sample_collection,Rmd)*: This script joins Illumina sequencing results with eDNA collection metadata in the RIBBiTR database.
+
+8. **Correct for contamination** *(08_sample_controls.Rmd)*
+
