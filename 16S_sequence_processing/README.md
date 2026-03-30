@@ -45,16 +45,32 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ---
 
-### Run Sequence Processing
+### Test Sequence Processing Run
 
 1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
 
-2. Locate sequences for your run, selecting one of the following:
+2. Run sequence processing:
 
-   - **Test the pipeline:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
-   - **Your own sequences:** Create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyyy-mm-dd`), create a `sequences` subfolder inside it, and copy your `.fastq` or `.fastq.gz` paired amplicon sequence files there. Sequence files can be nested in subfolders without issue.
+   - **Windows PowerShell:**
+     ```powershell
+     podman run -it --rm -v ${PWD}:/data:z edna-pipeline bash run-seq-processing.sh
+     ```
+   - **Windows Command Prompt:**
+     ```cmd
+     podman run -it --rm -v %cd%:/data:z edna-pipeline bash run-seq-processing.sh
+     ```
+   - **macOS/Linux:**
+     ```bash
+     podman run -it --rm -v $(pwd):/data:z edna-pipeline bash run-seq-processing.sh
+     ```
 
-3. Build a local 16S classifier *(Optional)*: Run the following command:
+---
+
+### Personalized Sequence Processing Run
+
+1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
+
+2. Build a local Amphibia 16S classifier: Run the following command:
 
    - **Windows PowerShell:**
      ```powershell
@@ -70,6 +86,12 @@ This workflow makes assumptions and choices which substantially influence the ou
      ```
 
    You can alternatively copy your own classifier to the `16S_sequence_processing` folder, or skip this step to run without a local classifier.
+
+3. Locate sequences for your run, selecting one of the following:
+
+   - **Test the pipeline:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
+   - **Your own sequences:** Create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyyy-mm-dd`), create a `sequences` subfolder inside it, and copy your `.fastq` or `.fastq.gz` paired amplicon sequence files there. Sequence files can be nested in subfolders without issue.
+
 
 4. Open `config.yml` in a text editor and confirm the configuration settings for your run. Save the file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, update the run directory and any other relevant parameters.
 
