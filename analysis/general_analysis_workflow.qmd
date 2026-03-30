@@ -1,15 +1,17 @@
 ---
 title: "eDNA Processing & Analysis Workflow"
+author: Cob Staines
+date: 2026-03-30
 format: pdf
 ---
 
-# Overview
+# Motivation
 
 This document is designed to guide you through the steps to set up, process and analyze a set of sequences using the tools in this pipeline. Let's get started!
 
 # Setup
 
-1. **Pipeline setup:** If you have not already done so, follow the `Setup` and `Test Run` instructions in the [16S_sequence_processing README.md](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/16S_sequence_processing).
+1. **Pipeline setup:** If you have not already done so, follow the `Setup` and `Test Run` instructions in the [16S_sequence_processing README.md](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/16S_sequence_processing). If you have done this previously, you may still want to update your copy of the code repository (Setup 1) to catch any recent changes.
 
 2. **Set up GBIF API access:** This will allow you to look up GBIF occurrences of taxa of interest without additional steps (used in `analysis/general/r/05_query_taxonomy_geography.Rmd`):
 
@@ -49,11 +51,13 @@ Your personalized Sequence Processing Run completed successfully, congrats! Now 
 
 4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions to upload the representative sequences to NCBI's Web Blast service, and download the .json query results. Run the script to parse the .json outputs.
 
-5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in the study system of interest, to prioritize classification of local species.
+5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in the study system of interest, to prioritize classification of local species. This pulls in hits from any of the following sources: BLAST, Vsearch, or Web BLAST.
 
-6. **Classify ASVs** *(06_classify_asv.Rmd)*: This script uses a hierarchy of classification methods to assign taxonomic hits to each ASV.
+6. **Classify ASVs** *(06_classify_asv.Rmd)*: This script uses a hierarchy of classification methods to assign taxonomic hits to each ASV, pulling from the GBIF query (if conducted) and incorporating hits from any of the following sources: : BLAST, Vsearch, or Web BLAST.
 
-7. **Join with Sample Collection Metadata** *(07_join_sample_collection,Rmd)*: This script joins Illumina sequencing results with eDNA collection metadata in the RIBBiTR database.
+7. **Map Samples** *(07_sample_map.Rmd)*: This script Maps Illumina samples to RIBBiTR sample ids, to support alignment of results with collection metadata downstream.
 
-8. **Correct for contamination** *(08_sample_controls.Rmd)*
+8. **Control for Contamination** *(08_sample_controls.Rmd)*: This script corrects ASV read numbers for contamination by removing up to 100x the read numbers of any ASVs found in associated controls.
+
+9. **Export Results** *(09_export_results.Rmd)*: This script combines results from steps 6, 7, and 8, and as well as sample metadata from thge RIBBiTR database, to create two cohesive outputs: 1) for ASVs (reads, classifications, etc.) and 2) field samples (collection site, date, filter method, etc.)
 
