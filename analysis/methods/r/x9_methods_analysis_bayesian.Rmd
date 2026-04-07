@@ -5,7 +5,7 @@ output: html_document
 ---
 
 # load data
-```{r}
+```{r include=FALSE}
 librarian::shelf(tidyverse, here, yaml, brms, cmdstanr, tidybayes, emmeans)
 
 run_dir_methods = here("16S_sequence_processing", "runs", "methods_2026-03-13")
@@ -20,7 +20,7 @@ data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12
 ```
 
 # aggregate ASV counts
-```{r}
+```{r eval=FALSE, include=FALSE}
 # summary stats for samples (ignoring controls)
 sample_taxa_count = data_combined %>%
   # drop all controls
@@ -71,7 +71,7 @@ ggplot(sample_taxa_count %>%
 ```
 
 # aggregate ASV reads
-```{r}
+```{r include=FALSE}
 # summary stats for samples (including controls)
 sample_read_count = data_combined %>%
   # drop all controls
@@ -111,19 +111,24 @@ sample_read_count_long = sample_read_count %>%
                values_to = "n") %>%
   mutate(log10_n = log10(n + 1))
 
+# samples
+sample_read_count_summary = sample_read_count %>%
+  group_by(gene, crispr, block) %>%
+  count()
+
 # gene
 ggplot(sample_read_count_long, aes(x = gene, y = log10_n, color = count_type)) +
   geom_boxplot()
 
-# 16s pore size active passive
-ggplot(sample_taxa_count %>%
-         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_xamph_spp, color = filter_size_um_rz)) +
-  geom_boxplot()
+# # 16s pore size active passive
+# ggplot(sample_taxa_count %>%
+#          filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_xamph_spp, color = filter_size_um_rz)) +
+#   geom_boxplot()
 
 ```
-
-# model fitting
-```{r}
+# modeling
+## model fitting
+```{r eval=FALSE, include=FALSE}
 set_cmdstan_path(Sys.getenv("cmd_stan_path"))
 # 
 # # model 1
@@ -206,20 +211,111 @@ m2_znb_read_sapiens <- add_criterion(m2_znb_read_sapiens, "loo")
 saveRDS(m2_znb_read_sapiens, file = here(model_dir, "m2_znb_read_sapiens.rds"))
 m2_znb_read_sapiens = readRDS(file = here(model_dir, "m2_znb_read_sapiens.rds"))
 
+m2b_znb_read_amph <- brm(
+  formula = bf(n_reads_class_chord_amph ~ gene:crispr + gene:block,
+               hu ~ gene:crispr + gene:block,
+               shape ~ gene:crispr + gene:block),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.98),
+  chains = 4,
+  iter = 4000,
+  warmup = 2000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m2b_znb_read_amph <- add_criterion(m2b_znb_read_amph, "loo")
+
+saveRDS(m2b_znb_read_amph, file = here(model_dir, "m2b_znb_read_amph.rds"))
+m2b_znb_read_amph = readRDS(file = here(model_dir, "m2b_znb_read_amph.rds"))
+
+m2b_znb_read_sapiens <- brm(
+  formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block,
+               hu ~ gene:crispr + gene:block,
+               shape ~ gene:crispr + gene:block),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.98),
+  chains = 4,
+  iter = 4000,
+  warmup = 2000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m2b_znb_read_sapiens <- add_criterion(m2b_znb_read_sapiens, "loo")
+
+saveRDS(m2b_znb_read_sapiens, file = here(model_dir, "m2b_znb_read_sapiens.rds"))
+m2b_znb_read_sapiens = readRDS(file = here(model_dir, "m2b_znb_read_sapiens.rds"))
+
+# model 3
+m3_znb_read_amph <- brm(
+  formula = bf(n_reads_class_chord_amph ~ gene*crispr*block,
+               hu ~ gene*crispr*block),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.98),
+  chains = 4,
+  iter = 4000,
+  warmup = 2000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m3_znb_read_amph <- add_criterion(m3_znb_read_amph, "loo")
+
+saveRDS(m3_znb_read_amph, file = here(model_dir, "m3_znb_read_amph.rds"))
+m3_znb_read_amph = readRDS(file = here(model_dir, "m3_znb_read_amph.rds"))
+
+m3_znb_read_sapiens <- brm(
+  formula = bf(n_reads_class_chord_sapien ~ gene*crispr*block,
+               hu ~ gene*crispr*block),
+  data = sample_read_count,
+  family = hurdle_negbinomial(),
+  control = list(adapt_delta = 0.98),
+  chains = 4,
+  iter = 4000,
+  warmup = 2000,
+  seed = 124,
+  cores = 4,
+  backend = "cmdstanr"
+)
+
+m3_znb_read_sapiens <- add_criterion(m3_znb_read_sapiens, "loo")
+
+saveRDS(m3_znb_read_sapiens, file = here(model_dir, "m3_znb_read_sapiens.rds"))
+m3_znb_read_sapiens = readRDS(file = here(model_dir, "m3_znb_read_sapiens.rds"))
+
 ```
 
-# model checks
+## model comparison
 ```{r}
+(loo_comp_amph = loo_compare(m2_znb_read_amph,
+                             m2b_znb_read_amph,
+                             m3_znb_read_amph))
+
+(loo_comp_sapiens = loo_compare(m2_znb_read_sapiens,
+                                m2b_znb_read_sapiens,
+                                m3_znb_read_sapiens))
+
+```
+
+## model checks
+```{r eval=FALSE, include=FALSE}
 # model_select = m2_znb_read_sapiens
 # model_select = m2_znb_read_amph
 
-pp_check(m2_znb_read_amph,
+pp_check(m3_znb_read_amph,
          type = "dens_overlay",
          prefix = "ppc",
          ndraws = 100) +
   scale_x_log10()
 
-pp_check(m2_znb_read_sapiens,
+pp_check(m3_znb_read_sapiens,
          type = "dens_overlay",
          prefix = "ppc",
          ndraws = 100) +
@@ -227,16 +323,18 @@ pp_check(m2_znb_read_sapiens,
 ```
 
 # model interpretation
-```{r}
-summary(model_select)
+```{r eval=FALSE, include=FALSE}
+summary(m2_znb_read_amph)
+summary(m2b_znb_read_amph)
+summary(m3_znb_read_amph)
 ```
 # human reads
 
 ## linpred_draws
 
 ### amphibians
-```{r}
-model_select = m2_znb_read_amph
+```{r include=FALSE}
+model_select = m3_znb_read_amph
 
 nd_crblk_a = expand_grid(crispr = c(TRUE, FALSE),
                          block = c(TRUE, FALSE),
@@ -252,16 +350,6 @@ mu_crblk_draws_a = model_select |>
   linpred_draws(newdata = nd_crblk_a,
                 dpar = "mu",
                 re_formula = NA)
-
-# clean for plotting
-hu_crblk_draws_a_plot = hu_crblk_draws_a %>%
-  mutate(p_detect = 1 - plogis(hu),
-         crispr = paste0("crispr_", as.character(crispr)),
-         block = paste0("block_", as.character(block)))
-
-mu_crblk_draws_a_plot = mu_crblk_draws_a %>%
-  mutate(crispr = paste0("crispr_", as.character(crispr)),
-         block = paste0("block_", as.character(block)))
 
 # shape_crblk_draws_s = model_select |>
 #   linpred_draws(newdata = nd_crblk_s,
@@ -331,14 +419,34 @@ mu_blk_contrast_draws_a = mu_crblk_draws_a |>
 #   mutate(shape_contrast = blk_TRUE - blk_FALSE,
 #          contrast = "blk_TRUE - blk_FALSE")
 
+# gene
+hu_gene_contrast_draws_a = hu_crblk_draws_a |>
+  pivot_wider(
+    id_cols     = c(crispr, block, .draw),
+    names_from  = gene,
+    names_prefix = "g_",
+    values_from = hu
+  ) |>
+  mutate(hu_contrast = g_16S - g_12S,
+         contrast = "g_16S - g_12S")
+
+mu_gene_contrast_draws_a = mu_crblk_draws_a |>
+  pivot_wider(
+    id_cols     = c(crispr, block, .draw),
+    names_from  = gene,
+    names_prefix = "g_",
+    values_from = mu
+  ) |>
+  mutate(mu_contrast = g_16S - g_12S,
+         contrast = "g_16S - g_12S")
 
 
 ```
 
 
-### sapiens
+### Homo sapiens
 ```{r}
-model_select = m2_znb_read_sapiens
+model_select = m3_znb_read_sapiens
 
 nd_crblk_s = expand_grid(crispr = c(TRUE, FALSE),
                          block = c(TRUE, FALSE),
@@ -354,16 +462,6 @@ mu_crblk_draws_s = model_select |>
   linpred_draws(newdata = nd_crblk_s,
                 dpar = "mu",
                 re_formula = NA)
-
-# clean for plotting
-hu_crblk_draws_s_plot = hu_crblk_draws_s %>%
-  mutate(p_detect = 1 - plogis(hu),
-         crispr = paste0("crispr_", as.character(crispr)),
-         block = paste0("block_", as.character(block)))
-
-mu_crblk_draws_s_plot = mu_crblk_draws_s %>%
-  mutate(crispr = paste0("crispr_", as.character(crispr)),
-         block = paste0("block_", as.character(block)))
 
 # shape_crblk_draws_s = model_select |>
 #   linpred_draws(newdata = nd_crblk_s,
@@ -433,11 +531,316 @@ mu_blk_contrast_draws_s = mu_crblk_draws_s |>
 #   mutate(shape_contrast = blk_TRUE - blk_FALSE,
 #          contrast = "blk_TRUE - blk_FALSE")
 
+# gene
+hu_gene_contrast_draws_s = hu_crblk_draws_s |>
+  pivot_wider(
+    id_cols     = c(crispr, block, .draw),
+    names_from  = gene,
+    names_prefix = "g_",
+    values_from = hu
+  ) |>
+  mutate(hu_contrast = g_16S - g_12S,
+         contrast = "g_16S - g_12S")
 
+mu_gene_contrast_draws_s = mu_crblk_draws_s |>
+  pivot_wider(
+    id_cols     = c(crispr, block, .draw),
+    names_from  = gene,
+    names_prefix = "g_",
+    values_from = mu
+  ) |>
+  mutate(mu_contrast = g_16S - g_12S,
+         contrast = "g_16S - g_12S")
 
 ```
 
 ## hypothesis testing
+
+### 12S - Block
+```{r}
+
+# hu
+## distribution
+hu_12s_crispr_draws = bind_rows(hu_crblk_draws_a %>%
+                                  mutate(taxon = "Amphibia"),
+                                hu_crblk_draws_s %>%
+                                  mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "12S",
+         !block) %>%
+  mutate(p_detect = 1 - plogis(hu))
+
+ggplot(hu_12s_crispr_draws, aes(y = p_detect, x = crispr)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("taxon") +
+  labs(title = "12S Detection",
+       x = "Probability of detection [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+## contrast
+hu_12s_crispr_contrast_draws = bind_rows(hu_cr_contrast_draws_a %>%
+                                  mutate(taxon = "Amphibia"),
+                                         hu_cr_contrast_draws_s %>%
+                                  mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "12S",
+         !block)
+
+ggplot(hu_12s_crispr_contrast_draws, aes(x = -hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("taxon", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "12S Detection: CRISPR Contrast (TRUE - FALSE)",
+       x = "Contrast of log(odds of detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# mu
+# distribution
+mu_12s_crispr_draws = bind_rows(mu_crblk_draws_a %>%
+                                  mutate(taxon = "Amphibia"),
+                                mu_crblk_draws_s %>%
+                                  mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "12S",
+         !block)
+
+ggplot(mu_12s_crispr_draws, aes(y = mu, x = crispr)) +
+  geom_violin(fill = "#8da0cb") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("taxon") +
+  labs(title = "12S Read Count",
+       x = "log(read count) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+
+
+# contrast
+mu_12s_crispr_contrast_draws = bind_rows(mu_cr_contrast_draws_a %>%
+                                  mutate(taxon = "Amphibia"),
+                                         mu_cr_contrast_draws_s %>%
+                                  mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "12S",
+         !block)
+
+ggplot(mu_12s_crispr_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("taxon", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "12S Read Count: CRISPR Contrast (TRUE - FALSE)",
+       x = "Contrast of log(read count) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+```
+
+### 16S - Block - CRISPR
+```{r}
+
+# hu
+## distribution
+hu_16s_crblk_draws = bind_rows(hu_crblk_draws_a %>%
+                                 mutate(taxon = "Amphibia"),
+                               hu_crblk_draws_s %>%
+                                 mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "16S") %>%
+  mutate(crispr = paste0("CRISPR ", as.character(crispr)),
+         block = paste0("Block ", as.character(block)),
+         p_detect = 1 - plogis(hu))
+
+ggplot(hu_16s_crblk_draws, aes(y = p_detect, x = taxon)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap(crispr ~ block) +
+  labs(title = "16S Detection",
+       x = "Probability of detection [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability density [-]")
+
+## contrast
+
+### crispr
+hu_16s_crispr_contrast_draws = bind_rows(hu_cr_contrast_draws_a %>%
+                                  mutate(taxon = "Amphibia"),
+                                         hu_cr_contrast_draws_s %>%
+                                  mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "16S") %>%
+  mutate(block = paste0("Block ", as.character(block)))
+
+ggplot(hu_16s_crispr_contrast_draws, aes(x = -hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  xlim(-15, 15) +
+  facet_grid(taxon ~ block) +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "16S Detection: CRISPR Contrast (TRUE - FALSE)",
+       x = "Contrast of log(odds of detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+### block
+hu_16s_block_contrast_draws = bind_rows(hu_blk_contrast_draws_a %>%
+                                  mutate(taxon = "Amphibia"),
+                                         hu_blk_contrast_draws_s %>%
+                                  mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "16S") %>%
+  mutate(crispr = paste0("CRISPR ", as.character(crispr)))
+
+ggplot(hu_16s_block_contrast_draws, aes(x = -hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_grid(taxon ~ crispr) +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "16S Detection: Block Contrast (TRUE - FALSE)",
+       x = "Contrast of log(odds of detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+
+# mu
+# distribution
+mu_16s_crblk_draws = bind_rows(mu_crblk_draws_a %>%
+                                 mutate(taxon = "Amphibia"),
+                               mu_crblk_draws_s %>%
+                                 mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "16S") %>%
+  mutate(crispr = paste0("CRISPR ", as.character(crispr)),
+         block = paste0("Block ", as.character(block)))
+
+ggplot(mu_16s_crblk_draws, aes(y = mu, x = taxon)) +
+  geom_violin(fill = "#8da0cb") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap(crispr ~ block) +
+  labs(title = "16S Read Counts",
+       x = "log(read counts after detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability density [-]")
+
+## contrast
+
+### crispr
+mu_16s_crispr_contrast_draws = bind_rows(mu_cr_contrast_draws_a %>%
+                                           mutate(taxon = "Amphibia"),
+                                         mu_cr_contrast_draws_s %>%
+                                           mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "16S") %>%
+  mutate(block = paste0("Block ", as.character(block)))
+
+ggplot(mu_16s_crispr_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_grid(taxon ~ block) +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "16S Read Counts: CRISPR Contrast (TRUE - FALSE)",
+       x = "Contrast of log(read counts after detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+### block
+mu_16s_block_contrast_draws = bind_rows(mu_blk_contrast_draws_a %>%
+                                          mutate(taxon = "Amphibia"),
+                                        mu_blk_contrast_draws_s %>%
+                                          mutate(taxon = "Homo sapiens")) %>%
+  filter(gene == "16S") %>%
+  mutate(crispr = paste0("CRISPR ", as.character(crispr)))
+
+ggplot(mu_16s_block_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_grid(taxon ~ crispr) +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "16S Read Counts: Block Contrast (TRUE - FALSE)",
+       x = "Contrast of log(read counts after detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+```
+### gene
+```{r}
+
+# hu
+## distribution
+hu_gene_draws = bind_rows(hu_crblk_draws_a %>%
+                            mutate(taxon = "Amphibia"),
+                          hu_crblk_draws_s %>%
+                            mutate(taxon = "Homo sapiens")) %>%
+  filter(!crispr,
+         !block) %>%
+  mutate(p_detect = 1 - plogis(hu))
+
+ggplot(hu_gene_draws, aes(y = p_detect, x = gene)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("taxon") +
+  labs(title = "Detection by Gene",
+       x = "Probability of detection [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+## contrast
+hu_gene_contrast_draws = bind_rows(hu_gene_contrast_draws_a %>%
+                                     mutate(taxon = "Amphibia"),
+                                   hu_gene_contrast_draws_s %>%
+                                     mutate(taxon = "Homo sapiens")) %>%
+  filter(!crispr,
+         !block)
+
+ggplot(hu_gene_contrast_draws, aes(x = -hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("taxon", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "Detection by Gene: 16S - 12S",
+       x = "Contrast of log(odds of detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# mu
+## distribution
+mu_gene_draws = bind_rows(mu_crblk_draws_a %>%
+                            mutate(taxon = "Amphibia"),
+                          mu_crblk_draws_s %>%
+                            mutate(taxon = "Homo sapiens")) %>%
+  filter(!crispr,
+         !block)
+
+ggplot(mu_gene_draws, aes(y = mu, x = gene)) +
+  geom_violin(fill = "#8da0cb") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_wrap("taxon") +
+  labs(title = "Read Count after Detection by Gene",
+       x = "log(read count after detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+## contrast
+mu_gene_contrast_draws = bind_rows(mu_gene_contrast_draws_a %>%
+                                     mutate(taxon = "Amphibia"),
+                                   mu_gene_contrast_draws_s %>%
+                                     mutate(taxon = "Homo sapiens")) %>%
+  filter(!crispr,
+         !block)
+
+ggplot(mu_gene_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("taxon", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(title = "Read Count after Detection by Gene: 16S - 12S",
+       x = "Contrast of log(read count after detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+```
 
 ### amphibians
 ```{r}
