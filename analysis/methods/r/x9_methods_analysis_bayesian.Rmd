@@ -170,14 +170,13 @@ set_cmdstan_path(Sys.getenv("cmd_stan_path"))
 # model 2
 m2_znb_read_amph <- brm(
   formula = bf(n_reads_class_chord_amph ~ gene:crispr + gene:block,
-               hu ~ gene:crispr + gene:block,
-               shape ~ gene:crispr + gene:block),
+               hu ~ gene:crispr + gene:block),
   data = sample_read_count,
   family = hurdle_negbinomial(),
-  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  control = list(adapt_delta = 0.98),
   chains = 4,
-  iter = 2000,
-  warmup = 1000,
+  iter = 4000,
+  warmup = 2000,
   seed = 124,
   cores = 4,
   backend = "cmdstanr"
@@ -190,14 +189,13 @@ m2_znb_read_amph = readRDS(file = here(model_dir, "m2_znb_read_amph.rds"))
 
 m2_znb_read_sapiens <- brm(
   formula = bf(n_reads_class_chord_sapien ~ gene:crispr + gene:block,
-               hu ~ gene:crispr + gene:block,
-               shape ~ gene:crispr + gene:block),
+               hu ~ gene:crispr + gene:block),
   data = sample_read_count,
   family = hurdle_negbinomial(),
-  control = list(adapt_delta = 0.95, max_treedepth = 12),
+  control = list(adapt_delta = 0.98),
   chains = 4,
-  iter = 2000,
-  warmup = 1000,
+  iter = 4000,
+  warmup = 2000,
   seed = 124,
   cores = 4,
   backend = "cmdstanr"
@@ -212,14 +210,16 @@ m2_znb_read_sapiens = readRDS(file = here(model_dir, "m2_znb_read_sapiens.rds"))
 
 # model checks
 ```{r}
-# model_select = m1_znb_asv_cntr
-# model_select = m1_znb_asv_cont_chord
-# model_select = m1_znb_asv_cont_amph
-# model_select = m1_znb_read_amph
 # model_select = m2_znb_read_sapiens
-model_select = m2_znb_read_amph
+# model_select = m2_znb_read_amph
 
-pp_check(model_select,
+pp_check(m2_znb_read_amph,
+         type = "dens_overlay",
+         prefix = "ppc",
+         ndraws = 100) +
+  scale_x_log10()
+
+pp_check(m2_znb_read_sapiens,
          type = "dens_overlay",
          prefix = "ppc",
          ndraws = 100) +
@@ -231,6 +231,602 @@ pp_check(model_select,
 summary(model_select)
 ```
 # human reads
+
+## linpred_draws
+
+### amphibians
+```{r}
+model_select = m2_znb_read_amph
+
+nd_crblk_a = expand_grid(crispr = c(TRUE, FALSE),
+                         block = c(TRUE, FALSE),
+                         gene = c("12S", "16S"))
+
+# linpred_draws
+hu_crblk_draws_a = model_select |>
+  linpred_draws(newdata = nd_crblk_a,
+                dpar = "hu",
+                re_formula = NA)
+
+mu_crblk_draws_a = model_select |>
+  linpred_draws(newdata = nd_crblk_a,
+                dpar = "mu",
+                re_formula = NA)
+
+# clean for plotting
+hu_crblk_draws_a_plot = hu_crblk_draws_a %>%
+  mutate(p_detect = 1 - plogis(hu),
+         crispr = paste0("crispr_", as.character(crispr)),
+         block = paste0("block_", as.character(block)))
+
+mu_crblk_draws_a_plot = mu_crblk_draws_a %>%
+  mutate(crispr = paste0("crispr_", as.character(crispr)),
+         block = paste0("block_", as.character(block)))
+
+# shape_crblk_draws_s = model_select |>
+#   linpred_draws(newdata = nd_crblk_s,
+#                 dpar = "shape",
+#                 re_formula = NA)
+
+# contrasts
+## crispr
+hu_cr_contrast_draws_a = hu_crblk_draws_a |>
+  pivot_wider(
+    id_cols     = c(gene, block, .draw),
+    names_from  = crispr,
+    names_prefix = "cr_",
+    values_from = hu
+  ) |>
+  mutate(hu_contrast = cr_TRUE - cr_FALSE,
+         contrast = "cr_TRUE - cr_FALSE")
+
+mu_cr_contrast_draws_a = mu_crblk_draws_a |>
+  pivot_wider(
+    id_cols     = c(gene, block, .draw),
+    names_from  = crispr,
+    names_prefix = "cr_",
+    values_from = mu
+  ) |>
+  mutate(mu_contrast = cr_TRUE - cr_FALSE,
+         contrast = "cr_TRUE - cr_FALSE")
+
+# shape_cr_contrast_draws_s = shape_crblk_draws_s |>
+#   pivot_wider(
+#     id_cols     = c(gene, block, .draw),
+#     names_from  = crispr,
+#     names_prefix = "cr_",
+#     values_from = shape
+#   ) |>
+#   mutate(shape_contrast = cr_TRUE - cr_FALSE,
+#          contrast = "cr_TRUE - cr_FALSE")
+
+## block
+hu_blk_contrast_draws_a = hu_crblk_draws_a |>
+  pivot_wider(
+    id_cols     = c(gene, crispr, .draw),
+    names_from  = block,
+    names_prefix = "blk_",
+    values_from = hu
+  ) |>
+  mutate(hu_contrast = blk_TRUE - blk_FALSE,
+         contrast = "blk_TRUE - blk_FALSE")
+
+mu_blk_contrast_draws_a = mu_crblk_draws_a |>
+  pivot_wider(
+    id_cols     = c(gene, crispr, .draw),
+    names_from  = block,
+    names_prefix = "blk_",
+    values_from = mu
+  ) |>
+  mutate(mu_contrast = blk_TRUE - blk_FALSE,
+         contrast = "blk_TRUE - blk_FALSE")
+
+# shape_blk_contrast_draws_s = shape_crblk_draws_s |>
+#   pivot_wider(
+#     id_cols     = c(gene, crispr, .draw),
+#     names_from  = block,
+#     names_prefix = "blk_",
+#     values_from = shape
+#   ) |>
+#   mutate(shape_contrast = blk_TRUE - blk_FALSE,
+#          contrast = "blk_TRUE - blk_FALSE")
+
+
+
+```
+
+
+### sapiens
+```{r}
+model_select = m2_znb_read_sapiens
+
+nd_crblk_s = expand_grid(crispr = c(TRUE, FALSE),
+                         block = c(TRUE, FALSE),
+                         gene = c("12S", "16S"))
+
+# linpred draws
+hu_crblk_draws_s = model_select |>
+  linpred_draws(newdata = nd_crblk_s,
+                dpar = "hu",
+                re_formula = NA)
+
+mu_crblk_draws_s = model_select |>
+  linpred_draws(newdata = nd_crblk_s,
+                dpar = "mu",
+                re_formula = NA)
+
+# clean for plotting
+hu_crblk_draws_s_plot = hu_crblk_draws_s %>%
+  mutate(p_detect = 1 - plogis(hu),
+         crispr = paste0("crispr_", as.character(crispr)),
+         block = paste0("block_", as.character(block)))
+
+mu_crblk_draws_s_plot = mu_crblk_draws_s %>%
+  mutate(crispr = paste0("crispr_", as.character(crispr)),
+         block = paste0("block_", as.character(block)))
+
+# shape_crblk_draws_s = model_select |>
+#   linpred_draws(newdata = nd_crblk_s,
+#                 dpar = "shape",
+#                 re_formula = NA)
+
+# contrasts
+## crispr
+hu_cr_contrast_draws_s = hu_crblk_draws_s |>
+  pivot_wider(
+    id_cols     = c(gene, block, .draw),
+    names_from  = crispr,
+    names_prefix = "cr_",
+    values_from = hu
+  ) |>
+  mutate(hu_contrast = cr_TRUE - cr_FALSE,
+         contrast = "cr_TRUE - cr_FALSE")
+
+mu_cr_contrast_draws_s = mu_crblk_draws_s |>
+  pivot_wider(
+    id_cols     = c(gene, block, .draw),
+    names_from  = crispr,
+    names_prefix = "cr_",
+    values_from = mu
+  ) |>
+  mutate(mu_contrast = cr_TRUE - cr_FALSE,
+         contrast = "cr_TRUE - cr_FALSE")
+
+# shape_cr_contrast_draws_s = shape_crblk_draws_s |>
+#   pivot_wider(
+#     id_cols     = c(gene, block, .draw),
+#     names_from  = crispr,
+#     names_prefix = "cr_",
+#     values_from = shape
+#   ) |>
+#   mutate(shape_contrast = cr_TRUE - cr_FALSE,
+#          contrast = "cr_TRUE - cr_FALSE")
+
+## block
+hu_blk_contrast_draws_s = hu_crblk_draws_s |>
+  pivot_wider(
+    id_cols     = c(gene, crispr, .draw),
+    names_from  = block,
+    names_prefix = "blk_",
+    values_from = hu
+  ) |>
+  mutate(hu_contrast = blk_TRUE - blk_FALSE,
+         contrast = "blk_TRUE - blk_FALSE")
+
+mu_blk_contrast_draws_s = mu_crblk_draws_s |>
+  pivot_wider(
+    id_cols     = c(gene, crispr, .draw),
+    names_from  = block,
+    names_prefix = "blk_",
+    values_from = mu
+  ) |>
+  mutate(mu_contrast = blk_TRUE - blk_FALSE,
+         contrast = "blk_TRUE - blk_FALSE")
+
+# shape_blk_contrast_draws_s = shape_crblk_draws_s |>
+#   pivot_wider(
+#     id_cols     = c(gene, crispr, .draw),
+#     names_from  = block,
+#     names_prefix = "blk_",
+#     values_from = shape
+#   ) |>
+#   mutate(shape_contrast = blk_TRUE - blk_FALSE,
+#          contrast = "blk_TRUE - blk_FALSE")
+
+
+
+```
+
+## hypothesis testing
+
+### amphibians
+```{r}
+# visualize distributions
+ggplot(hu_crblk_draws_a_plot, aes(y = p_detect, x = gene)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+ggplot(mu_crblk_draws_a_plot, aes(y = mu, x = gene)) +
+  geom_violin(fill = "#8da0cb") +
+  ylim(8, 12) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+peace = mu_crblk_draws_a_plot %>%
+  group_by(gene, crispr, block) %>%
+  summarize(mm = median(mu))
+
+# visualize contrasts
+## crispr
+ggplot(hu_cr_contrast_draws_a, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Amphibian Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of amphibian detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_cr_contrast_draws_a, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Amphibian Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(amphibian read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_cr_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "CRISPR Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+## block
+ggplot(hu_blk_contrast_draws_a, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Amphibian Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of amphibian detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_blk_contrast_draws_a, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Amphibian Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(amphibian read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_blk_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene", scale = "free") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "Block Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+```
+
+### sapiens
+```{r}
+# visualize distributions
+ggplot(hu_crblk_draws_a_plot, aes(y = p_detect, x = gene)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+ggplot(mu_crblk_draws_a_plot, aes(y = mu, x = gene)) +
+  geom_violin(fill = "#8da0cb") +
+  ylim(8, 12) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+peace = mu_crblk_draws_a_plot %>%
+  group_by(gene, crispr, block) %>%
+  summarize(mm = median(mu))
+
+# visualize contrasts
+## crispr
+ggplot(hu_cr_contrast_draws, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Human Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of human detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_cr_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Human Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(human read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_cr_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "CRISPR Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+## block
+ggplot(hu_blk_contrast_draws, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Human Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of human detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_blk_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Human Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(human read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_blk_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene", scale = "free") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "Block Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+```
+
+### sapiens
+```{r}
+# visualize distributions
+ggplot(hu_crblk_draws_s_plot, aes(y = p_detect, x = gene)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+ggplot(mu_crblk_draws_s_plot, aes(y = mu, x = gene)) +
+  geom_violin(fill = "#8da0cb") +
+  ylim(8, 12) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+peace = mu_crblk_draws_s_plot %>%
+  group_by(gene, crispr, block) %>%
+  summarize(mm = median(mu))
+
+# visualize contrasts
+## crispr
+ggplot(hu_cr_contrast_draws, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Human Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of human detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_cr_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Human Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(human read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_cr_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "CRISPR Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+## block
+ggplot(hu_blk_contrast_draws, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Human Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of human detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_blk_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Human Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(human read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_blk_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene", scale = "free") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "Block Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+```
+
+### sapiens
+```{r}
+# visualize distributions
+ggplot(hu_crblk_draws_s_plot, aes(y = p_detect, x = gene)) +
+  geom_violin(fill = "#66c2a5") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+ggplot(mu_crblk_draws_s_plot, aes(y = mu, x = gene)) +
+  geom_violin(fill = "#8da0cb") +
+  ylim(8, 12) +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set2") +
+  facet_grid(crispr ~ block)
+
+peace = mu_crblk_draws_s_plot %>%
+  group_by(gene, crispr, block) %>%
+  summarize(mm = median(mu))
+
+# visualize contrasts
+## crispr
+ggplot(hu_cr_contrast_draws, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Human Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of human detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_cr_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "CRISPR Effect on Human Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(human read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_cr_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "CRISPR Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+## block
+ggplot(hu_blk_contrast_draws, aes(x = hu_contrast)) +
+  stat_halfeye(fill = "#66c2a5",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Human Detection (TRUE - FALSE)",
+       x = "Contrast of log(odds of human detection) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+ggplot(mu_blk_contrast_draws, aes(x = mu_contrast)) +
+  stat_halfeye(fill = "#8da0cb",
+               .width = c(0.5, 0.95),
+               point_interval = median_qi) +
+  facet_wrap("gene", scale = "free") +
+  geom_vline(xintercept = 0, alpha = 1) +
+  theme_minimal() +
+  labs(
+       title = "Block Effect on Human Read Counts (TRUE - FALSE)",
+       x = "Contrast of log(human read counts) [-]\nwith 50% & 95% High Density Interval",
+       y = "Probability Density [-]")
+
+# ggplot(shape_blk_contrast_draws, aes(x = shape_contrast)) +
+#   stat_halfeye(fill = "#fc8d62",
+#                .width = c(0.5, 0.95),
+#                point_interval = median_qi) +
+#   facet_wrap("gene", scale = "free") +
+#   geom_vline(xintercept = 0, alpha = 1) +
+#   theme_minimal() +
+#   labs(
+#        title = "Block Effect on Human Read Count Dispersion (TRUE - FALSE)",
+#        x = "Contrast of negative-binomial shape [-]\nwith 50% & 95% High Density Interval",
+#        y = "Probability Density [-]")
+
+```
+
 ## extract & organize draws
 ```{r}
 model_select = m2_znb_read_sapiens
