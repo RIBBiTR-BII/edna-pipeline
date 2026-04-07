@@ -16,7 +16,7 @@ This document is designed to guide you through the steps to set up, process and 
 2. **Set up GBIF API access:** This will allow you to look up GBIF occurrences of taxa of interest without additional steps (used in `analysis/general/r/05_query_taxonomy_geography.Rmd`):
 
     - [Register with GBIF](https://www.gbif.org/) -> Login *(top right)* -> Register (If you have not already)
-    - Follow [this tutorial](//docs.ropensci.org/rgbif/articles/gbif_credentials.html) to save your GBIF login where it can be accessed by the package `rgbif`.
+    - Follow [this tutorial](https://docs.ropensci.org/rgbif/articles/gbif_credentials.html) to save your GBIF login where it can be accessed by the package `rgbif`.
 
 3. **Create an Entrez API key:** This will allow you to look up NCBI taxa through the `taxize` package without additional steps (used in `analysis/general/r/04_web_blast_json_parse.Rmd`):
 
