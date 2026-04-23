@@ -71,7 +71,7 @@ ggplot(sample_taxa_count %>%
 ```
 
 # aggregate ASV reads
-```{r include=FALSE}
+```{r}
 # summary stats for samples (including controls)
 sample_read_count = data_combined %>%
   # drop all controls
@@ -93,11 +93,17 @@ sample_read_count = data_combined %>%
     n_reads_class_chord = sum(if_else(phylum == "Chordata", asv_count, 0L), na.rm = TRUE),
     # number of reads classified as amphibians
     n_reads_class_chord_amph = sum(if_else(class == "Amphibia", asv_count, 0L), na.rm = TRUE),
+    # controlled number of reads classified as amphibians
+    n_reads_class_chord_amph_ctrl = sum(if_else(class == "Amphibia", asv_count_controlled, 0L), na.rm = TRUE),
     # number of reads classified as amphibians to the species level
     n_reads_class_chord_amph_spp = sum(if_else((class == "Amphibia") & (taxonomic_rank == "species"), asv_count, 0L), na.rm = TRUE),
+    # controlled number of reads classified as amphibians to the species level
+    n_reads_class_chord_amph_spp_ctrl = sum(if_else((class == "Amphibia") & (taxonomic_rank == "species"), asv_count_controlled, 0L), na.rm = TRUE),
     # number of reads classified as human
     n_reads_class_chord_sapien = sum(if_else((species == "sapiens"), asv_count, 0L), na.rm = TRUE),
-    .groups = "drop")
+    .groups = "drop") %>%
+  mutate(detected_amph_ctrl = as.integer(n_reads_class_chord_amph_ctrl > 0),
+         detected_sapien = as.integer(n_reads_class_chord_sapien > 0))
 
 # pivot longer for plotting
 sample_read_count_long = sample_read_count %>%
@@ -105,7 +111,9 @@ sample_read_count_long = sample_read_count %>%
                         n_reads_class,
                         n_reads_class_chord,
                         n_reads_class_chord_amph,
+                        n_reads_class_chord_amph_ctrl,
                         n_reads_class_chord_amph_spp,
+                        n_reads_class_chord_amph_spp_ctrl,
                         n_reads_class_chord_sapien),
                names_to = "count_type",
                values_to = "n") %>%
@@ -120,6 +128,24 @@ sample_read_count_summary = sample_read_count %>%
 ggplot(sample_read_count_long, aes(x = gene, y = log10_n, color = count_type)) +
   geom_boxplot()
 ```
+# examine data
+
+```{r}
+
+sample_read_count %>%
+  filter(n_reads_class_chord_amph_ctrl > 0) %>%
+  pull(n_reads_class_chord_amph_ctrl) %>%
+  log() %>%
+  hist()
+
+sample_read_count %>%
+  filter(n_reads_class_chord_sapien > 0) %>%
+  pull(n_reads_class_chord_sapien) %>%
+  log() %>%
+  hist()
+
+```
+
 
 # modeling
 ## model fitting
@@ -130,9 +156,70 @@ ggplot(sample_read_count_long, aes(x = gene, y = log10_n, color = count_type)) +
 # PRIMARY APPROACH: glmmTMB (hurdle negative-binomial, matches brms family)
 # -----------------------------------------------------------------------
 
+# model 1 -- amphibians
+m1_nb_read_amph <- glmmTMB(
+  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = nbinom2(link = "log")
+)
+
+saveRDS(m1_nb_read_amph, file = here(model_dir, "m1_fnb_read_amph.rds"))
+m1_nb_read_amph = readRDS(file = here(model_dir, "m1_fnb_read_amph.rds"))
+
+# model 2 — sapiens
+m1_nb_read_sapiens <- glmmTMB(
+  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = nbinom2(link = "log")
+)
+
+saveRDS(m1_nb_read_sapiens, file = here(model_dir, "m1_fnb_read_sapiens.rds"))
+m1_nb_read_sapiens = readRDS(file = here(model_dir, "m1_fnb_read_sapiens.rds"))
+
+# model 1 -- amphibians --gaussian
+m1_ga_read_amph <- glmmTMB(
+  formula   = log(n_reads_class_chord_amph_ctrl + 1) ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = gaussian()
+)
+
+saveRDS(m1_ga_read_amph, file = here(model_dir, "m1_fga_read_amph.rds"))
+m1_ga_read_amph = readRDS(file = here(model_dir, "m1_fga_read_amph.rds"))
+
+# model 2 — sapiens -- gaussian
+m1_ga_read_sapiens <- glmmTMB(
+  formula   = log(n_reads_class_chord_sapien + 1) ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = gaussian()
+)
+
+saveRDS(m1_ga_read_sapiens, file = here(model_dir, "m1_fga_read_sapiens.rds"))
+m1_ga_read_sapiens = readRDS(file = here(model_dir, "m1_fga_read_sapiens.rds"))
+
+# model 1 -- amphibians - poisson
+m1_po_read_amph <- glmmTMB(
+  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = compois(link = "log")
+)
+
+saveRDS(m1_po_read_amph, file = here(model_dir, "m1_fpo_read_amph.rds"))
+m1_po_read_amph = readRDS(file = here(model_dir, "m1_fpo_read_amph.rds"))
+
+# model 2 — sapiens -- poisson
+m1_po_read_sapiens <- glmmTMB(
+  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = compois(link = "log")
+)
+
+saveRDS(m1_po_read_sapiens, file = here(model_dir, "m1_fpo_read_sapiens.rds"))
+m1_po_read_sapiens = readRDS(file = here(model_dir, "m1_fpo_read_sapiens.rds"))
+
+
 # model 2 — amphibians
 m2_nb_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph ~ gene:crispr + gene:block,
+  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
   ziformula = ~ gene:crispr + gene:block,
   data      = sample_read_count,
   family    = nbinom2(link = "log")
@@ -152,11 +239,55 @@ m2_nb_read_sapiens <- glmmTMB(
 saveRDS(m2_nb_read_sapiens, file = here(model_dir, "m2_fnb_read_sapiens.rds"))
 m2_nb_read_sapiens = readRDS(file = here(model_dir, "m2_fnb_read_sapiens.rds"))
 
+# model 2 — amphibians -- offset
+m2_nbo_read_amph <- glmmTMB(
+  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block + offset(log_lib_size),
+  ziformula = ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = nbinom2(link = "log")
+)
+
+saveRDS(m2_nbo_read_amph, file = here(model_dir, "m2_fnbo_read_amph.rds"))
+m2_nbo_read_amph = readRDS(file = here(model_dir, "m2_fnbo_read_amph.rds"))
+
+# model 2 — sapiens -- offset
+m2_nbo_read_sapiens <- glmmTMB(
+  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block + offset(log_lib_size),
+  ziformula = ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = nbinom2(link = "log")
+)
+
+saveRDS(m2_nbo_read_sapiens, file = here(model_dir, "m2_fnbo_read_sapiens.rds"))
+m2_nbo_read_sapiens = readRDS(file = here(model_dir, "m2_fnbo_read_sapiens.rds"))
+
+# model 2 — amphibians -- gaussian
+m2_ga_read_amph <- glmmTMB(
+  formula   = log(n_reads_class_chord_amph_ctrl + 1) ~ gene:crispr + gene:block,
+  ziformula = ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = gaussian()
+)
+
+saveRDS(m2_ga_read_amph, file = here(model_dir, "m2_fga_read_amph.rds"))
+m2_ga_read_amph = readRDS(file = here(model_dir, "m2_fga_read_amph.rds"))
+
+# model 2 — sapiens
+m2_ga_read_sapiens <- glmmTMB(
+  formula   = log(n_reads_class_chord_sapien + 1) ~ gene:crispr + gene:block,
+  ziformula = ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = gaussian()
+)
+
+saveRDS(m2_ga_read_sapiens, file = here(model_dir, "m2_fga_read_sapiens.rds"))
+m2_ga_read_sapiens = readRDS(file = here(model_dir, "m2_fga_read_sapiens.rds"))
+
 # model 2b — dispersion submodel (approximation: model dispersion ~ group via
 # glmmTMB's dispformula; not a direct analogue to brms shape ~ submodel but
 # is the closest frequentist equivalent)
 m2b_nb_read_amph <- glmmTMB(
-  formula      = n_reads_class_chord_amph ~ gene:crispr + gene:block,
+  formula      = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
   ziformula    = ~ gene:crispr + gene:block,
   dispformula  = ~ gene:crispr + gene:block,
   data         = sample_read_count,
@@ -179,7 +310,7 @@ m2b_nb_read_sapiens = readRDS(file = here(model_dir, "m2b_fnb_read_sapiens.rds")
 
 # model 3 — full 3-way interactions
 m3_nb_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph ~ gene * crispr * block,
+  formula   = n_reads_class_chord_amph_ctrl ~ gene * crispr * block,
   ziformula = ~ gene * crispr * block,
   data      = sample_read_count,
   family    = nbinom2(link = "log")
@@ -198,46 +329,159 @@ m3_nb_read_sapiens <- glmmTMB(
 saveRDS(m3_nb_read_sapiens, file = here(model_dir, "m3_fnb_read_sapiens.rds"))
 m3_nb_read_sapiens = readRDS(file = here(model_dir, "m3_fnb_read_sapiens.rds"))
 
+# model 3 — full 3-way interactions -- gaussian
+m3_ga_read_amph <- glmmTMB(
+  formula   = log(n_reads_class_chord_amph_ctrl + 1) ~ gene * crispr * block,
+  ziformula = ~ gene * crispr * block,
+  data      = sample_read_count,
+  family    = gaussian()
+)
+
+saveRDS(m3_ga_read_amph, file = here(model_dir, "m3_fga_read_amph.rds"))
+m3_ga_read_amph = readRDS(file = here(model_dir, "m3_fga_read_amph.rds"))
+
+m3_ga_read_sapiens <- glmmTMB(
+  formula   = log(n_reads_class_chord_sapien + 1) ~ gene * crispr * block,
+  ziformula = ~ gene * crispr * block,
+  data      = sample_read_count,
+  family    = gaussian()
+)
+
+saveRDS(m3_ga_read_sapiens, file = here(model_dir, "m3_fga_read_sapiens.rds"))
+m3_ga_read_sapiens = readRDS(file = here(model_dir, "m3_fga_read_sapiens.rds"))
+
+
+# model 4 — full 3-way interactions -- detection binomial
+m4_bi_read_amph <- glmmTMB(
+  formula   = detected_amph_ctrl ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = binomial(link = "logit")
+)
+
+saveRDS(m4_bi_read_amph, file = here(model_dir, "m4_fbi_read_amph.rds"))
+m4_bi_read_amph = readRDS(file = here(model_dir, "m4_fbi_read_amph.rds"))
+
+m4_bi_read_sapiens <- glmmTMB(
+  formula   = detected_sapien ~ gene:crispr + gene:block,
+  data      = sample_read_count,
+  family    = binomial(link = "logit")
+)
+
+saveRDS(m4_bi_read_sapiens, file = here(model_dir, "m4_fbi_read_sapiens.rds"))
+m4_bi_read_sapiens = readRDS(file = here(model_dir, "m4_fbi_read_sapiens.rds"))
+
+# model 4 — positive only-- reads gaussian
+m4_ga_read_amph <- glmmTMB(
+  formula   = log(n_reads_class_chord_amph_ctrl) ~ gene:crispr + gene:block,
+  data      = sample_read_count %>% filter(n_reads_class_chord_amph_ctrl > 0),
+  family    = gaussian()
+)
+
+saveRDS(m4_ga_read_amph, file = here(model_dir, "m4_fga_read_amph.rds"))
+m4_ga_read_amph = readRDS(file = here(model_dir, "m4_fga_read_amph.rds"))
+
+m4_ga_read_sapiens <- glmmTMB(
+  formula   = log(n_reads_class_chord_sapien) ~ gene:crispr + gene:block,
+  data      = sample_read_count %>% filter(n_reads_class_chord_sapien > 0),
+  family    = gaussian()
+)
+
+saveRDS(m4_ga_read_sapiens, file = here(model_dir, "m4_fga_read_sapiens.rds"))
+m4_ga_read_sapiens = readRDS(file = here(model_dir, "m4_fga_read_sapiens.rds"))
+
+# model 4 — positive only-- reads nb
+m4_nb_read_amph <- glmmTMB(
+  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
+  dispformula = ~ block + gene,
+  data      = sample_read_count %>% filter(n_reads_class_chord_amph_ctrl > 0),
+  family    = lognormal(link = "log")
+)
+
+saveRDS(m4_nb_read_amph, file = here(model_dir, "m4_fnb_read_amph.rds"))
+m4_nb_read_amph = readRDS(file = here(model_dir, "m4_fnb_read_amph.rds"))
+
+m4_nb_read_sapiens <- glmmTMB(
+  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
+  dispformula = ~ block,
+  data      = sample_read_count %>% filter(n_reads_class_chord_sapien > 0),
+  family    = lognormal(link = "log")
+)
+
+saveRDS(m4_nb_read_sapiens, file = here(model_dir, "m4_fnb_read_sapiens.rds"))
+m4_nb_read_sapiens = readRDS(file = here(model_dir, "m4_fnb_read_sapiens.rds"))
+
 ```
 
 ## model comparison
 ```{r}
 # AIC-based model comparison (analogous to LOO-IC comparison in brms)
 # Lower AIC = better out-of-sample predictive fit
-(aic_comp_amph = AIC(m2_nb_read_amph,
+(aic_comp_amph = AIC(m1_nb_read_amph,
+                     m1_ga_read_amph,
+                     # m1_po_read_amph,
+                     m2_nb_read_amph,
+                     m2_nbo_read_amph,
                      m2b_nb_read_amph,
-                     m3_nb_read_amph))
+                     m2_ga_read_amph,
+                     m3_nb_read_amph,
+                     # m3_ga_read_amph,
+                     m4_bi_read_amph,
+                     m4_ga_read_amph,
+                     m4_nb_read_amph))
 
-(aic_comp_sapiens = AIC(m2_nb_read_sapiens,
+(aic_comp_sapiens = AIC(m1_nb_read_sapiens,
+                        m1_ga_read_sapiens,
+                        # m1_po_read_sapiens,
+                        m2_nb_read_sapiens,
+                        m2_nbo_read_sapiens,
                         m2b_nb_read_sapiens,
-                        m3_nb_read_sapiens))
+                        m2_ga_read_sapiens,
+                        m3_nb_read_sapiens,
+                        # m3_ga_read_sapiens,
+                        m4_bi_read_sapiens,
+                        m4_ga_read_sapiens,
+                        m4_nb_read_sapiens))
 
 ```
 
 ## model checks
-```{r eval=FALSE, include=FALSE}
+```{r}
 # Posterior predictive checks are a Bayesian concept; the frequentist
 # equivalent is residual diagnostics and simulation-based checks.
 # DHARMa provides standardized residuals for GLMMs.
 
-sim_amph    = simulateResiduals(m2b_nb_read_amph,    n = 1000)
-sim_sapiens = simulateResiduals(m2b_nb_read_sapiens, n = 1000)
+sim_bi_amph    = simulateResiduals(m4_bi_read_amph,    n = 1000)
+sim_bi_sapiens = simulateResiduals(m4_bi_read_sapiens, n = 1000)
+sim_amph    = simulateResiduals(m4_nb_read_amph,    n = 1000)
+sim_sapiens = simulateResiduals(m4_ga_read_sapiens, n = 1000)
+
+plot(sim_bi_amph)
+plot(sim_bi_sapiens)
 
 plot(sim_amph)
 plot(sim_sapiens)
 
+# check if deviation is driven by specific covariate combinations
+plotResiduals(sim_amph, sample_read_count$gene[sample_read_count$n_reads_class_chord_amph_ctrl > 0])
+plotResiduals(sim_amph, sample_read_count$crispr[sample_read_count$n_reads_class_chord_amph_ctrl > 0])
+plotResiduals(sim_amph, sample_read_count$block[sample_read_count$n_reads_class_chord_amph_ctrl > 0])
+
+# check residuals vs fitted (heteroscedasticity)
+plotResiduals(sim_amph, predict(m4_ga_read_amph))
+plotResiduals(sim_sapiens, predict(m4_ga_read_sapiens))
+
 # Test for overdispersion and zero inflation
 testDispersion(sim_amph)
-testZeroInflation(sim_amph)
+# testZeroInflation(sim_amph)
 
 testDispersion(sim_sapiens)
-testZeroInflation(sim_sapiens)
+# testZeroInflation(sim_sapiens)
 ```
 
 # model interpretation
 ```{r eval=FALSE, include=FALSE}
-summary(m2b_nb_read_amph)
-summary(m2b_nb_read_sapiens)
+summary(m4_nb_read_amph)
+summary(m4_ga_read_sapiens)
 ```
 
 # predicted marginal means and contrasts
