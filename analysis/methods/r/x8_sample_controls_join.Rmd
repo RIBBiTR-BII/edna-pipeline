@@ -240,7 +240,7 @@ control_asv_neg_field = sample_asv %>%
 control_asv = bind_rows(control_asv_pos,
                         control_asv_neg_lab,
                         control_asv_neg_field) %>%
-  filter(max_control_asv_count > 0) %>%
+  # filter(max_control_asv_count > 0) %>%
   group_by(asv_id) %>%
   slice_max(max_control_asv_count, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
