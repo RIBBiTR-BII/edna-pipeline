@@ -19,54 +19,87 @@ config_16s = read_yaml(here(run_dir_methods, "16S", "output", "metadata", "confi
 data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled_joined.csv")))
 ```
 
-# aggregate ASV counts
-```{r eval=FALSE, include=FALSE}
-# summary stats for samples (ignoring controls)
-sample_taxa_count = data_combined %>%
-  # drop all controls
-  filter(is.na(control_type)) %>%
-  group_by(sample_id,
-           gene,
-           filter_size_um_rz,
-           passive_active_rz,
-           crispr,
-           block,
-           extraction_type,
-           control_type) %>%
-  summarize(
-    # number of ASVs (before controls)
-    n_asv = sum(detected),
-    # number of ASVs (after controls)
-    n_asv_controlled = sum(detected_controlled, na.rm = TRUE),
-    # number of ASVs classified
-    n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_rank), na.rm = TRUE),
-    # number of ASVs classified chordata
-    n_asv_controlled_class_chord = sum(detected_controlled & (phylum == "Chordata"), na.rm = TRUE),
-    # number of ASVs classified as amphibians
-    n_asv_controlled_class_xamph = sum(detected_controlled & (class == "Amphibia"), na.rm = TRUE),
-    # number of ASVs classified as amphibians to the species level
-    n_asv_controlled_class_xamph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_rank == "species"), na.rm = TRUE),
-    .groups = "drop")
+# investigate accepts
+```{r}
+data_accepts = data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_06_hybrid_classification.csv")))
 
-# pivot longer for plotting
-sample_taxa_count_long = sample_taxa_count %>%
-  pivot_longer(cols = c(n_asv,
-                        n_asv_controlled,
-                        n_asv_controlled_class,
-                        n_asv_controlled_class_chord,
-                        n_asv_controlled_class_xamph,
-                        n_asv_controlled_class_xamph_spp),
-               names_to = "count_type",
-               values_to = "n")
+all_methods = data_accepts %>%
+  distinct(accept_method, accept_method_priority)
 
-# gene
-ggplot(sample_taxa_count_long, aes(x = gene, y = n, color = count_type)) +
-  geom_boxplot()
+peace = data_accepts %>%
+  filter(asv_id == "25028d6df074ee3822d79f718894edc8")
 
-# 16s pore size active passive
-ggplot(sample_taxa_count %>%
-         filter(gene == "16S"), aes(x = passive_active_rz, y = n_asv_controlled_class_xamph_spp, color = filter_size_um_rz)) +
-  geom_boxplot()
+tier_0 = data_accepts %>%
+  filter(accept_method_priority %in% c(1, 2),
+         search_method_priority ==1) %>%
+  dplyr::select(asv_id,
+                class,
+                genus,
+                species,
+                accept_method) %>%
+  pivot_wider(id_cols = asv_id,
+              names_from = accept_method,
+              values_from = c(genus, species))
+
+test_1 = tier_0 %>%
+  anti_join(tier_1, by = "asv_id")
+
+tier_1 = data_accepts %>%
+  filter(accept_method_priority %in% c(3, 4),
+         search_method_priority == 1) %>%
+  dplyr::select(asv_id,
+                class,
+                genus,
+                species,
+                accept_method) %>%
+  pivot_wider(id_cols = asv_id,
+              names_from = accept_method,
+              values_from = c(genus, species)) %>%
+  anti_join(tier_0, by = "asv_id")
+
+tier_2 = data_accepts %>%
+  filter(accept_method_priority %in% c(5, 6),
+         search_method_priority == 1) %>%
+  dplyr::select(asv_id,
+                class,
+                genus,
+                species,
+                accept_method) %>%
+  pivot_wider(id_cols = asv_id,
+              names_from = accept_method,
+              values_from = c(genus, species)) %>%
+  anti_join(tier_0, by = "asv_id") %>%
+  anti_join(tier_1, by = "asv_id")
+
+tier_3 = data_accepts %>%
+  filter(accept_method_priority %in% c(7, 8),
+         search_method_priority == 1) %>%
+  dplyr::select(asv_id,
+                class,
+                genus,
+                accept_method) %>%
+  pivot_wider(id_cols = asv_id,
+              names_from = accept_method,
+              values_from = c(class, genus)) %>%
+  anti_join(tier_0, by = "asv_id") %>%
+  anti_join(tier_1, by = "asv_id") %>%
+  anti_join(tier_2, by = "asv_id")
+
+tier_4 = data_accepts %>%
+  filter(accept_method_priority %in% c(9, 10),
+         search_method_priority == 1) %>%
+  dplyr::select(asv_id,
+                class,
+                family,
+                accept_method) %>%
+  pivot_wider(id_cols = asv_id,
+              names_from = accept_method,
+              values_from = c(class, family)) %>%
+  anti_join(tier_0, by = "asv_id") %>%
+  anti_join(tier_1, by = "asv_id") %>%
+  anti_join(tier_2, by = "asv_id") %>%
+  anti_join(tier_3, by = "asv_id")
+
 
 ```
 
@@ -83,7 +116,10 @@ sample_read_count = data_combined %>%
            crispr,
            block,
            extraction_type,
-           control_type) %>%
+           control_type,
+           site,
+           region,
+           country) %>%
   summarize(
     # number of reads
     n_reads = sum(asv_count),
@@ -102,8 +138,8 @@ sample_read_count = data_combined %>%
     # number of reads classified as human
     n_reads_class_chord_sapien = sum(if_else((species == "sapiens"), asv_count, 0L), na.rm = TRUE),
     .groups = "drop") %>%
-  mutate(detected_amph_ctrl = as.integer(n_reads_class_chord_amph_ctrl > 0),
-         detected_sapien = as.integer(n_reads_class_chord_sapien > 0))
+  mutate(ratio_amph = n_reads_class_chord_amph_ctrl / n_reads,
+         ratio_sapiens = n_reads_class_chord_sapien / n_reads)
 
 # pivot longer for plotting
 sample_read_count_long = sample_read_count %>%
@@ -131,985 +167,532 @@ ggplot(sample_read_count_long, aes(x = gene, y = log10_n, color = count_type)) +
 # examine data
 
 ```{r}
+ggplot(sample_read_count, aes(x = n_reads)) +
+  geom_histogram(bins = 50) +
+  scale_x_log10() +
+  labs(title = "All read counts") +
+  facet_grid(gene ~ crispr)
 
-sample_read_count %>%
-  filter(n_reads_class_chord_amph_ctrl > 0) %>%
-  pull(n_reads_class_chord_amph_ctrl) %>%
-  log() %>%
-  hist()
+ggplot(sample_read_count %>%
+  filter(n_reads_class_chord_amph_ctrl > 0), aes(x = n_reads_class_chord_amph_ctrl)) +
+  geom_histogram() +
+  scale_x_log10() +
+  labs(title = "Amphibian read counts (controlled)")
 
-sample_read_count %>%
-  filter(n_reads_class_chord_sapien > 0) %>%
-  pull(n_reads_class_chord_sapien) %>%
-  log() %>%
-  hist()
+ggplot(sample_read_count %>%
+  filter(n_reads_class_chord_sapien > 0), aes(x = n_reads_class_chord_sapien)) +
+  geom_histogram() +
+  scale_x_log10() +
+  labs(title = "Homo sapiens read counts")
+
+ggplot(sample_read_count, aes(x = n_reads_class_chord_sapien / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio human to total reads") +
+  facet_grid(gene ~ crispr)
+
+ggplot(sample_read_count, aes(x = n_reads_class_chord_amph_ctrl / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio amphibian to total reads") +
+  facet_grid(gene ~ crispr)
+
 
 ```
 
 
 # modeling
-## model fitting
 
-```{r include=FALSE}
+## gene & crispr
+### model fitting
+```{r}
+sample_read_count_nb = sample_read_count %>%
+  filter(!block,
+         extraction_type != "PCI",
+         passive_active_rz == "Active",
+         !grepl("^Tissue_", sample_id)) %>%
+  filter(ratio_sapiens < 0.999)
 
-# -----------------------------------------------------------------------
-# PRIMARY APPROACH: glmmTMB (hurdle negative-binomial, matches brms family)
-# -----------------------------------------------------------------------
+ggplot(sample_read_count_nb, aes(x = n_reads_class_chord_sapien / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio human to total reads") +
+  facet_grid(gene ~ crispr)
 
-# model 1 -- amphibians
-m1_nb_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
+ggplot(sample_read_count_nb, aes(x = n_reads_class_chord_amph_ctrl / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio amphibian to total reads") +
+  facet_grid(gene ~ crispr)
+
+
+# no zero inflation
+m0_amph = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ gene * crispr,
+  ziformula  = ~0,          # no zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_nb
 )
 
-saveRDS(m1_nb_read_amph, file = here(model_dir, "m1_fnb_read_amph.rds"))
-m1_nb_read_amph = readRDS(file = here(model_dir, "m1_fnb_read_amph.rds"))
-
-# model 2 — sapiens
-m1_nb_read_sapiens <- glmmTMB(
-  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
+m0_sapiens = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ gene * crispr,
+  ziformula  = ~0,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_nb
 )
 
-saveRDS(m1_nb_read_sapiens, file = here(model_dir, "m1_fnb_read_sapiens.rds"))
-m1_nb_read_sapiens = readRDS(file = here(model_dir, "m1_fnb_read_sapiens.rds"))
 
-# model 1 -- amphibians --gaussian
-m1_ga_read_amph <- glmmTMB(
-  formula   = log(n_reads_class_chord_amph_ctrl + 1) ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = gaussian()
+# xero inflated
+m1_amph = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ gene * crispr,
+  ziformula  = ~1,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_nb
 )
 
-saveRDS(m1_ga_read_amph, file = here(model_dir, "m1_fga_read_amph.rds"))
-m1_ga_read_amph = readRDS(file = here(model_dir, "m1_fga_read_amph.rds"))
-
-# model 2 — sapiens -- gaussian
-m1_ga_read_sapiens <- glmmTMB(
-  formula   = log(n_reads_class_chord_sapien + 1) ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = gaussian()
+m1_sapiens = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ gene * crispr,
+  ziformula  = ~1,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_nb
 )
 
-saveRDS(m1_ga_read_sapiens, file = here(model_dir, "m1_fga_read_sapiens.rds"))
-m1_ga_read_sapiens = readRDS(file = here(model_dir, "m1_fga_read_sapiens.rds"))
 
-# model 1 -- amphibians - poisson
-m1_po_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = compois(link = "log")
+
+# You can also model zero-inflation as a function of covariates,
+# e.g. sequencing depth driving structural non-detection:
+m2_amph = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ gene * crispr,
+  ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_nb
 )
 
-saveRDS(m1_po_read_amph, file = here(model_dir, "m1_fpo_read_amph.rds"))
-m1_po_read_amph = readRDS(file = here(model_dir, "m1_fpo_read_amph.rds"))
-
-# model 2 — sapiens -- poisson
-m1_po_read_sapiens <- glmmTMB(
-  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = compois(link = "log")
+m2_sapiens = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ gene * crispr,
+  ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_nb
 )
 
-saveRDS(m1_po_read_sapiens, file = here(model_dir, "m1_fpo_read_sapiens.rds"))
-m1_po_read_sapiens = readRDS(file = here(model_dir, "m1_fpo_read_sapiens.rds"))
-
-
-# model 2 — amphibians
-m2_nb_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
-  ziformula = ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
+m3_sapiens <- glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~
+    gene * crispr,
+  dispformula = ~gene * crispr,      # phi varies by group
+  ziformula   = ~0,
+  family      = betabinomial(link = "logit"),
+  data        = sample_read_count_nb
 )
-
-saveRDS(m2_nb_read_amph, file = here(model_dir, "m2_fnb_read_amph.rds"))
-m2_nb_read_amph = readRDS(file = here(model_dir, "m2_fnb_read_amph.rds"))
-
-# model 2 — sapiens
-m2_nb_read_sapiens <- glmmTMB(
-  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
-  ziformula = ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
-)
-
-saveRDS(m2_nb_read_sapiens, file = here(model_dir, "m2_fnb_read_sapiens.rds"))
-m2_nb_read_sapiens = readRDS(file = here(model_dir, "m2_fnb_read_sapiens.rds"))
-
-# model 2 — amphibians -- offset
-m2_nbo_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block + offset(log_lib_size),
-  ziformula = ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
-)
-
-saveRDS(m2_nbo_read_amph, file = here(model_dir, "m2_fnbo_read_amph.rds"))
-m2_nbo_read_amph = readRDS(file = here(model_dir, "m2_fnbo_read_amph.rds"))
-
-# model 2 — sapiens -- offset
-m2_nbo_read_sapiens <- glmmTMB(
-  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block + offset(log_lib_size),
-  ziformula = ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
-)
-
-saveRDS(m2_nbo_read_sapiens, file = here(model_dir, "m2_fnbo_read_sapiens.rds"))
-m2_nbo_read_sapiens = readRDS(file = here(model_dir, "m2_fnbo_read_sapiens.rds"))
-
-# model 2 — amphibians -- gaussian
-m2_ga_read_amph <- glmmTMB(
-  formula   = log(n_reads_class_chord_amph_ctrl + 1) ~ gene:crispr + gene:block,
-  ziformula = ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = gaussian()
-)
-
-saveRDS(m2_ga_read_amph, file = here(model_dir, "m2_fga_read_amph.rds"))
-m2_ga_read_amph = readRDS(file = here(model_dir, "m2_fga_read_amph.rds"))
-
-# model 2 — sapiens
-m2_ga_read_sapiens <- glmmTMB(
-  formula   = log(n_reads_class_chord_sapien + 1) ~ gene:crispr + gene:block,
-  ziformula = ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = gaussian()
-)
-
-saveRDS(m2_ga_read_sapiens, file = here(model_dir, "m2_fga_read_sapiens.rds"))
-m2_ga_read_sapiens = readRDS(file = here(model_dir, "m2_fga_read_sapiens.rds"))
-
-# model 2b — dispersion submodel (approximation: model dispersion ~ group via
-# glmmTMB's dispformula; not a direct analogue to brms shape ~ submodel but
-# is the closest frequentist equivalent)
-m2b_nb_read_amph <- glmmTMB(
-  formula      = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
-  ziformula    = ~ gene:crispr + gene:block,
-  dispformula  = ~ gene:crispr + gene:block,
-  data         = sample_read_count,
-  family       = nbinom2(link = "log")
-)
-
-saveRDS(m2b_nb_read_amph, file = here(model_dir, "m2b_fnb_read_amph.rds"))
-m2b_nb_read_amph = readRDS(file = here(model_dir, "m2b_fnb_read_amph.rds"))
-
-m2b_nb_read_sapiens <- glmmTMB(
-  formula      = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
-  ziformula    = ~ gene:crispr + gene:block,
-  dispformula  = ~ gene:crispr + gene:block,
-  data         = sample_read_count,
-  family       = nbinom2(link = "log")
-)
-
-saveRDS(m2b_nb_read_sapiens, file = here(model_dir, "m2b_fnb_read_sapiens.rds"))
-m2b_nb_read_sapiens = readRDS(file = here(model_dir, "m2b_fnb_read_sapiens.rds"))
-
-# model 3 — full 3-way interactions
-m3_nb_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph_ctrl ~ gene * crispr * block,
-  ziformula = ~ gene * crispr * block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
-)
-
-saveRDS(m3_nb_read_amph, file = here(model_dir, "m3_fnb_read_amph.rds"))
-m3_nb_read_amph = readRDS(file = here(model_dir, "m3_fnb_read_amph.rds"))
-
-m3_nb_read_sapiens <- glmmTMB(
-  formula   = n_reads_class_chord_sapien ~ gene * crispr * block,
-  ziformula = ~ gene * crispr * block,
-  data      = sample_read_count,
-  family    = nbinom2(link = "log")
-)
-
-saveRDS(m3_nb_read_sapiens, file = here(model_dir, "m3_fnb_read_sapiens.rds"))
-m3_nb_read_sapiens = readRDS(file = here(model_dir, "m3_fnb_read_sapiens.rds"))
-
-# model 3 — full 3-way interactions -- gaussian
-m3_ga_read_amph <- glmmTMB(
-  formula   = log(n_reads_class_chord_amph_ctrl + 1) ~ gene * crispr * block,
-  ziformula = ~ gene * crispr * block,
-  data      = sample_read_count,
-  family    = gaussian()
-)
-
-saveRDS(m3_ga_read_amph, file = here(model_dir, "m3_fga_read_amph.rds"))
-m3_ga_read_amph = readRDS(file = here(model_dir, "m3_fga_read_amph.rds"))
-
-m3_ga_read_sapiens <- glmmTMB(
-  formula   = log(n_reads_class_chord_sapien + 1) ~ gene * crispr * block,
-  ziformula = ~ gene * crispr * block,
-  data      = sample_read_count,
-  family    = gaussian()
-)
-
-saveRDS(m3_ga_read_sapiens, file = here(model_dir, "m3_fga_read_sapiens.rds"))
-m3_ga_read_sapiens = readRDS(file = here(model_dir, "m3_fga_read_sapiens.rds"))
-
-
-# model 4 — full 3-way interactions -- detection binomial
-m4_bi_read_amph <- glmmTMB(
-  formula   = detected_amph_ctrl ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = binomial(link = "logit")
-)
-
-saveRDS(m4_bi_read_amph, file = here(model_dir, "m4_fbi_read_amph.rds"))
-m4_bi_read_amph = readRDS(file = here(model_dir, "m4_fbi_read_amph.rds"))
-
-m4_bi_read_sapiens <- glmmTMB(
-  formula   = detected_sapien ~ gene:crispr + gene:block,
-  data      = sample_read_count,
-  family    = binomial(link = "logit")
-)
-
-saveRDS(m4_bi_read_sapiens, file = here(model_dir, "m4_fbi_read_sapiens.rds"))
-m4_bi_read_sapiens = readRDS(file = here(model_dir, "m4_fbi_read_sapiens.rds"))
-
-# model 4 — positive only-- reads gaussian
-m4_ga_read_amph <- glmmTMB(
-  formula   = log(n_reads_class_chord_amph_ctrl) ~ gene:crispr + gene:block,
-  data      = sample_read_count %>% filter(n_reads_class_chord_amph_ctrl > 0),
-  family    = gaussian()
-)
-
-saveRDS(m4_ga_read_amph, file = here(model_dir, "m4_fga_read_amph.rds"))
-m4_ga_read_amph = readRDS(file = here(model_dir, "m4_fga_read_amph.rds"))
-
-m4_ga_read_sapiens <- glmmTMB(
-  formula   = log(n_reads_class_chord_sapien) ~ gene:crispr + gene:block,
-  data      = sample_read_count %>% filter(n_reads_class_chord_sapien > 0),
-  family    = gaussian()
-)
-
-saveRDS(m4_ga_read_sapiens, file = here(model_dir, "m4_fga_read_sapiens.rds"))
-m4_ga_read_sapiens = readRDS(file = here(model_dir, "m4_fga_read_sapiens.rds"))
-
-# model 4 — positive only-- reads nb
-m4_nb_read_amph <- glmmTMB(
-  formula   = n_reads_class_chord_amph_ctrl ~ gene:crispr + gene:block,
-  dispformula = ~ block + gene,
-  data      = sample_read_count %>% filter(n_reads_class_chord_amph_ctrl > 0),
-  family    = lognormal(link = "log")
-)
-
-saveRDS(m4_nb_read_amph, file = here(model_dir, "m4_fnb_read_amph.rds"))
-m4_nb_read_amph = readRDS(file = here(model_dir, "m4_fnb_read_amph.rds"))
-
-m4_nb_read_sapiens <- glmmTMB(
-  formula   = n_reads_class_chord_sapien ~ gene:crispr + gene:block,
-  dispformula = ~ block,
-  data      = sample_read_count %>% filter(n_reads_class_chord_sapien > 0),
-  family    = lognormal(link = "log")
-)
-
-saveRDS(m4_nb_read_sapiens, file = here(model_dir, "m4_fnb_read_sapiens.rds"))
-m4_nb_read_sapiens = readRDS(file = here(model_dir, "m4_fnb_read_sapiens.rds"))
 
 ```
 
-## model comparison
+### model comparison
 ```{r}
 # AIC-based model comparison (analogous to LOO-IC comparison in brms)
 # Lower AIC = better out-of-sample predictive fit
-(aic_comp_amph = AIC(m1_nb_read_amph,
-                     m1_ga_read_amph,
-                     # m1_po_read_amph,
-                     m2_nb_read_amph,
-                     m2_nbo_read_amph,
-                     m2b_nb_read_amph,
-                     m2_ga_read_amph,
-                     m3_nb_read_amph,
-                     # m3_ga_read_amph,
-                     m4_bi_read_amph,
-                     m4_ga_read_amph,
-                     m4_nb_read_amph))
 
-(aic_comp_sapiens = AIC(m1_nb_read_sapiens,
-                        m1_ga_read_sapiens,
-                        # m1_po_read_sapiens,
-                        m2_nb_read_sapiens,
-                        m2_nbo_read_sapiens,
-                        m2b_nb_read_sapiens,
-                        m2_ga_read_sapiens,
-                        m3_nb_read_sapiens,
-                        # m3_ga_read_sapiens,
-                        m4_bi_read_sapiens,
-                        m4_ga_read_sapiens,
-                        m4_nb_read_sapiens))
+(aic_comp_amph = AIC(m0_amph,
+                     m1_amph,
+                     m2_amph))
 
+(aic_comp_sapiens = AIC(m0_sapiens,
+                        m1_sapiens,
+                        m2_sapiens,
+                        m3_sapiens))
 ```
 
-## model checks
+### model checks
 ```{r}
-# Posterior predictive checks are a Bayesian concept; the frequentist
-# equivalent is residual diagnostics and simulation-based checks.
-# DHARMa provides standardized residuals for GLMMs.
+# Simulate residuals -- use more simulations for stable results
+sim_res <- simulateResiduals(m0_sapiens, n = 1000, seed = 42)
 
-sim_bi_amph    = simulateResiduals(m4_bi_read_amph,    n = 1000)
-sim_bi_sapiens = simulateResiduals(m4_bi_read_sapiens, n = 1000)
-sim_amph    = simulateResiduals(m4_nb_read_amph,    n = 1000)
-sim_sapiens = simulateResiduals(m4_ga_read_sapiens, n = 1000)
+# Omnibus plot: QQ plot + residuals vs fitted
+# Look for: S-shaped QQ = distributional misfit
+#           Fanning/trends in right panel = heteroscedasticity
+plot(sim_res)
 
-plot(sim_bi_amph)
-plot(sim_bi_sapiens)
+# Test for specific problems
+testUniformity(sim_res)     # overall distributional fit
+testDispersion(sim_res)     # over/underdispersion relative to model
+testZeroInflation(sim_res)  # are there more zeros than model predicts?
+testOutliers(sim_res)       # outlier observations
 
-plot(sim_amph)
-plot(sim_sapiens)
+# Residuals against your predictors -- should show no pattern
+plotResiduals(sim_res, form = sample_read_count_nb$gene)
+plotResiduals(sim_res, form = sample_read_count_nb$crispr)
+plotResiduals(sim_res, form = sample_read_count_nb$n_reads)   # sequencing depth
 
-# check if deviation is driven by specific covariate combinations
-plotResiduals(sim_amph, sample_read_count$gene[sample_read_count$n_reads_class_chord_amph_ctrl > 0])
-plotResiduals(sim_amph, sample_read_count$crispr[sample_read_count$n_reads_class_chord_amph_ctrl > 0])
-plotResiduals(sim_amph, sample_read_count$block[sample_read_count$n_reads_class_chord_amph_ctrl > 0])
+```
+### hypothesis testing
+```{r}
+em_amph = emmeans(m0_amph, ~ gene * crispr)
+em_sapiens = emmeans(m0_sapiens, ~ gene * crispr)
 
-# check residuals vs fitted (heteroscedasticity)
-plotResiduals(sim_amph, predict(m4_ga_read_amph))
-plotResiduals(sim_sapiens, predict(m4_ga_read_sapiens))
-
-# Test for overdispersion and zero inflation
-testDispersion(sim_amph)
-# testZeroInflation(sim_amph)
-
-testDispersion(sim_sapiens)
-# testZeroInflation(sim_sapiens)
+# response scale
+em_amph_resp = emmeans(m0_amph, ~ gene * crispr, type = "response")
+em_sapiens_resp = emmeans(m0_sapiens, ~ gene * crispr, type = "response")
 ```
 
-# model interpretation
-```{r eval=FALSE, include=FALSE}
-summary(m4_nb_read_amph)
-summary(m4_ga_read_sapiens)
+#### amphibians
+```{r}
+# effect fo crispr within gene group
+contrast(em_amph, "pairwise", by = "gene")
+
+# effect of gene within crispr group
+contrast(em_amph, "pairwise", by = "crispr")
+
+# plot contrasts
+as.data.frame(em_amph_resp) %>%
+  ggplot(aes(x = gene, y = prob, color = crispr,
+             ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_pointrange(position = position_dodge(width = 0.3)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Estimated amphibian reads ratio",
+       x = "Gene", color = "CRISPR",
+       title = "Ratio of amphibian reads vs. CRISPR") +
+  theme_bw()
+
 ```
 
-# predicted marginal means and contrasts
-## setup: newdata grid
-```{r include=FALSE}
-model_select_amph    = m2b_nb_read_amph
-model_select_sapiens = m2b_nb_read_sapiens
+#### sapiens
+```{r}
+# effect fo crispr within gene group
+contrast(em_sapiens, "pairwise", by = "gene")
 
-nd_crblk = expand_grid(
-  crispr = c(TRUE, FALSE),
-  block  = c(TRUE, FALSE),
-  gene   = c("12S", "16S")
+# effect of gene within crispr group
+contrast(em_sapiens, "pairwise", by = "crispr")
+
+# Or with ggplot for more control
+as.data.frame(em_sapiens_resp) %>%
+  ggplot(aes(x = gene, y = prob, color = crispr,
+             ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_pointrange(position = position_dodge(width = 0.3)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Estimated human reads ratio",
+       x = "Gene", color = "CRISPR",
+       title = "Ratio of human reads vs. CRISPR") +
+  theme_bw()
+
+```
+
+## block
+### model fitting
+```{r}
+sample_read_count_bk = sample_read_count %>%
+  filter(gene == "16S",
+         extraction_type != "PCI",
+         passive_active_rz == "Active",
+         !grepl("^Tissue_", sample_id))
+# %>%
+#   filter(ratio_sapiens < 0.999)
+
+ggplot(sample_read_count_bk, aes(x = n_reads_class_chord_sapien / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio human to total reads") +
+  facet_grid(block ~ .)
+
+ggplot(sample_read_count_bk, aes(x = n_reads_class_chord_amph_ctrl / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio amphibian to total reads") +
+  facet_grid(block ~ .)
+
+# no zero inflation
+m0_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block,
+  ziformula  = ~0,          # no zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
 )
-```
 
-## amphibians
-```{r include=FALSE}
-# --- Detection component (zi = zero-inflation ~ hu in brms) ---
-# emmeans on the zi component returns predictions on the logit scale,
-# matching the brms hu parameter (log-odds of structural zero).
-# NOTE: glmmTMB's zi models P(zero), so contrast direction is:
-#   zi_contrast > 0 means MORE zeros (LESS detection) for TRUE vs FALSE.
-#   To match brms convention (hu = P(zero), p_detect = 1 - plogis(hu)),
-#   negate contrasts where appropriate (see plots below).
+m0_sapiens_bk = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block,
+  ziformula  = ~0,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
 
-em_zi_amph = emmeans(model_select_amph,
-                     ~ gene | crispr:block,
-                     component = "zi",
-                     type      = "link")  # logit scale
 
-em_mu_amph = emmeans(model_select_amph,
-                     ~ gene | crispr:block,
-                     component = "cond",
-                     type      = "link")  # log scale
+# xero inflated
+m1_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block,
+  ziformula  = ~1,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
 
-# --- Tidy predictions for plotting ---
+m1_sapiens_bk = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block,
+  ziformula  = ~1,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
 
-# detection
-zi_crblk_draws_a = as.data.frame(em_zi_amph) %>%
-  left_join(nd_crblk, by = c("gene", "crispr", "block")) %>%
-  mutate(p_detect = 1 - plogis(emmean))   # P(detection)
 
-# counts
-mu_crblk_draws_a = as.data.frame(em_mu_amph) %>%
-  left_join(nd_crblk, by = c("gene", "crispr", "block")) %>%
-  rename(mu = emmean)
 
-# --- Contrasts ---
+# You can also model zero-inflation as a function of covariates,
+# e.g. sequencing depth driving structural non-detection:
+m2_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block,
+  ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
 
-## crispr
-zi_cr_contrast_a = contrast(
-  emmeans(model_select_amph, ~ crispr | gene:block,
-          component = "zi", type = "link"),
-  method = "revpairwise"   # TRUE - FALSE
-) %>% as.data.frame() %>%
-  rename(zi_contrast = estimate) %>%
-  mutate(contrast = "cr_TRUE - cr_FALSE")
+m2_sapiens_bk = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block,
+  ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
 
-mu_cr_contrast_a = contrast(
-  emmeans(model_select_amph, ~ crispr | gene:block,
-          component = "cond", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(mu_contrast = estimate) %>%
-  mutate(contrast = "cr_TRUE - cr_FALSE")
-
-## block
-zi_blk_contrast_a = contrast(
-  emmeans(model_select_amph, ~ block | gene:crispr,
-          component = "zi", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(zi_contrast = estimate) %>%
-  mutate(contrast = "blk_TRUE - blk_FALSE")
-
-mu_blk_contrast_a = contrast(
-  emmeans(model_select_amph, ~ block | gene:crispr,
-          component = "cond", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(mu_contrast = estimate) %>%
-  mutate(contrast = "blk_TRUE - blk_FALSE")
-
-## gene
-zi_gene_contrast_a = contrast(
-  emmeans(model_select_amph, ~ gene | crispr:block,
-          component = "zi", type = "link"),
-  method = "revpairwise"   # 16S - 12S
-) %>% as.data.frame() %>%
-  rename(zi_contrast = estimate) %>%
-  mutate(contrast = "g_16S - g_12S")
-
-mu_gene_contrast_a = contrast(
-  emmeans(model_select_amph, ~ gene | crispr:block,
-          component = "cond", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(mu_contrast = estimate) %>%
-  mutate(contrast = "g_16S - g_12S")
+m3_sapiens_bk <- glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block,
+  dispformula = ~block,      # phi varies by group
+  ziformula   = ~0,
+  family      = betabinomial(link = "logit"),
+  data        = sample_read_count_bk
+)
 
 ```
 
-## Homo sapiens
+### model comparison
 ```{r}
-em_zi_sapiens = emmeans(model_select_sapiens,
-                        ~ gene | crispr:block,
-                        component = "zi",
-                        type      = "link")
+# AIC-based model comparison (analogous to LOO-IC comparison in brms)
+# Lower AIC = better out-of-sample predictive fit
 
-em_mu_sapiens = emmeans(model_select_sapiens,
-                        ~ gene | crispr:block,
-                        component = "cond",
-                        type      = "link")
+(aic_comp_amph = AIC(m0_amph_bk,
+                     m1_amph_bk,
+                     m2_amph_bk))
 
-# detection
-zi_crblk_draws_s = as.data.frame(em_zi_sapiens) %>%
-  left_join(nd_crblk, by = c("gene", "crispr", "block")) %>%
-  mutate(p_detect = 1 - plogis(emmean))
-
-# counts
-mu_crblk_draws_s = as.data.frame(em_mu_sapiens) %>%
-  left_join(nd_crblk, by = c("gene", "crispr", "block")) %>%
-  rename(mu = emmean)
-
-## crispr
-zi_cr_contrast_s = contrast(
-  emmeans(model_select_sapiens, ~ crispr | gene:block,
-          component = "zi", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(zi_contrast = estimate) %>%
-  mutate(contrast = "cr_TRUE - cr_FALSE")
-
-mu_cr_contrast_s = contrast(
-  emmeans(model_select_sapiens, ~ crispr | gene:block,
-          component = "cond", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(mu_contrast = estimate) %>%
-  mutate(contrast = "cr_TRUE - cr_FALSE")
-
-## block
-zi_blk_contrast_s = contrast(
-  emmeans(model_select_sapiens, ~ block | gene:crispr,
-          component = "zi", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(zi_contrast = estimate) %>%
-  mutate(contrast = "blk_TRUE - blk_FALSE")
-
-mu_blk_contrast_s = contrast(
-  emmeans(model_select_sapiens, ~ block | gene:crispr,
-          component = "cond", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(mu_contrast = estimate) %>%
-  mutate(contrast = "blk_TRUE - blk_FALSE")
-
-## gene
-zi_gene_contrast_s = contrast(
-  emmeans(model_select_sapiens, ~ gene | crispr:block,
-          component = "zi", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(zi_contrast = estimate) %>%
-  mutate(contrast = "g_16S - g_12S")
-
-mu_gene_contrast_s = contrast(
-  emmeans(model_select_sapiens, ~ gene | crispr:block,
-          component = "cond", type = "link"),
-  method = "revpairwise"
-) %>% as.data.frame() %>%
-  rename(mu_contrast = estimate) %>%
-  mutate(contrast = "g_16S - g_12S")
+(aic_comp_sapiens = AIC(m0_sapiens_bk,
+                        m1_sapiens_bk,
+                        m2_sapiens_bk,
+                        m3_sapiens_bk))
 
 ```
 
-# hypothesis testing
-
-## 12S – CRISPR
+### model checks
 ```{r}
+# Simulate residuals -- use more simulations for stable results
+sim_res <- simulateResiduals(m0_sapiens_bk, n = 1000, seed = 42)
 
-# --- detection ---
-zi_12s_crispr = bind_rows(
-  zi_crblk_draws_a %>% mutate(taxon = "Amphibia"),
-  zi_crblk_draws_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "12S", !block)
+# Omnibus plot: QQ plot + residuals vs fitted
+# Look for: S-shaped QQ = distributional misfit
+#           Fanning/trends in right panel = heteroscedasticity
+plot(sim_res)
 
-ggplot(zi_12s_crispr, aes(y = p_detect, x = crispr)) +
-  geom_point(position = "dodge") +
-  geom_errorbar(aes(ymin = 1 - plogis(emmean + 1.96 * SE),
-                    ymax = 1 - plogis(emmean - 1.96 * SE)),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("taxon") +
-  labs(title = "12S Detection",
-       x = "CRISPR",
-       y = "Probability of detection [-]\nwith 95% CI")
+# Test for specific problems
+testUniformity(sim_res)     # overall distributional fit
+testDispersion(sim_res)     # over/underdispersion relative to model
+testZeroInflation(sim_res)  # are there more zeros than model predicts?
+testOutliers(sim_res)       # outlier observations
 
-## contrast
-zi_12s_crispr_contrast = bind_rows(
-  zi_cr_contrast_a %>% mutate(taxon = "Amphibia"),
-  zi_cr_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "12S",
-         block != TRUE)
+# Residuals against your predictors -- should show no pattern
+plotResiduals(sim_res, form = sample_read_count_bk$block)
+plotResiduals(sim_res, form = sample_read_count_bk$n_reads)   # sequencing depth
 
-# NOTE: zi_contrast > 0 means more zeros (less detection) for CRISPR TRUE.
-# Negating to align with brms convention: positive value = more detection.
-ggplot(zi_12s_crispr_contrast,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  facet_wrap("taxon", scales = "free") +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "12S Detection: CRISPR Contrast (TRUE - FALSE)",
-       x = "",
-       y = "Contrast of log(odds of detection) [-]\nwith 95% CI")
+```
+### hypothesis testing
+```{r}
+em_amph_bk = emmeans(m0_amph_bk, ~ block)
+em_sapiens_bk = emmeans(m0_sapiens_bk, ~ block)
 
-# --- read counts ---
-mu_12s_crispr = bind_rows(
-  mu_crblk_draws_a %>% mutate(taxon = "Amphibia"),
-  mu_crblk_draws_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "12S", !block)
+# response scale
+em_amph_bk_resp = emmeans(m0_amph_bk, ~ block, type = "response")
+em_sapiens_bk_resp = emmeans(m0_sapiens_bk, ~ block, type = "response")
+```
 
-ggplot(mu_12s_crispr, aes(y = mu, x = crispr)) +
-  geom_point(position = "dodge") +
-  geom_errorbar(aes(ymin = mu - 1.96 * SE, ymax = mu + 1.96 * SE),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("taxon") +
-  labs(title = "12S Read Count",
-       x = "CRISPR",
-       y = "log(read count) [-]\nwith 95% CI")
+#### amphibians
+```{r}
+# effect fo block within gene group
+contrast(em_amph_bk, "pairwise")
 
-## contrast
-mu_12s_crispr_contrast = bind_rows(
-  mu_cr_contrast_a %>% mutate(taxon = "Amphibia"),
-  mu_cr_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "12S",
-         block != TRUE)
-
-ggplot(mu_12s_crispr_contrast,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_wrap("taxon", scales = "free") +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "12S Read Count: CRISPR Contrast (TRUE - FALSE)",
-       x = "",
-       y = "Contrast of log(read count) [-]\nwith 95% CI")
+# plot contrasts
+as.data.frame(em_amph_bk_resp) %>%
+  ggplot(aes(x = block, y = prob, color = block,
+             ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_pointrange(position = position_dodge(width = 0.3)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Estimated amphibian reads ratio",
+       x = "Block",
+       title = "Ratio of amphibian reads vs. block") +
+  theme_bw()
 
 ```
 
-## 16S – Block – CRISPR
+#### sapiens
 ```{r}
+# effect fo block within gene group
+contrast(em_sapiens_bk, "pairwise")
 
-# --- detection ---
-zi_16s_crblk = bind_rows(
-  zi_crblk_draws_a %>% mutate(taxon = "Amphibia"),
-  zi_crblk_draws_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "16S") %>%
-  mutate(crispr = paste0("CRISPR ", as.character(crispr)),
-         block  = paste0("Block ", as.character(block)))
-
-ggplot(zi_16s_crblk, aes(y = p_detect, x = taxon)) +
-  geom_point(position = "dodge") +
-  geom_errorbar(aes(ymin = 1 - plogis(emmean + 1.96 * SE),
-                    ymax = 1 - plogis(emmean - 1.96 * SE)),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap(crispr ~ block) +
-  labs(title = "16S Detection",
-       x = "Taxon",
-       y = "Probability of detection [-]\nwith 95% CI")
-
-## crispr contrast
-zi_16s_crispr_contrast = bind_rows(
-  zi_cr_contrast_a %>% mutate(taxon = "Amphibia"),
-  zi_cr_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "16S") %>%
-  mutate(block = paste0("Block ", as.character(block)))
-
-ggplot(zi_16s_crispr_contrast,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  ylim(-15, 15) +
-  facet_grid(taxon ~ block) +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "16S Detection: CRISPR Contrast (TRUE - FALSE)",
-       x = "",
-       y = "Contrast of log(odds of detection) [-]\nwith 95% CI")
-
-## block contrast
-zi_16s_block_contrast = bind_rows(
-  zi_blk_contrast_a %>% mutate(taxon = "Amphibia"),
-  zi_blk_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "16S") %>%
-  mutate(crispr = paste0("CRISPR ", as.character(crispr)))
-
-ggplot(zi_16s_block_contrast,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  facet_grid(taxon ~ crispr) +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "16S Detection: Block Contrast (TRUE - FALSE)",
-       x = "",
-       y = "Contrast of log(odds of detection) [-]\nwith 95% CI")
-
-# --- read counts ---
-mu_16s_crblk = bind_rows(
-  mu_crblk_draws_a %>% mutate(taxon = "Amphibia"),
-  mu_crblk_draws_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "16S") %>%
-  mutate(crispr = paste0("CRISPR ", as.character(crispr)),
-         block  = paste0("Block ", as.character(block)))
-
-ggplot(mu_16s_crblk, aes(y = mu, x = taxon)) +
-  geom_point(position = "dodge") +
-  geom_errorbar(aes(ymin = mu - 1.96 * SE, ymax = mu + 1.96 * SE),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap(crispr ~ block) +
-  labs(title = "16S Read Counts",
-       x = "Taxon",
-       y = "log(read counts after detection) [-]\nwith 95% CI")
-
-## crispr contrast
-mu_16s_crispr_contrast = bind_rows(
-  mu_cr_contrast_a %>% mutate(taxon = "Amphibia"),
-  mu_cr_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "16S") %>%
-  mutate(block = paste0("Block ", as.character(block)))
-
-ggplot(mu_16s_crispr_contrast,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_grid(taxon ~ block) +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "16S Read Counts: CRISPR Contrast (TRUE - FALSE)",
-       x = "",
-       y = "Contrast of log(read counts) [-]\nwith 95% CI")
-
-## block contrast
-mu_16s_block_contrast = bind_rows(
-  mu_blk_contrast_a %>% mutate(taxon = "Amphibia"),
-  mu_blk_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(gene == "16S") %>%
-  mutate(crispr = paste0("CRISPR ", as.character(crispr)))
-
-ggplot(mu_16s_block_contrast,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_grid(taxon ~ crispr) +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "16S Read Counts: Block Contrast (TRUE - FALSE)",
-       x = "",
-       y = "Contrast of log(read counts) [-]\nwith 95% CI")
+# Or with ggplot for more control
+as.data.frame(em_sapiens_bk_resp) %>%
+  ggplot(aes(x = block, y = prob, color = block,
+             ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_pointrange(position = position_dodge(width = 0.3)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Estimated human reads ratio",
+       x = "Block",
+       title = "Ratio of human reads vs. block") +
+  theme_bw()
 
 ```
 
-## Gene effect
+## extraction kit
+### model fitting
 ```{r}
+sample_read_count_ex = sample_read_count %>%
+  filter(grepl("^Tissue_|^PCI_", sample_id))
+# %>%
+#   filter(ratio_sapiens < 0.999)
 
-# --- detection ---
-zi_gene = bind_rows(
-  zi_crblk_draws_a %>% mutate(taxon = "Amphibia"),
-  zi_crblk_draws_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(!crispr, !block)
+ggplot(sample_read_count_ex, aes(x = n_reads_class_chord_sapien / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio human to total reads") +
+  facet_grid(extraction_type ~ passive_active_rz)
 
-ggplot(zi_gene, aes(y = p_detect, x = gene)) +
-  geom_col(fill = "#66c2a5") +
-  geom_errorbar(aes(ymin = 1 - plogis(emmean + 1.96 * SE),
-                    ymax = 1 - plogis(emmean - 1.96 * SE)),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("taxon") +
-  labs(title = "Detection by Gene",
-       x = "Gene",
-       y = "Probability of detection [-]\nwith 95% CI")
+ggplot(sample_read_count_ex, aes(x = n_reads_class_chord_amph_ctrl / n_reads)) +
+  geom_histogram() +
+  labs(title = "Ratio amphibian to total reads") +
+  facet_grid(extraction_type ~ passive_active_rz)
 
-zi_gene_contrast = bind_rows(
-  zi_gene_contrast_a %>% mutate(taxon = "Amphibia"),
-  zi_gene_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(!crispr, !block)
 
-ggplot(zi_gene_contrast,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  facet_wrap("taxon", scales = "free") +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "Detection by Gene: 16S - 12S",
-       x = "",
-       y = "Contrast of log(odds of detection) [-]\nwith 95% CI")
+# no zero inflation
+m0_amph_ex = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ extraction_type * passive_active_rz,
+  ziformula  = ~0,          # no zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_ex
+)
 
-# --- read counts ---
-mu_gene = bind_rows(
-  mu_crblk_draws_a %>% mutate(taxon = "Amphibia"),
-  mu_crblk_draws_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(!crispr, !block)
+m0_sapiens_ex = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ extraction_type * passive_active_rz,
+  ziformula  = ~0,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_ex
+)
 
-ggplot(mu_gene, aes(y = mu, x = gene)) +
-  geom_col(fill = "#8da0cb") +
-  geom_errorbar(aes(ymin = mu - 1.96 * SE, ymax = mu + 1.96 * SE),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("taxon") +
-  labs(title = "Read Count after Detection by Gene",
-       x = "Gene",
-       y = "log(read count after detection) [-]\nwith 95% CI")
 
-mu_gene_contrast = bind_rows(
-  mu_gene_contrast_a %>% mutate(taxon = "Amphibia"),
-  mu_gene_contrast_s %>% mutate(taxon = "Homo sapiens")
-) %>%
-  filter(!crispr, !block)
+# xero inflated
+m1_amph_ex = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ extraction_type * passive_active_rz,
+  ziformula  = ~1,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_ex
+)
 
-ggplot(mu_gene_contrast,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_wrap("taxon", scales = "free") +
-  geom_hline(yintercept = 0, alpha = 1) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "Read Count after Detection by Gene: 16S - 12S",
-       x = "",
-       y = "Contrast of log(read count after detection) [-]\nwith 95% CI")
+m1_sapiens_ex = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ extraction_type * passive_active_rz,
+  ziformula  = ~1,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_ex
+)
+
+
+
+# You can also model zero-inflation as a function of covariates,
+# e.g. sequencing depth driving structural non-detection:
+m2_amph_ex = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ extraction_type * passive_active_rz,
+  ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_ex
+)
+
+m2_sapiens_ex = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ extraction_type * passive_active_rz,
+  ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_ex
+)
+
+m3_sapiens_ex <- glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ extraction_type * passive_active_rz,
+  dispformula = ~extraction_type,      # phi varies by group
+  ziformula   = ~0,
+  family      = betabinomial(link = "logit"),
+  data        = sample_read_count_ex
+)
 
 ```
 
-# visualize amphibians
+### model comparison
 ```{r}
-# detection distributions
-ggplot(zi_crblk_draws_a, aes(y = p_detect, x = crispr)) +
-  geom_col(fill = "#66c2a5") +
-  geom_errorbar(aes(ymin = 1 - plogis(emmean + 1.96 * SE),
-                    ymax = 1 - plogis(emmean - 1.96 * SE)),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("gene") +
-  labs(title = "Amphibian Detection by CRISPR",
-       x = "CRISPR", y = "P(detection) with 95% CI")
+# AIC-based model comparison (analogous to LOO-IC comparison in brms)
+# Lower AIC = better out-of-sample predictive fit
 
-# crispr contrast on detection
-ggplot(zi_cr_contrast_a,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "CRISPR effect on amphibian detection (TRUE - FALSE)",
-       x = "",
-       y = "Probability of detection (logit scale) [-]")
+(aic_comp_amph = AIC(m0_amph_ex,
+                     m1_amph_ex,
+                     m2_amph_ex))
 
-# read count distributions
-ggplot(mu_crblk_draws_a, aes(y = mu, x = crispr)) +
-  geom_col(fill = "#8da0cb") +
-  geom_errorbar(aes(ymin = mu - 1.96 * SE, ymax = mu + 1.96 * SE),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("gene") +
-  labs(title = "Amphibian Read Counts by CRISPR",
-       x = "CRISPR", y = "log(reads) with 95% CI")
+(aic_comp_sapiens = AIC(m0_sapiens_ex,
+                        m1_sapiens_ex,
+                        m2_sapiens_ex,
+                        m3_sapiens_ex))
+```
+### model checks
+```{r}
+# Simulate residuals -- use more simulations for stable results
+sim_res <- simulateResiduals(m1_sapiens_ex, n = 1000, seed = 42)
 
-# crispr contrast on read counts
-ggplot(mu_cr_contrast_a,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "CRISPR effect on amphibian reads (TRUE - FALSE)",
-       x = "",
-       y = "Number of reads (log scale) [-]")
+# Omnibus plot: QQ plot + residuals vs fitted
+# Look for: S-shaped QQ = distributional misfit
+#           Fanning/trends in right panel = heteroscedasticity
+plot(sim_res)
 
-# block contrast on detection
-ggplot(zi_blk_contrast_a,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "block effect on amphibian detection (TRUE - FALSE)",
-       x = "",
-       y = "Probability of detection (logit scale) [-]")
+# Test for specific problems
+testUniformity(sim_res)     # overall distributional fit
+testDispersion(sim_res)     # over/underdispersion relative to model
+testZeroInflation(sim_res)  # are there more zeros than model predicts?
+testOutliers(sim_res)       # outlier observations
 
-# block contrast on read counts
-ggplot(mu_blk_contrast_a,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "block effect on amphibian reads (TRUE - FALSE)",
-       x = "",
-       y = "Number of reads (log scale) [-]")
+# Residuals against your predictors -- should show no pattern
+plotResiduals(sim_res, form = sample_read_count_ex$extraction_type)
+plotResiduals(sim_res, form = sample_read_count_ex$n_reads)   # sequencing depth
 
 ```
 
-# visualize humans
+### hypothesis testing
 ```{r}
-# detection distributions
-ggplot(zi_crblk_draws_s, aes(y = p_detect, x = crispr)) +
-  geom_col(fill = "#66c2a5") +
-  geom_errorbar(aes(ymin = 1 - plogis(emmean + 1.96 * SE),
-                    ymax = 1 - plogis(emmean - 1.96 * SE)),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("gene") +
-  labs(title = "Human Detection by CRISPR",
-       x = "CRISPR", y = "P(detection) with 95% CI")
+em_amph_ex = emmeans(m1_amph_ex, ~ extraction_type * passive_active_rz)
+em_sapiens_ex = emmeans(m1_sapiens_ex, ~ extraction_type * passive_active_rz)
 
-# crispr contrast on detection
-ggplot(zi_cr_contrast_s,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "CRISPR effect on human detection (TRUE - FALSE)",
-       x = "",
-       y = "Probability of detection (logit scale) [-]")
+# response scale
+em_amph_ex_resp = emmeans(m2_amph_ex, ~ extraction_type * passive_active_rz, type = "response")
+em_sapiens_ex_resp = emmeans(m3_sapiens_ex, ~ extraction_type * passive_active_rz, type = "response")
+```
 
-# read count distributions
-ggplot(mu_crblk_draws_s, aes(y = mu, x = crispr)) +
-  geom_col(fill = "#8da0cb") +
-  geom_errorbar(aes(ymin = mu - 1.96 * SE, ymax = mu + 1.96 * SE),
-                width = 0.2) +
-  theme_minimal() +
-  facet_wrap("gene") +
-  labs(title = "Human Read Counts by CRISPR",
-       x = "CRISPR", y = "log(reads) with 95% CI")
+#### amphibians
+```{r}
+# effect of extraction type within filtration group
+contrast(em_amph_ex, "pairwise", by = "passive_active_rz")
 
-# crispr contrast on read counts
-ggplot(mu_cr_contrast_s,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "CRISPR effect on human reads (TRUE - FALSE)",
-       x = "",
-       y = "Number of reads (log scale) [-]")
+# effect of filtration type within extraction group
+contrast(em_amph_ex, "pairwise", by = "extraction_type")
 
-# block contrast on detection
-ggplot(zi_blk_contrast_s,
-       aes(x = contrast, y = -zi_contrast,
-           ymin = -zi_contrast - 1.96 * SE,
-           ymax = -zi_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#66c2a5") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "block effect on human detection (TRUE - FALSE)",
-       x = "",
-       y = "Probability of detection (logit scale) [-]")
+# plot contrasts
+as.data.frame(em_amph_ex_resp) %>%
+  ggplot(aes(x = extraction_type, y = prob, color = passive_active_rz,
+             ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_pointrange(position = position_dodge(width = 0.3)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Estimated amphibian reads ratio",
+       x = "Extraction type", color = "Filtration type",
+       title = "Ratio of amphibian reads vs. block") +
+  theme_bw()
 
-# block contrast on read counts
-ggplot(mu_blk_contrast_s,
-       aes(x = contrast, y = mu_contrast,
-           ymin = mu_contrast - 1.96 * SE,
-           ymax = mu_contrast + 1.96 * SE)) +
-  geom_pointrange(color = "#8da0cb") +
-  facet_wrap("gene") +
-  geom_hline(yintercept = 0) +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "block effect on human reads (TRUE - FALSE)",
-       x = "",
-       y = "Number of reads (log scale) [-]")
+```
+
+#### sapiens
+```{r}
+# effect fo block within gene group
+contrast(em_sapiens_ex, "pairwise")
+
+# Or with ggplot for more control
+as.data.frame(em_sapiens_ex_resp) %>%
+  ggplot(aes(x = extraction_type, y = prob, color = extraction_type,
+             ymin = asymp.LCL, ymax = asymp.UCL)) +
+  geom_pointrange(position = position_dodge(width = 0.3)) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(y = "Estimated human reads ratio",
+       x = "Etraction type",
+       title = "Ratio of human reads vs. block") +
+  theme_bw()
 
 ```
