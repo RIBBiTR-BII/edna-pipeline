@@ -6,7 +6,7 @@ output: html_document
 
 # load data
 ```{r include=FALSE}
-librarian::shelf(tidyverse, here, yaml, lme4, lmerTest, emmeans, MASS, glmmTMB, DHARMa)
+librarian::shelf(tidyverse, here, yaml, lme4, lmerTest, emmeans, MASS, glmmTMB, DHARMa, ggrepel)
 
 run_dir_methods = here("16S_sequence_processing", "runs", "methods_2026-03-13")
 
@@ -1121,6 +1121,7 @@ p_gene_filt_pore = plot_data %>%
        color = "Filter pore\nsize [um]") +
   theme_bw()
 
+p_gene_filt_pore
 
 ggsave(here("analysis", "methods", "output", "figures", "contrast_gene_filtration_pore.png"),
        p_gene_filt_pore,
@@ -1132,7 +1133,7 @@ ggsave(here("analysis", "methods", "output", "figures", "contrast_gene_filtratio
 ```{r}
 peace = data_combined %>%
   filter(domain == "Eukaryota") %>%
-  group_by(kingdom) %>%
+  group_by(kingdom, phylum, class) %>%
   count()
 
 sample_taxa_group = data_combined %>%
@@ -1140,54 +1141,283 @@ sample_taxa_group = data_combined %>%
     domain == "Bacteria" ~ "Bacteria",
     species == "sapiens" ~ "Homo sapiens",
     class == "Amphibia" ~ "Amphibia",
-    class == "Mammalia" ~ "Mammalia",
+    class == "Mammalia" ~ "Mammalia Other",
     class == "Aves" ~ "Aves",
     class == "Actinopteri" ~ "Actinopteri",
-    class == "Branchiopoda" ~ "Branchiopoda",
-    class == "Insecta" ~ "Insecta",
-    class == "Insecta" ~ "Insecta",
-    class == "Lepidosauria" ~ "Lepidosauria",
-    class == "Ostracoda" ~ "Ostracoda",
-    kingdom == "Metazoa" ~ "Other Metazoa",
-    kingdom == "Viridiplantae" ~ "Viridiplantae",
+    class == "Reptilia" ~ "Reptilia",
+    #class == "Branchiopoda" ~ "Branchiopoda",
+    #class == "Insecta" ~ "Insecta",
+    #class == "Lepidosauria" ~ "Lepidosauria",
+    #class == "Ostracoda" ~ "Ostracoda",
+    kingdom == "Metazoa" ~ "Metazoa Other",
+    # kingdom == "Viridiplantae" ~ "Viridiplantae",
     !is.na(domain) ~ "Other",
-    .default = "Unclassified"))
+    .default = "Unassigned"))
 
 sample_taxa_group_agg = sample_taxa_group %>%
   group_by(gene, taxa_group) %>%
   summarize(group_reads = sum(asv_count),
             group_reads_ctrl = sum(asv_count_controlled),
-            .groups = "drop") %>%
-  group_by(gene) %>%
+            .groups = "drop") 
+# %>%
+  # group_by(gene) %>%
+  # mutate(group_read_proportion = group_reads / sum(group_reads),
+  #        group_read_ctrl_proportion = group_reads_ctrl / sum(group_reads_ctrl)) %>%
+  # ungroup()
+
+sample_taxa_group_agg_long = sample_taxa_group_agg %>%
+  pivot_longer(cols = c("group_reads",
+                        "group_reads_ctrl"),
+               names_to = "ctrl",
+               values_to = "group_reads") %>%
+  mutate(ctrl = recode_values(ctrl,
+                              "group_reads" ~ "Uncontrolled",
+                              "group_reads_ctrl" ~ "Controlled")) %>%
+  group_by(gene, ctrl) %>%
   mutate(group_read_proportion = group_reads / sum(group_reads),
-         group_read_ctrl_proportion = group_reads_ctrl / sum(group_reads_ctrl)) %>%
-  ungroup()
+         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")))
 
-p_taxa_gene = ggplot(sample_taxa_group_agg, aes(x = gene, y = group_reads, fill = taxa_group)) +
-  geom_bar(stat = "identity", position = "fill") + 
-  labs(title = "Taxanomic group proportions by Gene",
-       x = "Gene",
-       y = "Proportion of taxanomic group reads",
-       fill = "Taxanomic group") +
-  theme_bw()
+# Build a named color vector
+taxa_colors <- setNames(
+  c(RColorBrewer::brewer.pal(8, "Dark2"), "grey80"),
+  c("Actinopteri", "Amphibia", "Aves", "Bacteria",
+    "Homo sapiens", "Mammalia Other", "Metazoa Other", "Other",
+    "Unassigned")
+)
 
-p_taxa_gene_ctrl = ggplot(sample_taxa_group_agg, aes(x = gene, y = group_reads_ctrl, fill = taxa_group)) +
-  geom_bar(stat = "identity", position = "fill") + 
-  labs(title = "Taxonomic group proportions by Gene",
-       x = "Gene",
-       y = "Proportion of taxanomic group reads",
-       fill = "Taxonomic group") +
-  theme_bw()
+p_taxa_gene_ctrl_prop = ggplot(sample_taxa_group_agg_long,
+                       aes(x = ctrl, y = group_reads, fill = taxa_group)) +
+  geom_bar(stat = "identity", position = "fill", color = "black") +
+  geom_text(
+    aes(label = ifelse(group_read_proportion > 0.05, taxa_group, "")),
+    stat     = "identity",
+    position = position_fill(vjust = 0.5),
+    size     = 3,
+    color    = "white",
+    fontface = "bold"
+  ) +
+  facet_wrap(~ gene, nrow = 1) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = taxa_colors) +        # <-- replaces scale_fill_brewer
+  labs(
+    # title = "Taxonomic group proportions before and after control, by gene",
+    x     = NULL,
+    y     = "Proportion of reads",
+    fill  = "Taxonomic group"
+  ) +
+  theme_bw() +
+  theme(
+    strip.text      = element_text(face = "bold", size = 11),
+    axis.text.x     = element_text(size = 10),
+    legend.position = "bottom"
+  )
 
-ggsave(here("analysis", "methods", "output", "figures", "proportion_taxa_gene.png"),
-       p_taxa_gene,
-       width = 6, height = 8)
+p_taxa_gene_ctrl_count = ggplot(sample_taxa_group_agg_long,
+       aes(x = ctrl, y = group_reads, fill = taxa_group)) +
+  geom_bar(stat = "identity", position = "stack", color = "black") +
+  geom_text(
+    aes(label = ifelse(group_reads > 120000, taxa_group, "")),
+    stat     = "identity",
+    position = position_stack(vjust = 0.5),
+    size     = 3,
+    color    = "white",
+    fontface = "bold"
+  ) +
+  facet_wrap(~ gene, nrow = 1) +
+  scale_y_continuous(labels = scales::comma) +
+  scale_fill_manual(values = taxa_colors) +
+  labs(
+    x    = NULL,
+    y    = "Reads",
+    fill = "Taxonomic group"
+  ) +
+  theme_bw() +
+  theme(
+    strip.text      = element_text(face = "bold", size = 11),
+    axis.text.x     = element_text(size = 10),
+    legend.position = "bottom"
+  )
 
-ggsave(here("analysis", "methods", "output", "figures", "proportion_taxa_gene_controlled.png"),
-       p_taxa_gene_ctrl,
-       width = 6, height = 8)
+# p_taxa_gene_ctrl_count = ggplot(sample_taxa_group_agg_long, aes(x = ctrl, y = group_reads, fill = taxa_group)) +
+#   geom_bar(stat = "identity", color = "black") + 
+#   facet_wrap("gene") +
+#   labs(title = "Taxanomic group proportions by Gene",
+#        x = "Gene",
+#        y = "Proportion of taxanomic group reads",
+#        fill = "Taxanomic group") +
+#   theme_bw()
 
-p_taxa_gene
-p_taxa_gene_ctrl
+# p_taxa_gene_ctrl = ggplot(sample_taxa_group_agg, aes(x = gene, y = group_reads_ctrl, fill = taxa_group)) +
+#   geom_bar(stat = "identity", position = "fill") + 
+#   labs(title = "Taxonomic group proportions by Gene",
+#        x = "Gene",
+#        y = "Proportion of taxanomic group reads",
+#        fill = "Taxonomic group") +
+#   theme_bw()
+
+ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_proportion.png"),
+       p_taxa_gene_ctrl_prop,
+       width = 8, height = 5)
+
+ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_count.png"),
+       p_taxa_gene_ctrl_count,
+       width = 8, height = 5)
+
+# ggsave(here("analysis", "methods", "output", "figures", "proportion_taxa_gene_controlled.png"),
+#        p_taxa_gene_ctrl,
+#        width = 6, height = 8)
+
+p_taxa_gene_ctrl_prop
+p_taxa_gene_ctrl_count
+
+```
+
+# lolipop
+```{r}
+p_slope <- ggplot(taxa_long,
+                  aes(x = control_status, y = proportion,
+                      color = taxa_group, group = taxa_group)) +
+  geom_line(linewidth = 0.8, alpha = 0.8) +
+  geom_point(size = 2.5) +
+  facet_wrap(~ gene, nrow = 1) +
+  scale_y_continuous(labels = scales::percent) +
+  # scale_color_brewer(palette = "Paired") +
+  labs(
+    title = "Shift in taxonomic group proportions after control, by gene",
+    x     = NULL,
+    y     = "Proportion of reads",
+    color = "Taxonomic group"
+  ) +
+  theme_bw() +
+  theme(
+    strip.text      = element_text(face = "bold", size = 11),
+    axis.text.x     = element_text(size = 10),
+    legend.position = "bottom"
+  )
+
+# ggsave(
+#   here("analysis", "methods", "output", "figures", "taxa_slope.png"),
+#   p_slope,
+#   width = 10, height = 6
+# )
+
+p_slope
+
+```
+
+```{r}
+# Reshape to long format with a control_status column
+taxa_long <- sample_taxa_group_agg %>%
+  dplyr::select(gene, taxa_group,
+         Before = group_read_proportion,
+         After  = group_read_ctrl_proportion) %>%
+  pivot_longer(
+    cols      = c(Before, After),
+    names_to  = "control_status",
+    values_to = "proportion"
+  ) %>%
+  mutate(
+    control_status = factor(control_status, levels = c("Before", "After")),
+    taxa_group     = reorder(taxa_group, proportion, FUN = sum)
+  )
+
+p_facet_bars <- ggplot(taxa_long,
+                       aes(x = control_status, y = proportion, fill = taxa_group)) +
+  geom_bar(stat = "identity", position = "fill") +
+  facet_wrap(~ gene, nrow = 1) +          # one panel per gene, side by side
+  scale_y_continuous(labels = scales::percent) +
+  # scale_fill_brewer(palette = "Paired") +
+  labs(
+    title = "Taxonomic group proportions before and after control, by gene",
+    x     = NULL,
+    y     = "Proportion of reads",
+    fill  = "Taxonomic group"
+  ) +
+  theme_bw() +
+  theme(
+    strip.text   = element_text(face = "bold", size = 11),
+    axis.text.x  = element_text(size = 10),
+    legend.position = "bottom"
+  )
+
+# ggsave(
+#   here("analysis", "methods", "output", "figures", "taxa_facet_bars.png"),
+#   p_facet_bars,
+#   width = 10, height = 7
+# )
+
+p_facet_bars
+
+
+```
+
+#sankey
+```{r}
+library(ggalluvial)
+library(tidyr)
+
+# --- Reshape data for 3-axis alluvial ---
+# Gene → Taxa Group → Control Status (Retained / Filtered)
+sankey_data <- sample_taxa_group_agg %>%
+  mutate(reads_filtered = group_reads - group_reads_ctrl) %>%
+  dplyr::select(gene, taxa_group,
+         Retained = group_reads_ctrl,
+         Filtered = reads_filtered) %>%
+  pivot_longer(
+    cols      = c(Retained, Filtered),
+    names_to  = "control_status",
+    values_to = "reads"
+  ) %>%
+  filter(reads > 0) %>%
+  # Optional: order taxa so the largest groups sit at the top of each stratum
+  mutate(taxa_group = reorder(taxa_group, reads, FUN = sum))
+
+# --- Plot ---
+p_sankey <- ggplot(
+  sankey_data,
+  aes(
+    # axis1 = gene,
+      axis1 = taxa_group,
+      axis2 = control_status,
+      y     = reads)
+) +
+  geom_alluvium(
+    aes(fill = taxa_group),
+    alpha = 0.7,
+    width = 1/4,
+    knot.pos = 0.4       # controls curve tension between axes
+  ) +
+  geom_stratum(width = 1/4, fill = "grey90", color = "grey40") +
+  geom_text(
+    stat  = "stratum",
+    aes(label = after_stat(stratum)),
+    size  = 3,
+    fontface = "bold"
+  ) +
+  scale_x_discrete(
+    limits = c("Gene", "Taxonomic Group", "Control Status"),
+    expand = c(0.12, 0.05)
+  ) +
+  # scale_fill_brewer(palette = "Paired") +   # swap for your preferred palette
+  labs(
+    title   = "Read flow by Gene, Taxonomic Group, and Control Status",
+    y       = "Reads",
+    fill    = "Taxonomic Group"
+  ) +
+  theme_bw() +
+  theme(
+    axis.text.x  = element_text(size = 11, face = "bold"),
+    axis.text.y  = element_text(size = 9),
+    panel.grid   = element_blank()
+  ) +
+  facet_wrap("gene")
+
+# ggsave(
+#   here("analysis", "methods", "output", "figures", "sankey_taxa_gene.png"),
+#   p_sankey,
+#   width = 10, height = 8
+# )
+
+p_sankey
 
 ```
