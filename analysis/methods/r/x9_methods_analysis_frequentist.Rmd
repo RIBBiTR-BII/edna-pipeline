@@ -1154,18 +1154,51 @@ sample_taxa_group = data_combined %>%
     !is.na(domain) ~ "Other",
     .default = "Unassigned"))
 
-sample_taxa_group_agg = sample_taxa_group %>%
-  group_by(gene, taxa_group) %>%
-  summarize(group_reads = sum(asv_count),
-            group_reads_ctrl = sum(asv_count_controlled),
-            .groups = "drop") 
+# 1. proportions per replicate
+replicate_props = sample_taxa_group |>
+  group_by(gene, ribbitr_sample_name, sample_id, taxa_group) |>
+  summarize(
+    taxa_reads      = sum(asv_count),
+    taxa_reads_ctrl = sum(asv_count_controlled),
+    .groups = "drop_last"  # drops taxa_group, keeping replicate groups for total
+  ) |>
+  mutate(
+    replicate_reads      = sum(taxa_reads),
+    replicate_reads_ctrl = sum(taxa_reads_ctrl),
+    prop      = taxa_reads      / replicate_reads,
+    prop_ctrl = taxa_reads_ctrl / replicate_reads_ctrl
+  ) |>
+  ungroup()
+
+# 2. average proportions across replicates within each sample
+sample_props = replicate_props |>
+  group_by(gene, ribbitr_sample_name, taxa_group) |>
+  summarize(
+    prop      = mean(prop, na.rm = TRUE),
+    prop_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 3. average proportions across samples within each gene
+gene_props = sample_props |>
+  group_by(gene, taxa_group) |>
+  summarize(
+    group_reads      = mean(prop, na.rm = TRUE),
+    group_reads_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+peace = gene_props %>%
+  group_by(gene) %>%
+  summarize(total_unctrl = sum(group_reads),
+            total_ctrl = sum(group_reads_ctrl))
 # %>%
   # group_by(gene) %>%
   # mutate(group_read_proportion = group_reads / sum(group_reads),
   #        group_read_ctrl_proportion = group_reads_ctrl / sum(group_reads_ctrl)) %>%
   # ungroup()
 
-sample_taxa_group_agg_long = sample_taxa_group_agg %>%
+sample_taxa_group_agg_long = gene_props %>%
   pivot_longer(cols = c("group_reads",
                         "group_reads_ctrl"),
                names_to = "ctrl",
@@ -1202,34 +1235,8 @@ p_taxa_gene_ctrl_prop = ggplot(sample_taxa_group_agg_long,
   labs(
     # title = "Taxonomic group proportions before and after control, by gene",
     x     = NULL,
-    y     = "Proportion of reads",
+    y     = "Mean proportion of reads per sample",
     fill  = "Taxonomic group"
-  ) +
-  theme_bw() +
-  theme(
-    strip.text      = element_text(face = "bold", size = 11),
-    axis.text.x     = element_text(size = 10),
-    legend.position = "bottom"
-  )
-
-p_taxa_gene_ctrl_count = ggplot(sample_taxa_group_agg_long,
-       aes(x = ctrl, y = group_reads, fill = taxa_group)) +
-  geom_bar(stat = "identity", position = "stack", color = "black") +
-  geom_text(
-    aes(label = ifelse(group_reads > 120000, taxa_group, "")),
-    stat     = "identity",
-    position = position_stack(vjust = 0.5),
-    size     = 3,
-    color    = "white",
-    fontface = "bold"
-  ) +
-  facet_wrap(~ gene, nrow = 1) +
-  scale_y_continuous(labels = scales::comma) +
-  scale_fill_manual(values = taxa_colors) +
-  labs(
-    x    = NULL,
-    y    = "Reads",
-    fill = "Taxonomic group"
   ) +
   theme_bw() +
   theme(
@@ -1259,16 +1266,215 @@ ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_pr
        p_taxa_gene_ctrl_prop,
        width = 8, height = 5)
 
-ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_count.png"),
-       p_taxa_gene_ctrl_count,
-       width = 8, height = 5)
-
 # ggsave(here("analysis", "methods", "output", "figures", "proportion_taxa_gene_controlled.png"),
 #        p_taxa_gene_ctrl,
 #        width = 6, height = 8)
 
 p_taxa_gene_ctrl_prop
-p_taxa_gene_ctrl_count
+# p_taxa_gene_ctrl_count
+
+```
+# now by study system
+```{r}
+# 1. proportions per replicate
+replicate_props_co = sample_taxa_group |>
+  group_by(gene, country, ribbitr_sample_name, sample_id, taxa_group) |>
+  summarize(
+    taxa_reads      = sum(asv_count),
+    taxa_reads_ctrl = sum(asv_count_controlled),
+    .groups = "drop_last"  # drops taxa_group, keeping replicate groups for total
+  ) |>
+  mutate(
+    replicate_reads      = sum(taxa_reads),
+    replicate_reads_ctrl = sum(taxa_reads_ctrl),
+    prop      = taxa_reads      / replicate_reads,
+    prop_ctrl = taxa_reads_ctrl / replicate_reads_ctrl
+  ) |>
+  ungroup()
+
+# 2. average proportions across replicates within each sample
+sample_props_co = replicate_props_co |>
+  group_by(gene, country, ribbitr_sample_name, taxa_group) |>
+  summarize(
+    prop      = mean(prop, na.rm = TRUE),
+    prop_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 3. average proportions across samples within each gene
+gene_props_co = sample_props_co |>
+  group_by(gene, country, taxa_group) |>
+  summarize(
+    group_reads      = mean(prop, na.rm = TRUE),
+    group_reads_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+peace = gene_props_co %>%
+  group_by(gene, country) %>%
+  summarize(total_unctrl = sum(group_reads),
+            total_ctrl = sum(group_reads_ctrl),
+            .groups = "drop")
+
+
+sample_taxa_group_agg_long_co = gene_props_co %>%
+  pivot_longer(cols = c("group_reads",
+                        "group_reads_ctrl"),
+               names_to = "ctrl",
+               values_to = "group_reads") %>%
+  mutate(ctrl = recode_values(ctrl,
+                              "group_reads" ~ "Uncontrolled",
+                              "group_reads_ctrl" ~ "Controlled")) %>%
+  group_by(gene, country, ctrl) %>%
+  mutate(group_read_proportion = group_reads / sum(group_reads),
+         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")))
+
+# Build a named color vector
+taxa_colors <- setNames(
+  c(RColorBrewer::brewer.pal(8, "Dark2"), "grey80"),
+  c("Actinopteri", "Amphibia", "Aves", "Bacteria",
+    "Homo sapiens", "Mammalia Other", "Metazoa Other", "Other",
+    "Unassigned")
+)
+
+p_taxa_gene_ctrl_prop_co = ggplot(sample_taxa_group_agg_long_co %>%
+                                 filter(ctrl == "Controlled",
+                                        gene == "16S"),
+                       aes(x = country, y = group_reads, fill = taxa_group)) +
+  geom_bar(stat = "identity", position = "fill", color = "black") +
+  geom_text(
+    aes(label = ifelse(group_read_proportion > 0.05, taxa_group, "")),
+    stat     = "identity",
+    position = position_fill(vjust = 0.5),
+    size     = 3,
+    color    = "white",
+    fontface = "bold"
+  ) +
+  # facet_grid(country ~ gene) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = taxa_colors) +        # <-- replaces scale_fill_brewer
+  labs(
+    # title = "Taxonomic group proportions before and after control, by gene",
+    x     = NULL,
+    y     = "Mean proportion of reads per sample",
+    fill  = "Taxonomic group"
+  ) +
+  theme_bw() +
+  theme(
+    strip.text      = element_text(face = "bold", size = 11),
+    axis.text.x     = element_text(size = 10),
+    legend.position = "bottom"
+  )
+
+
+ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_proportion_country.png"),
+       p_taxa_gene_ctrl_prop_co,
+       width = 8, height = 5)
+
+
+p_taxa_gene_ctrl_prop_co
+
+```
+# now by pore size
+```{r}
+# 1. proportions per replicate
+replicate_props_fi = sample_taxa_group |>
+  filter(!is.na(filter_size_um_rz),
+         gene == "16S") %>%
+  group_by(gene, filter_size_um_rz, ribbitr_sample_name, sample_id, taxa_group) |>
+  summarize(
+    taxa_reads      = sum(asv_count),
+    taxa_reads_ctrl = sum(asv_count_controlled),
+    .groups = "drop_last"  # drops taxa_group, keeping replicate groups for total
+  ) |>
+  mutate(
+    replicate_reads      = sum(taxa_reads),
+    replicate_reads_ctrl = sum(taxa_reads_ctrl),
+    prop      = taxa_reads      / replicate_reads,
+    prop_ctrl = taxa_reads_ctrl / replicate_reads_ctrl
+  ) |>
+  ungroup()
+
+# 2. average proportions across replicates within each sample
+sample_props_fi = replicate_props_fi |>
+  group_by(gene, filter_size_um_rz, ribbitr_sample_name, taxa_group) |>
+  summarize(
+    prop      = mean(prop, na.rm = TRUE),
+    prop_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 3. average proportions across samples within each gene
+gene_props_fi = sample_props_fi |>
+  group_by(gene, filter_size_um_rz, taxa_group) |>
+  summarize(
+    group_reads      = mean(prop, na.rm = TRUE),
+    group_reads_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+peace = gene_props_fi %>%
+  group_by(gene, filter_size_um_rz) %>%
+  summarize(total_unctrl = sum(group_reads),
+            total_ctrl = sum(group_reads_ctrl),
+            .groups = "drop")
+
+
+sample_taxa_group_agg_long_fi = gene_props_fi %>%
+  pivot_longer(cols = c("group_reads",
+                        "group_reads_ctrl"),
+               names_to = "ctrl",
+               values_to = "group_reads") %>%
+  mutate(ctrl = recode_values(ctrl,
+                              "group_reads" ~ "Uncontrolled",
+                              "group_reads_ctrl" ~ "Controlled")) %>%
+  group_by(gene, filter_size_um_rz, ctrl) %>%
+  mutate(group_read_proportion = group_reads / sum(group_reads),
+         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")))
+
+# Build a named color vector
+taxa_colors <- setNames(
+  c(RColorBrewer::brewer.pal(8, "Dark2"), "grey80"),
+  c("Actinopteri", "Amphibia", "Aves", "Bacteria",
+    "Homo sapiens", "Mammalia Other", "Metazoa Other", "Other",
+    "Unassigned")
+)
+
+p_taxa_gene_ctrl_prop_fi = ggplot(sample_taxa_group_agg_long_fi %>%
+                                 filter(ctrl == "Controlled"),
+                       aes(x = filter_size_um_rz, y = group_reads, fill = taxa_group)) +
+  geom_bar(stat = "identity", position = "fill", color = "black") +
+  geom_text(
+    aes(label = ifelse(group_read_proportion > 0.05, taxa_group, "")),
+    stat     = "identity",
+    position = position_fill(vjust = 0.5),
+    size     = 3,
+    color    = "white",
+    fontface = "bold"
+  ) +
+  # facet_grid(filter_size_um_rz ~ .) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = taxa_colors) +        # <-- replaces scale_fill_brewer
+  labs(
+    # title = "Taxonomic group proportions before and after control, by gene",
+    x     = NULL,
+    y     = "Mean proportion of reads per sample",
+    fill  = "Taxonomic group"
+  ) +
+  theme_bw() +
+  theme(
+    strip.text      = element_text(face = "bold", size = 11),
+    axis.text.x     = element_text(size = 10),
+    legend.position = "bottom"
+  )
+
+
+ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_proportion_filter.png"),
+       p_taxa_gene_ctrl_prop_fi,
+       width = 8, height = 5)
+
+
+p_taxa_gene_ctrl_prop_fi
 
 ```
 
