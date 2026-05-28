@@ -1327,7 +1327,11 @@ sample_taxa_group_agg_long_co = gene_props_co %>%
                               "group_reads_ctrl" ~ "Controlled")) %>%
   group_by(gene, country, ctrl) %>%
   mutate(group_read_proportion = group_reads / sum(group_reads),
-         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")))
+         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")),
+         system = recode_values(country,
+                                "panama" ~ "Panamá",
+                                "usa" ~ "Pennsylvania",
+                                default = NA))
 
 # Build a named color vector
 taxa_colors <- setNames(
@@ -1340,7 +1344,7 @@ taxa_colors <- setNames(
 p_taxa_gene_ctrl_prop_co = ggplot(sample_taxa_group_agg_long_co %>%
                                  filter(ctrl == "Controlled",
                                         gene == "16S"),
-                       aes(x = country, y = group_reads, fill = taxa_group)) +
+                       aes(x = system, y = group_reads, fill = taxa_group)) +
   geom_bar(stat = "identity", position = "fill", color = "black") +
   geom_text(
     aes(label = ifelse(group_read_proportion > 0.05, taxa_group, "")),
@@ -1355,7 +1359,7 @@ p_taxa_gene_ctrl_prop_co = ggplot(sample_taxa_group_agg_long_co %>%
   scale_fill_manual(values = taxa_colors) +        # <-- replaces scale_fill_brewer
   labs(
     # title = "Taxonomic group proportions before and after control, by gene",
-    x     = NULL,
+    x     = "Study System",
     y     = "Mean proportion of reads per sample",
     fill  = "Taxonomic group"
   ) +
@@ -1430,7 +1434,8 @@ sample_taxa_group_agg_long_fi = gene_props_fi %>%
                               "group_reads_ctrl" ~ "Controlled")) %>%
   group_by(gene, filter_size_um_rz, ctrl) %>%
   mutate(group_read_proportion = group_reads / sum(group_reads),
-         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")))
+         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")),
+         filter_size_um_rz = as.factor(filter_size_um_rz))
 
 # Build a named color vector
 taxa_colors <- setNames(
@@ -1457,7 +1462,7 @@ p_taxa_gene_ctrl_prop_fi = ggplot(sample_taxa_group_agg_long_fi %>%
   scale_fill_manual(values = taxa_colors) +        # <-- replaces scale_fill_brewer
   labs(
     # title = "Taxonomic group proportions before and after control, by gene",
-    x     = NULL,
+    x     = "Filter pore size (um)",
     y     = "Mean proportion of reads per sample",
     fill  = "Taxonomic group"
   ) +
