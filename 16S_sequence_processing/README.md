@@ -112,6 +112,22 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ---
 
+### QC Run Only
+
+This workflow is a limited "quality control" version of the complete sequence processing version. It builds a manifest file of sequence files, imports sequences, and summarizes quality for viewing on QIIME2View. 
+
+1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
+
+2. run the following command, substiuting `/path/to/sequence/folder` for the folder containing your sequences (search is exhaustive, nested subfolders permitted):
+  ```bash
+  podman run -it --rm \
+    -v '/path/to/sequence/folder':/data:z \
+    -v "$(pwd)":/project:z \
+    edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
+  ```
+
+---
+
 ## Tools and Tips
 
 - When you initiate this workflow, the configuration file (`16S_sequence_processing/config.yml`) is copied to `[YOUR RUN DIR]/output/metadata/config.yml` where it is referenced by the workflow scripts. You can therefore subsequently revise the configuration file and run additional workflows simultaneously, with each run referencing its own local configuration parameters. You also have a copy of the configuration file to reference and rerun the analysis in the future.
