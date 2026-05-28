@@ -10,7 +10,7 @@ taxonomy:
 trimPaired:
   errorRate: 0.3           # error rate for trimming of primers
 denoisePaired:
-  truncQ: 2                # quality threshold at which to truncate reads
+  truncQ: 2               # quality threshold at which to truncate reads
   truncLen: 0              # length at which to truncate reads (forward and reverse)
 classification:
   localBlastBool: false    # do you want to conduct a local blast on your classifer?
