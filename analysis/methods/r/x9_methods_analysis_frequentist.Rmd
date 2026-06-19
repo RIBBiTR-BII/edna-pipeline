@@ -132,7 +132,6 @@ ggplot(sample_read_count, aes(x = n_asv_controlled_class_xamph)) +
 
 ```
 
-
 # read proportion
 
 
@@ -1052,6 +1051,24 @@ m_asv_zinb = glmmTMB(
 
 ```
 
+# sample sizes
+```{r}
+with(sample_asv_count_nb, table(gene_filt, filter_size_um_rz))
+
+table(sample_asv_count_nb$site)
+
+icc(m_asv_nb)
+
+n_total  <- nrow(sample_asv_count_nb)
+n_sites  <- length(unique(sample_asv_count_nb$site))
+n_per_grp <- n_total / n_sites   # if balanced; otherwise use mean
+icc_val  <- icc(m_asv_nb)$ICC_adjusted
+
+eff_n <- n_total / (1 + (n_per_grp - 1) * icc_val)
+eff_n
+
+```
+
 ### model comparison
 ```{r}
 (aic_asv_amph = AIC(m_asv_nb,
@@ -1062,6 +1079,8 @@ m_asv_zinb = glmmTMB(
 ```{r}
 # Simulate residuals -- use more simulations for stable results
 sim_res <- simulateResiduals(m_asv_nb, n = 1000, seed = 42)
+
+summary(m_asv_nb)
 
 # Omnibus plot: QQ plot + residuals vs fitted
 # Look for: S-shaped QQ = distributional misfit
