@@ -235,6 +235,7 @@ m3_sapiens_bk <- glmmTMB(
 ### model checks
 ```{r}
 # Simulate residuals -- use more simulations for stable results
+sim_res <- simulateResiduals(m1_amph_bk, n = 1000, seed = 42)
 sim_res <- simulateResiduals(m0_sapiens_bk, n = 1000, seed = 42)
 
 # Omnibus plot: QQ plot + residuals vs fitted
@@ -266,7 +267,12 @@ em_sapiens_bk_resp = emmeans(m0_sapiens_bk, ~ block * crispr, type = "response")
 #### amphibians
 ```{r}
 # effect fo block within gene group
-contrast(em_amph_bk, "pairwise")
+summary(m1_amph_bk)
+
+summary(emmeans(m1_amph_bk, ~ block), type = "response")
+summary(emmeans(m1_amph_bk, ~ crispr), type = "response")
+contrast(em_amph_bk, "pairwise", by = "block")
+contrast(emmeans(m1_amph_bk, ~ block), "pairwise")
 
 # plot contrasts
 p_block_amph = as.data.frame(em_amph_bk_resp) %>%
@@ -290,7 +296,12 @@ p_block_amph
 #### sapiens
 ```{r}
 # effect fo block within gene group
-contrast(em_sapiens_bk, "pairwise")
+summary(m0_sapiens_bk)
+
+summary(emmeans(m0_sapiens_bk, ~ block), type = "response")
+summary(emmeans(m0_sapiens_bk, ~ crispr), type = "response")
+contrast(em_sapiens_bk, "pairwise", by = "block")
+contrast(emmeans(m0_sapiens_bk, ~ block), "pairwise")
 
 # Or with ggplot for more control
 p_block_sapiens = as.data.frame(em_sapiens_bk_resp) %>%
@@ -443,6 +454,7 @@ em_sapiens_resp = emmeans(m0_sapiens, ~ crispr, type = "response")
 #### amphibians
 ```{r}
 # effect fo crispr within gene group
+summary(em_amph_resp)
 contrast(em_amph, "pairwise")
 
 
@@ -469,6 +481,7 @@ p_gene_crispr_amph
 #### sapiens
 ```{r}
 # effect fo crispr within gene group
+summary(em_sapiens_resp)
 contrast(em_sapiens, "pairwise")
 
 # Or with ggplot for more control
@@ -616,8 +629,11 @@ em_sapiens_ex_resp = emmeans(m0_sapiens_ex, ~ extraction_type * passive_active_r
 
 #### amphibians
 ```{r}
+car::Anova(m1_amph_ex,
+           type = "III")
 # effect of extraction type within filtration group
-
+summary(emmeans(m1_amph_ex, ~ passive_active_rz, type = "response"))
+summary(emmeans(m1_amph_ex, ~ extraction_type, type = "response"))
 contrast(em_amph_ex, "pairwise", by = "passive_active_rz")
 
 contrast(em_amph_ex, "pairwise", by = "extraction_type")
@@ -643,11 +659,18 @@ p_ex_filt_amph
 
 #### sapiens
 ```{r}
+car::Anova(m0_sapiens_ex,
+           type = "III")
+
+summary(emmeans(m0_sapiens_ex, ~ passive_active_rz, type = "response"))
+summary(emmeans(m0_sapiens_ex, ~ extraction_type, type = "response"))
+
 # effect of extraction type within filtration group
 contrast(em_sapiens_ex, "pairwise", by = "passive_active_rz")
 
 # effect of filtration type within extraction group
 contrast(em_sapiens_ex, "pairwise", by = "extraction_type")
+
 
 # Or with ggplot for more control
 p_ex_filt_sapiens = as.data.frame(em_sapiens_ex_resp) %>%
@@ -668,13 +691,12 @@ p_ex_filt_sapiens
 ```
 
 ## gene
-## 16S block & crispr
 ### model fitting
 ```{r}
 sample_read_count_g = sample_read_count %>%
   filter(extraction_type != "PCI",
          passive_active_rz == "Active",
-         # !crispr,
+         !block,
          !grepl("^Tissue_", sample_id))
 # %>%
 #   filter(ratio_sapiens < 0.999)
@@ -798,6 +820,7 @@ em_sapiens_g_resp = emmeans(m0_sapiens_g, ~ gene, type = "response")
 #### amphibians
 ```{r}
 # effect fo block within gene group
+summary(emmeans(m1_amph_g, ~ gene, type = "response"))
 contrast(em_amph_g, "pairwise")
 
 # plot contrasts
@@ -822,6 +845,7 @@ p_gene_amph
 #### sapiens
 ```{r}
 # effect fo block within gene group
+summary(emmeans(m0_sapiens_g, ~ gene, type = "response"))
 contrast(em_sapiens_g, "pairwise")
 
 # Or with ggplot for more control
@@ -1051,7 +1075,7 @@ m_asv_zinb = glmmTMB(
 
 ```
 
-# sample sizes
+### sample sizes
 ```{r}
 with(sample_asv_count_nb, table(gene_filt, filter_size_um_rz))
 
@@ -1109,6 +1133,9 @@ em_amph_asv = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt)
 
 # response scale
 em_amph_asv_resp = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt, type = "response")
+
+car::Anova(m_asv_nb,
+           type = "III")
 ```
 
 ```{r}
