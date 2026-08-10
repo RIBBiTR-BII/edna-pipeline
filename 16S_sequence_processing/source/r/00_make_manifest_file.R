@@ -25,12 +25,14 @@ if (qc_run_lgl) {
   out_dir = paste0(config$run$runDir, "/output/metadata/manifest.csv")
   filepath_prefix = "$PWD/sequences/"
 }
-
+# sequence_dir = "/home/cob/Documents/ribbitr/data/edna_results/July_16_2026/"
+# filepath_prefix = ""
 # create manifest file in tabular form
 peace = tibble(`absolute-filepath` = c(list.files(sequence_dir, recursive = TRUE))) %>%
   filter(str_detect(`absolute-filepath`, "\\.fastq(\\.gz)?$")) %>%
   mutate(`seq_id` = str_match(basename(`absolute-filepath`), "([A-Z]{2}[0-9]{3})-[0-9A-Za-z-]+_S[0-9]+_L[0-9]+_R[12]")[,2],
-         `sample-id` = str_match(basename(`absolute-filepath`), "-([A-Za-z]+-[0-9A-Za-z-]*)_S[0-9]+_L[0-9]+_R[12]")[,2],
+         # `sample-id` = str_match(basename(`absolute-filepath`), "-([A-Za-z]+-[0-9A-Za-z-]*)_S[0-9]+_L[0-9]+_R[12]")[,2],
+         `sample-id` = str_match(basename(`absolute-filepath`), "([0-9A-Za-z-]*)_S[0-9]+_L[0-9]+_R[12]")[,2],
          `absolute-filepath` = paste0(filepath_prefix, `absolute-filepath`),
          `direction` = if_else(str_detect(`absolute-filepath`, "_R1_"), "forward", 'reverse'),
          `sample-id` = if_else(is.na(`sample-id`), `seq_id`, `sample-id`),
