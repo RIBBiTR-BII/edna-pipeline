@@ -38,11 +38,17 @@ This workflow makes assumptions and choices which substantially influence the ou
    ```
 
 4. Build the container image:
-   ```bash
-   podman build -t edna-pipeline .
-   ```
-   This creates a local container image following the `Dockerfile` instructions, installing QIIME2, R, and all required dependencies. An active internet connection is required. **This only needs to be done once** — or until the Dockerfile changes. A wired connection will speed this up considerably as the base image is several gigabytes.
-
+    - *from Dockerfile:*
+      ```bash
+      podman build -t edna-pipeline .
+      ```
+      This builds a local container image following the local `Dockerfile` instructions, installing QIIME2, R, and all required dependencies. An active internet connection is required. **This only needs to be done once** — or until the Dockerfile changes. A wired connection will speed this up considerably as the base image is several gigabytes.
+  
+    - *from Dockerhub:*
+      ```bash
+      podman pull cobblestones/enda-pipeline:latest
+      ```
+      This downloads a pre-compiled container image from dockerhub.
 ---
 
 ### Test Run
