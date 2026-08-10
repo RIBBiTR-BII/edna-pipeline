@@ -269,6 +269,9 @@ em_sapiens_bk_resp = emmeans(m0_sapiens_bk, ~ block * crispr, type = "response")
 # effect fo block within gene group
 summary(m1_amph_bk)
 
+car::Anova(m1_amph_bk,
+           type = "III")
+
 summary(emmeans(m1_amph_bk, ~ block), type = "response")
 summary(emmeans(m1_amph_bk, ~ crispr), type = "response")
 contrast(em_amph_bk, "pairwise", by = "block")
@@ -454,6 +457,8 @@ em_sapiens_resp = emmeans(m0_sapiens, ~ crispr, type = "response")
 #### amphibians
 ```{r}
 # effect fo crispr within gene group
+summary(m1_amph)
+
 summary(em_amph_resp)
 contrast(em_amph, "pairwise")
 
@@ -1053,6 +1058,7 @@ p_fii_sapiens
 ### model fitting
 ```{r}
 sample_asv_count_nb = sample_read_count %>%
+  # filter(extraction_type != "PCI") %>%
   mutate(filter_size_um_rz = as.character(filter_size_um_rz),
          gene_filt = interaction(gene, passive_active_rz, drop = TRUE))
 
@@ -1133,12 +1139,13 @@ em_amph_asv = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt)
 
 # response scale
 em_amph_asv_resp = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt, type = "response")
-
-car::Anova(m_asv_nb,
-           type = "III")
 ```
 
 ```{r}
+summary(m_asv_nb)
+car::Anova(m_asv_nb,
+           type = "III")
+
 joint_tests(m_asv_nb)
 joint_tests(m_asv_nb, by = "gene_filt")   # filter size effect within each group
 joint_tests(m_asv_nb, by = "filter_size_um_rz")  # gene_filt effect within each filter
