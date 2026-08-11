@@ -14,7 +14,7 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ### Setup
 
-1. [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`git clone https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local directory accessible to your command line.
+1. [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`git clone https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local working directory. This should be redone any time the pipeline has been updated.
 
 2. Install Podman -- Choose one of the options below:
 
@@ -25,7 +25,7 @@ This workflow makes assumptions and choices which substantially influence the ou
      sudo apt-get update && sudo apt-get install -y podman   # Debian/Ubuntu
      ```
 
-   Confirm your Podman installation in the command line (terminal/PowerShell/Command Prompt) with: `podman --version`  
+   Confirm your Podman installation in the command line (PowerShell/Command Prompt/terminal) with: `podman --version`  
    Should return: `podman version x.x.x`
 
    > **Docker alternative:** This workflow is also fully compatible with [Docker](https://docs.docker.com/get-started/introduction/get-docker-desktop/). Simply substitute `podman` for `docker` in all commands below.
@@ -34,7 +34,7 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 3. Navigate to the `16S_sequence_processing` subfolder in the command line:
    ```bash
-   cd your/path/to/16S_sequence_processing
+   cd your/path/to/edna-pipeline/16S_sequence_processing
    ```
 
 4. Build the container image:
