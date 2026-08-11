@@ -95,11 +95,10 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 3. Locate sequences for your run, selecting one of the following:
 
-   - **Test the pipeline:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
    - **Your own sequences:** Create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyyy-mm-dd`), create a `sequences` subfolder inside it, and copy your `.fastq` or `.fastq.gz` paired amplicon sequence files there. Sequence files can be nested in subfolders without issue.
+   - **Test the pipeline:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
 
-
-4. Open `config.yml` in a text editor and confirm the configuration settings for your run. Save the file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, update the run directory and any other relevant parameters.
+4. Open `16S_sequence_processing/config.yml` in a text editor and confirm the configuration settings for your run. Save the file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, update the run directory and any other relevant parameters.
 
 5. Run sequence processing:
 
@@ -124,13 +123,29 @@ This workflow is a limited "quality control" version of the complete sequence pr
 
 1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
 
-2. run the following command, substiuting `/path/to/sequence/folder` for the folder containing your sequences (search is exhaustive, nested subfolders permitted):
-  ```bash
-  podman run -it --rm \
-    -v '/path/to/sequence/folder':/data:z \
-    -v "$(pwd)":/project:z \
-    edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
-  ```
+2. Run the following command, substituting `/path/to/sequence/folder` for the folder containing your sequences (search is exhaustive, nested subfolders permitted):
+
+   - **Windows PowerShell:**
+      ```bash
+      podman run -it --rm \
+        -v '/path/to/sequence/folder':/data:z \
+        -v "${PWD}":/project:z \
+        edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
+      ```
+   - **Windows Command Prompt:**
+      ```bash
+      podman run -it --rm \
+        -v '/path/to/sequence/folder':/data:z \
+        -v "%cd%":/project:z \
+        edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
+      ```
+   - **macOS/Linux:**
+      ```bash
+      podman run -it --rm \
+        -v '/path/to/sequence/folder':/data:z \
+        -v "$(pwd)":/project:z \
+        edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
+      ```
 
 ---
 
