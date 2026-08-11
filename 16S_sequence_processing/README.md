@@ -127,24 +127,15 @@ This workflow is a limited "quality control" version of the complete sequence pr
 
    - **Windows PowerShell:**
       ```bash
-      podman run -it --rm \
-        -v '/path/to/sequence/folder':/data:z \
-        -v "${PWD}":/project:z \
-        edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
+      podman run -it --rm -v '/path/to/sequence/folder':/data:z -v "${PWD}":/project:z edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
       ```
    - **Windows Command Prompt:**
       ```bash
-      podman run -it --rm \
-        -v '/path/to/sequence/folder':/data:z \
-        -v "%cd%":/project:z \
-        edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
+      podman run -it --rm -v '/path/to/sequence/folder':/data:z -v "%cd%":/project:z edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
       ```
    - **macOS/Linux:**
       ```bash
-      podman run -it --rm \
-        -v '/path/to/sequence/folder':/data:z \
-        -v "$(pwd)":/project:z \
-        edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
+      podman run -it --rm  -v '/path/to/sequence/folder':/data:z -v "$(pwd)":/project:z edna-pipeline bash /project/source/shell/qiime-seq-qc.sh /data
       ```
 
 ---
