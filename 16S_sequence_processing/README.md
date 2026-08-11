@@ -34,11 +34,11 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 3. Navigate to the `16S_sequence_processing` subfolder in the command line:
    ```bash
-   cd your/path/to/edna-pipeline/16S_sequence_processing
+   cd your/path/to/edna-pipeline-main/16S_sequence_processing
    ```
 
 4. Build the container image:
-    - *from Dockerfile:*
+    - *from Dockerfile (default):*
       ```bash
       podman build -t edna-pipeline .
       ```
@@ -76,7 +76,7 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 1. Navigate to the `16S_sequence_processing` subfolder in the command line. If you have not yet built the container image, run `podman build -t edna-pipeline .` first (see Setup Step 4 above).
 
-2. Build a local Amphibia 16S classifier: Run the following command:
+2. If you plan to use a local taxonomic classifier (and not exclusively Web BLAST): Build a local Amphibia 16S classifier by running the following command:
 
    - **Windows PowerShell:**
      ```powershell
