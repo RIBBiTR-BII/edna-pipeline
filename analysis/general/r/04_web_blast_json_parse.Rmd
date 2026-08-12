@@ -107,7 +107,7 @@ all_hits = all_hits %>%
 ```
 
 
-# query NCBI taxonomy
+# query NCBI taxonomy (uses taxize package and NCBI ENTREZ_KEY)
 ```{r}
 # pull taxa IDs
 all_taxids = unique(all_hits$taxid)
