@@ -98,7 +98,9 @@ This workflow makes assumptions and choices which substantially influence the ou
    - **Your own sequences:** Create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyyy-mm-dd`), create a `sequences` subfolder inside it, and copy your `.fastq` or `.fastq.gz` paired amplicon sequence files there. Sequence files can be nested in subfolders without issue.
    - **Test the pipeline:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
 
-4. Open `16S_sequence_processing/config.yml` in a text editor and confirm the configuration settings for your run. Save the file after editing. By default, `config.yml` is set up for the test run `test_run_01` without a local classifier. To run your own sequences, update the run directory and any other relevant parameters.
+4. Open `16S_sequence_processing/config.yml` in a text editor and confirm the configuration settings for your run. Save the file after editing.
+  - By default, `config.yml` is set up for the test run `test_run_01` without a local classifier.
+  - To run your own sequences, update the run directory and any other relevant parameters.
 
 5. Run sequence processing:
 
