@@ -124,7 +124,7 @@ cat("Extracting taxa...\n")
 pb = txtProgressBar(min = 1, max = length(all_taxids), style = 3)
 for (ii in 1:length(all_taxids)) {
   # print(ii)
-  if (!(is.null(ncbi_taxa[[ii]]$id))) {
+  if ("id" %in% colnames(ncbi_taxa[[ii]])) {
     ii_taxa = ncbi_taxa[[ii]] %>%
       select(-id) %>%
       filter(rank %in% c("domain",
