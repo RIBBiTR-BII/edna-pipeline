@@ -6,106 +6,172 @@ output: html_document
 
 # Copy Sequence Files by System
 
-This is a utility script which parses through nested folders for .fastq sequencing files, identifies which study system they belong to, and supports copying only files for a desired system to a desired repository
+This is a utility script which parses through nested folders for .fastq sequencing files, identifies the sequence_id, and references a lookup table to determine which system they belong to, and copies the desired system(s) to a specified folder.
 
-# Config
+# Configuration
+
+Fill out the parameters below to point to the corresponding local directories and files.
 ```{r}
-librarian::shelf(tidyverse, here, janitor)
+# load required packages
+librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio)
 
 # directory to search recursively
-search_dir = here(Sys.getenv("data_dir"), "edna_results")
+source_dir = here(Sys.getenv("data_dir"), "edna_results")
 
-# system(s) of interest: any of: brazil, panama, pennsylvania, california
-soi = "pennsylvania"
+# directories (or start of directories) to exclude from search and copy
+excluded_dirs = c(here(source_dir, "July_2024_poorquality"),
+                  here(source_dir, "December 2023"))
+# 
+# excluded_dirs = c(here(source_dir, "July_2024_poorquality"),
+#                   here(source_dir, "December 2023", "All_Sequences", "Mini816"),
+#                   here(source_dir, "December 2023", "All_Sequences", "MINI824"),
+#                   here(source_dir, "December 2023", "All_Sequences", "Miseq_816"))
 
 # directory to copy files to
-copy_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10", "sequences")
+destination_dir = here("16S_sequence_processing", "runs", "copy_test", "sequences")
 
+# lookup table for extraction_ids & study systems
+sample_lookup_file = here(source_dir, "RIBBiTR eDNA Processing 22-25_2026-08-11.xlsx")
+
+# system(s) of interest: any of: Brazil, Panama, Pennsylvania, Sierra Nevada
+soi = c("Pennsylvania")
+
+```
+
+# import lookup table
+```{r}
+lookup_samples = import(sample_lookup_file, which = "SEQUENCING") %>%
+  clean_names() %>%
+  filter(!is.na(extraction_id)) %>%
+  # one-off fixes (fix in spreadsheet?)
+  mutate(
+    # extraction_id = gsub("PAN_22_0(\\d{2})", "PAN_22_\\1", extraction_id),
+    extraction_id = gsub("PAN_22", "PAN_eDNA_22", extraction_id)
+    )
 ```
 
 # Parse search directory
 ```{r}
-search_dir_files = tibble(relative_filepath = c(list.files(search_dir, recursive = TRUE))) %>%
+# search sequencing piles exhaustively, excluding those in excluded dirs, and extract identifiers from file names
+source_dir_files = tibble(relative_filepath = c(list.files(source_dir, recursive = TRUE))) %>%
   filter(str_detect(relative_filepath, "\\.fastq(\\.gz)?$")) %>%
-  mutate(absolute_filepath = here(search_dir, relative_filepath),
+  mutate(absolute_filepath = here(source_dir, relative_filepath),
+         relative_parent_dir = dirname(relative_filepath),
          filename = basename(relative_filepath),
          filebase = gsub(".fastq", "", gsub(".gz", "", filename)),
          batch_id = str_match(filebase, "^([A-Za-z0-9]+-)")[,2],
          processing_id = str_match(filebase, "(_S[0-9]+_L[0-9]+_R[12]_[0-9]+)$")[,2],
+         sequencing_base = gsub("-", "_", str_remove(filebase, paste0(processing_id, "$"))),
          read_dir = case_when(
            grepl("_R1_", processing_id) ~ "forward",
            grepl("_R2_", processing_id) ~ "reverse",
-           .default = NA),
-         sample_id = str_remove(str_remove(filebase, processing_id), batch_id),
-         system = case_when(
-           grepl("PAN", sample_id) ~ "panama",
-           grepl("Pe|PENN|PCI|Tissue|CRISPR|block|12S|16S", sample_id) ~ "pennsylvania",
-           grepl("BR", sample_id) ~ "brazil",
-           grepl("SN|BII", sample_id) ~ "california",
-           .default = NA
-         ),
-         control = case_when(
-           grepl("negative", sample_id, ignore.case = TRUE) ~ "negative",
-           grepl("positive", sample_id, ignore.case = TRUE) ~ "positive",
-           .default = NA
-         )) %>%
-  filter(sample_id != "0",
-         !grepl("Blank", sample_id))
+           .default = NA)) %>%
+  filter(!purrr::map_lgl(absolute_filepath, function(f) {
+    any(str_starts(f, fixed(excluded_dirs)))
+  }))
+
+source_dir_samples = source_dir_files %>%
+  pivot_wider(id_cols = c("relative_parent_dir", "sequencing_base"),
+              names_from = read_dir,
+              values_from = absolute_filepath)
 
 # check for duplicates
-dupes_samples_1 = get_dupes(search_dir_files, sample_id, read_dir)
+check_sample_dupes = get_dupes(source_dir_samples, sequencing_base)
+
+# check for any without a forward or reverse read
+check_sample_missing_dir = source_dir_samples %>%
+  filter(is.na(forward) |is.na(reverse))
+
+if (nrow(check_sample_missing_dir) > 0) {
+  stop(paste0("Unpaired reads found for the following samples:\n\t", paste0(check_sample_missing_dir$relative_filepath, collapse = "\n\t")))
+}
+
+# drop problematic duplicates
+source_dir_samples_unique = source_dir_samples %>%
+  filter(!(sequencing_base %in% sample_dupes$sequencing_base))
+```
+
+# align with lookup table
+```{r}
+match_fun = function(a, b) {
+  pattern = paste0("(?<![0-9])", stringr::str_escape(b), "(?![0-9])")
+  stringr::str_detect(a, pattern)
+}
+
+source_dir_matched = fuzzy_full_join(
+  source_dir_samples_unique, lookup_samples,
+  by = c("sequencing_base" = "extraction_id"),
+  match_fun = match_fun)
+
+# checks
+## many to one
+check_m2o = source_dir_matched %>%
+  count(sequencing_base) %>%
+  filter(n > 1)  # rows in A matched by more than one b
+
+## one to many
+check_o2m = source_dir_matched %>%
+  count(extraction_id) %>%
+  filter(n > 1)  # rows in B matched by more than one a
+
+## no sequence
+check_no_seq = source_dir_matched %>%
+  filter(is.na(sequencing_base))
+
+## no extraction_id
+check_no_ext = source_dir_matched %>%
+  filter(is.na(extraction_id))
+
+check_misaligned = source_dir_matched %>%
+  filter(is.na(sequencing_base) | is.na(extraction_id)) %>%
+  mutate(working_id = coalesce(sequencing_base, extraction_id)) %>%
+  arrange(working_id) %>%
+  select(working_id,
+         everything())
+
 ```
 
 # Filter to system of interest
 ```{r}
 # files of interest
-foi = search_dir_files %>%
-  filter(system %in% soi) %>%
-  # drop duplicates
-  arrange(relative_filepath) %>%
-  group_by(sample_id, read_dir) %>%
-  slice_head(n = 1) %>%
-  ungroup()
+source_dir_filtered = source_dir_matched %>%
+  filter(study_system %in% soi)
 
+source_dir_filtered_files = source_dir_filtered %>%
+  pivot_longer(cols = c("forward", "reverse"),
+               names_to = "read_dir",
+               values_to = "absolute_filepath")
 
-# check for duplicate copies of sample/read_dir
-dupes_samples_2 = get_dupes(foi, sample_id, read_dir)
-
-if (nrow(dupes_samples_2) > 0) {
-  stop("Unexpected duplicate samples found. Aborting.")
-}
-
-# check two reads per sample (forward & reverse)
-dupes_samples_3 = foi %>%
-  group_by(sample_id) %>%
-  count() %>%
-  filter(n != 2)
-
-if (nrow(dupes_samples_3) > 0) {
-  stop(paste0("Unpaired reads found for the following samples:\n\t", paste0(dupes_samples_3$sample_id, collapse = "\n\t")))
-}
+## for testing
+# source_dir_filtered_files = head(source_dir_filtered_files, n = 10)
 
 ```
 
 # Copy files to copy directory
 ```{r}
+
+# create destination dir if it does not exist
+if (!dir.exists(destination_dir)) {
+  dir.create(destination_dir, recursive = TRUE)
+}
+
 # delete all existing files in directory first
-if (length(list.files(search_dir)) > 0) {
+if (length(list.files(destination_dir)) > 0) {
   drop_input = readline(prompt = "Files exist in the copy directory. Do you want to delete these files before copying? [y/n]"); 
   
   if (tolower(drop_input == "y")) {
-    cat("Deleting existing files in copy directory.\n")
-    unlink(here(copy_dir, "*"))
+    cat("Deleting existing files in destination directory.\n")
+    unlink(here(destination_dir, "*"))
   } else if (tolower(drop_input == "n")) {
-    cat("Leaving existing files in copy directory. Proceeding to copy new files.\n")
+    cat("Leaving existing files in destination directory. Proceeding to copy new files.\n")
   } else {
     stop("Input not recognized. Copy aborted.")
   }
 }
 
-cat(paste0("Copying ", as.character(nrow(foi)), " sequence files to copy directory... "))
+cat(paste0("Copying ", as.character(nrow(source_dir_filtered_files)), " sequence files to destination directory... "))
 
-file.copy(foi$absolute_filepath, copy_dir)
+file.copy(source_dir_filtered_files$absolute_filepath, destination_dir)
 
 cat("done.")
 ```
