@@ -93,10 +93,11 @@ This workflow makes assumptions and choices which substantially influence the ou
 
    You can alternatively copy your own classifier to the `16S_sequence_processing` folder, or skip this step to run without a local classifier.
 
-3. Locate sequences for your run, selecting one of the following:
+3. Collect the sequence files for your processing run, selecting one of the following:
 
-   - **Your own sequences:** Create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyyy-mm-dd`), create a `sequences` subfolder inside it, and copy your `.fastq` or `.fastq.gz` paired amplicon sequence files there. Sequence files can be nested in subfolders without issue.
-   - **Test the pipeline:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
+   - **Copy sequences manually:** Create a run folder (e.g. `16S_sequence_processing/runs/run-name_yyyy-mm-dd`), create a `sequences` subfolder inside it, and copy your `.fastq` or `.fastq.gz` paired amplicon sequence files there. Sequence files can be nested in subfolders without issue.
+   - **Copy sequences automatically by system:** Use the `utilities/copy_seqs_by_system.Rmd` tool to identify and copy sequences associated with a specified study system into a new run directory.
+   - **Use test sequences:** An existing run folder `16S_sequence_processing/runs/test_run_01` has been included with test sequences. Proceed to Step 3.
 
 4. Open `16S_sequence_processing/config.yml` in a text editor and confirm the configuration settings for your run. Save the file after editing.
   - By default, `config.yml` is set up for the test run `test_run_01` without a local classifier.

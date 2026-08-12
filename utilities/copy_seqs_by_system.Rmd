@@ -19,8 +19,13 @@ librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio)
 source_dir = here(Sys.getenv("data_dir"), "edna_results")
 
 # directories (or start of directories) to exclude from search and copy
-excluded_dirs = c(here(source_dir, "July_2024_poorquality"),
-                  here(source_dir, "December 2023"))
+excluded_dirs = c(
+  here(source_dir, "July_2024_poorquality"),  # re-sequenced in August 2024/sierra_2022
+  here(source_dir, "December 2023/All_Sequences/MINI824"),  # re-sequenced in Mini816
+  here(source_dir, "December 2023/All_Sequences/MINI825"),  # re-sequenced in Mini816
+  here(source_dir, "April 2024", "Sequencing_April2024", "Full_Run", "Miseq_835_Brandon_47942-417083877"),  # duplicated in April 2024
+  here(source_dir, "July_2_2026/Project_Fluidigm_PITT-509339831/BaseSpace_CLI_07_02_2026_1_53_11-937308385")  # single duplicated sample
+)
 # 
 # excluded_dirs = c(here(source_dir, "July_2024_poorquality"),
 #                   here(source_dir, "December 2023", "All_Sequences", "Mini816"),
@@ -28,13 +33,13 @@ excluded_dirs = c(here(source_dir, "July_2024_poorquality"),
 #                   here(source_dir, "December 2023", "All_Sequences", "Miseq_816"))
 
 # directory to copy files to
-destination_dir = here("16S_sequence_processing", "runs", "copy_test", "sequences")
+destination_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-12", "sequences")
 
-# lookup table for extraction_ids & study systems
+# Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
 sample_lookup_file = here(source_dir, "RIBBiTR eDNA Processing 22-25_2026-08-12.xlsx")
 
 # system(s) of interest: any of: Brazil, Panama, Pennsylvania, Sierra Nevada
-soi = c("Pennsylvania")
+soi = c("Brazil")
 
 ```
 
@@ -42,12 +47,8 @@ soi = c("Pennsylvania")
 ```{r}
 lookup_samples = import(sample_lookup_file, which = "SEQUENCING") %>%
   clean_names() %>%
-  filter(!is.na(extraction_id)) %>%
-  # one-off fixes (fix in spreadsheet?)
-  mutate(
-    # extraction_id = gsub("PAN_22_0(\\d{2})", "PAN_22_\\1", extraction_id),
-    extraction_id = gsub("PAN_22", "PAN_eDNA_22", extraction_id)
-    )
+  filter(!is.na(sequencing_id),
+         sequencing_date != "Not sent")
 ```
 
 # Parse search directory
@@ -86,10 +87,6 @@ check_sample_missing_dir = source_dir_samples %>%
 if (nrow(check_sample_missing_dir) > 0) {
   stop(paste0("Unpaired reads found for the following samples:\n\t", paste0(check_sample_missing_dir$relative_filepath, collapse = "\n\t")))
 }
-
-# drop problematic duplicates
-source_dir_samples_unique = source_dir_samples %>%
-  filter(!(sequencing_base %in% sample_dupes$sequencing_base))
 ```
 
 # align with lookup table
@@ -100,20 +97,22 @@ match_fun = function(a, b) {
 }
 
 source_dir_matched = fuzzy_full_join(
-  source_dir_samples_unique, lookup_samples,
-  by = c("sequencing_base" = "extraction_id"),
+  source_dir_samples, lookup_samples,
+  by = c("sequencing_base" = "sequencing_id"),
   match_fun = match_fun)
 
 # checks
 ## many to one
 check_m2o = source_dir_matched %>%
   count(sequencing_base) %>%
-  filter(n > 1)  # rows in A matched by more than one b
+  filter(n > 1,
+         !is.na(sequencing_base))  # rows in A matched by more than one b
 
 ## one to many
 check_o2m = source_dir_matched %>%
-  count(extraction_id) %>%
-  filter(n > 1)  # rows in B matched by more than one a
+  count(sequencing_id) %>%
+  filter(n > 1,
+         !is.na(sequencing_id))  # rows in B matched by more than one a
 
 ## no sequence
 check_no_seq = source_dir_matched %>%
@@ -121,13 +120,16 @@ check_no_seq = source_dir_matched %>%
 
 ## no extraction_id
 check_no_ext = source_dir_matched %>%
-  filter(is.na(extraction_id))
+  filter(is.na(sequencing_id))
 
 check_misaligned = source_dir_matched %>%
-  filter(is.na(sequencing_base) | is.na(extraction_id)) %>%
-  mutate(working_id = coalesce(sequencing_base, extraction_id)) %>%
-  arrange(working_id) %>%
-  select(working_id,
+  filter(is.na(sequencing_base) | is.na(sequencing_id)) %>%
+  arrange(sequencing_base,
+         sequencing_id) %>%
+  select(sequencing_base,
+         sequencing_id,
+         relative_parent_dir,
+         sequencing_date,
          everything())
 
 ```
@@ -136,7 +138,9 @@ check_misaligned = source_dir_matched %>%
 ```{r}
 # files of interest
 source_dir_filtered = source_dir_matched %>%
-  filter(study_system %in% soi)
+  filter(!is.na(sequencing_base),
+         !is.na(sequencing_id),
+         study_system %in% soi)
 
 source_dir_filtered_files = source_dir_filtered %>%
   pivot_longer(cols = c("forward", "reverse"),
