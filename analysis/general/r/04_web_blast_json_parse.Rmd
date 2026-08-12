@@ -23,7 +23,7 @@ You will first need to manually submit a Genbank Web BLAST query, and download t
     - adjust the `Expect threshold` (0.03 is recommended)
   - Click `BLAST` and wait for the query to finish
 3. In the main results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[run-directory]/outout/`
-4. Once you have the results file, adjust the parameters in the `Config` section below to match your needs. You can then run this script ot strip and structure the results for downstream analysis.
+4. Once you have the results file, adjust the parameters in the `Config` section below to match your needs. You can then run this script to parse and structure the results for downstream analysis.
 
 # Config
 ```{r}

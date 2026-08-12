@@ -29,31 +29,47 @@ At this point you have successfully processed some sequences through the [Amphib
       Sys.getenv("ENTREZ_KEY")
       ```
       
-      This should display your Entrez API key (an empty string `""` means this was unsuccessful).
+      This should display your Entrez API key (an empty string `""` means the key is not found).
 
-    
-
-2. **Set up GBIF API access:** This will allow you to look up GBIF occurrences of taxa of interest without additional steps (used in `analysis/general/r/05_query_taxonomy_geography.Rmd`):
+2. **Set up GBIF API access (optional):** This will allow you to look up GBIF occurrences of taxa (used optionally in `analysis/general/r/05_query_taxonomy_geography.Rmd`):
 
     - [Register with GBIF](https://www.gbif.org/) -> Login *(top right)* -> Register (If you have not already)
     - Follow [this tutorial](https://docs.ropensci.org/rgbif/articles/gbif_credentials.html) to save your GBIF login where it can be accessed by the package `rgbif`.
 
-
-3. **Establish a connection to RIBBiTR database:** This will allow you to link eDNA results with collection metadata (used in `analysis/general/r/07_join_sample_collection.Rmd`):
+3. **Establish a connection to RIBBiTR database:** This will allow you to link eDNA results with field collection metadata (used in `analysis/general/r/07_join_sample_collection.Rmd`):
 
     - Follow the [RIBBiTR DB connection tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html) to connect in RStudio.
 
 ## Analysis
-These scripts have not been automated, as they contain more decisions for users to consider as they conduct the analysis. To begin, navigate to the `analysis/general/r/` folder. Each script here corresponds to the steps below. Open each scrip in RStudio, look at the header notes, set the configuration ("config") sections to meet your needs and run the script:
+The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts which should be run in RStudio in succession. They have not been automated, as each script contains decisions for users to consider as the analysis progresses. To begin, navigate to the `analysis/general/r/` folder. Open each script in RStudio, review the header notes, set the parameters in the configuration ("config") sections at the top to meet your needs, and run each script.
 
-4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions to upload the representative sequences to [NCBI's Web Blast](https://blast.ncbi.nlm.nih.gov/Blast.cgi) service, and download the .json query results. Run the script to parse the .json outputs.
+4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions below to upload the representative sequences to [NCBI's Web Blast](https://blast.ncbi.nlm.nih.gov/Blast.cgi) service, and download the query results. This script parses the .json outputs from the Web BLAST query.
+  a. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
+    - Visit https://blast.ncbi.nlm.nih.gov/Blast.cgi, click on Nucleotide BLAST
+    - Click `Browse` and navigate to the ASV representative sequences .fasta file at: `[your-run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
+    - Under `Program Selection: Optimize for`, select `More dissimilar sequences (discontiguous megablast)` (ideal for eDNA)
+    - Under `Algorithm parameters`
+      - adjust the max number of hits as desired (10 - 100 is likely fine)
+      - adjust the `Expect threshold` (0.03 is recommended)
+    - Click `BLAST` and wait for the query to finish
+  b. In the main Web BLAST results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[your-run-directory]/outout/`
+  c. Once you have the results file, adjust the parameters in the `Config` section to match your needs. You can then run this script to parse and structure the results for downstream analysis.
 
-5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in the study system of interest, to prioritize classification of local species. This pulls in hits from any of the following sources: BLAST, Vsearch, or Web BLAST.
+5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in the study system of interest, to prioritize classification of local species and provide context for interpretation. This pulls in hits from any of the following sources: BLAST, Vsearch, or Web BLAST.
+  - This script requires API keys for GBIF in .Renviron (see `Setup` above).
+  - This step is optional. If you want to skip this step, proceed to the next script (`06_classify_asv.Rmd`) and set config the parameter `gbif_query` to `FALSE`.
+  
+6. **Classify ASVs** *(06_classify_asv.Rmd)*: This script uses a hierarchy of classification methods to assign taxonomic hits to each ASV, optionally pulling from the GBIF query and incorporating hits from any of the following sources: : BLAST, Vsearch, or Web BLAST.
+  - A likely taxonomy is assigned to each ASV following the hierarchy `accept_method`s if the given `accept_method` criteria are met. All assigned taxonomy from all methods, along with all hits, are exported to the specified `hybrid_classification_out` path.
+  - The single "best" classifications (i.e. `accept_method` with greatest priority in hierarchy) for each ASV are exported to the specified `classification_out` path.
 
-6. **Classify ASVs** *(06_classify_asv.Rmd)*: This script uses a hierarchy of classification methods to assign taxonomic hits to each ASV, pulling from the GBIF query (if conducted) and incorporating hits from any of the following sources: : BLAST, Vsearch, or Web BLAST.
 
-7. **Map Samples** *(07_sample_map.Rmd)*: This script Maps Illumina samples to RIBBiTR sample ids, to support alignment of results with collection metadata downstream.
+7. **Map Samples** *(07_sample_map.Rmd)*: This script Maps Illumina samples to RIBBiTR sample ids, to support alignment of results with collection metadata downstream.\
+  - This requires a connection to the RIBBiTR database (see `Setup` above).
 
-8. **Control for Contamination** *(08_sample_controls.Rmd)*: This script corrects ASV read numbers for contamination by removing up to 100x the read numbers of any ASVs found in associated controls.
+8. **Control for Contamination** *(08_sample_controls.Rmd)*: This script calculates controlled ASV reads for each sample by subtracting any read counts found in controls (multiplied by a scaling factor `asv_control_th_factor`), with minimum controlled reads of 0.
+  - Lab positive and negative controls are applied to all samples globally, while field negative controls are applied to corresponding field samples only.
 
-9. **Export Results** *(09_export_results.Rmd)*: This script combines results from steps 6, 7, and 8, and as well as sample metadata from thge RIBBiTR database, to create two cohesive outputs: 1) for ASVs (reads, classifications, etc.) and 2) field samples (collection site, date, filter method, etc.)
+9. **Export Results** *(09_export_results.Rmd)*: This script combines results from steps 6, 7, and 8, and as well as sample metadata from the RIBBiTR database, to create two cohesive outputs:
+  a. for ASVs (reads, classifications, etc.)
+  b. field samples (collection site, date, filter method, etc.)
