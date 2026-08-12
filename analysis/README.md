@@ -46,7 +46,8 @@ The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts wh
 4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions below to upload the representative sequences to [NCBI's Web Blast](https://blast.ncbi.nlm.nih.gov/Blast.cgi) service, and download the query results. This script parses the .json outputs from the Web BLAST query.
   a. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
     - Visit https://blast.ncbi.nlm.nih.gov/Blast.cgi, click on Nucleotide BLAST
-    - Click `Browse` and navigate to the ASV representative sequences .fasta file at: `[your-run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
+    - In the `Enter Query Sequence` panel, beside `Or, upload file`, click `Browse` and navigate to the ASV representative sequences .fasta file at: `[your-run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
+    - Add a descriptive `Job Title`
     - Under `Program Selection: Optimize for`, select `More dissimilar sequences (discontiguous megablast)` (ideal for eDNA)
     - Under `Algorithm parameters`
       - adjust the max number of hits as desired (10 - 100 is likely fine)
