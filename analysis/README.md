@@ -12,16 +12,16 @@ At this point you have successfully processed some sequences through the [Amphib
 
     - [Register with NCBI](https://account.ncbi.nlm.nih.gov/signup/) (if you have not already)
     - Log in and generate an Entrez API key following [this guidance](https://support.nlm.nih.gov/kbArticle/?pn=KA-05317). Copy your API key.
-    - Save this key to your local `.Renviron`. In RStudio, run the following lines:
+    - In your RStudio Console, run the following lines to save the API key to your local `.Renviron`:
     
       ```{r}
-      install.packages("usethis")  # if not already installed
+      install.packages("usethis")
       usethis::edit_r_environ()
       ```
   
       In the .Renviron document that opens, save your copied API key as: 
   
-          `ENTREZ_KEY = "your-key-here".`
+      `ENTREZ_KEY = "your-key-here"`
           
       Save and close the .Renviron document. Then in the RStudio menu go to `Session` -> `Restart R`. You can test that your key is saved and accessible by running:
  
