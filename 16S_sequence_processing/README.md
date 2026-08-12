@@ -115,6 +115,10 @@ This workflow makes assumptions and choices which substantially influence the ou
      podman run -it --rm -v $(pwd):/data:z edna-pipeline bash run-seq-processing.sh
      ```
 
+6. Analysis
+
+You are ready to analyze your results! Go to the [Analysis](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/analysis) README for instructions and to begin analyzing processed sequence results.
+
 ---
 
 ### QC Run Only
@@ -142,11 +146,13 @@ This workflow is a limited "quality control" version of the complete sequence pr
 
 ## Tools and Tips
 
-- When you initiate this workflow, the configuration file (`16S_sequence_processing/config.yml`) is copied to `[YOUR RUN DIR]/output/metadata/config.yml` where it is referenced by the workflow scripts. You can therefore subsequently revise the configuration file and run additional workflows simultaneously, with each run referencing its own local configuration parameters. You also have a copy of the configuration file to reference and rerun the analysis in the future.
+- The 
+
+- When you initiate this workflow, the configuration file (`16S_sequence_processing/config.yml`) is copied to `your-run-dir/output/metadata/config.yml` where it is referenced by the workflow scripts. After initiating a run you can therefore immediately revise the configuration file and run additional workflows simultaneously, with each run referencing its own local configuration parameters. You also have a copy of the configuration file to reference and rerun the analysis in the future.
 
 - When the workflow terminates, a run metadata file `your-run-dir/output/metadata/run_metadata.yml` is generated which contains all configuration parameters, as well as run statistics and diagnostics.
 
-- **File permissions:** Podman runs containers as your own user by default (rootless), so output files and folders created by the pipeline will be owned by you and fully accessible after the run. If you are using Docker instead and encounter permission issues on output folders, add `--user $(id -u):$(id -g)` to your `docker run` commands, or reclaim ownership of existing folders with `sudo chown -R $USER:$USER runs/`.
+- **File permissions:** Podman runs containers as your own user by default (rootless), so output files and folders created by the pipeline will be owned by you and fully accessible after the run. If you are using Docker instead and encounter permission issues on output folders, try adding `--user $(id -u):$(id -g)` to your `docker run` commands, or reclaim ownership of existing folders with `sudo chown -R $USER:$USER runs/`.
 
 - **The `:z` volume flag** on the `-v` mount option sets the correct SELinux label on Linux systems, allowing the container to read and write your project files. It is safely ignored on macOS and Windows.
 
