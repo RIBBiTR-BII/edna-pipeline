@@ -31,7 +31,7 @@ excluded_dirs = c(here(source_dir, "July_2024_poorquality"),
 destination_dir = here("16S_sequence_processing", "runs", "copy_test", "sequences")
 
 # lookup table for extraction_ids & study systems
-sample_lookup_file = here(source_dir, "RIBBiTR eDNA Processing 22-25_2026-08-11.xlsx")
+sample_lookup_file = here(source_dir, "RIBBiTR eDNA Processing 22-25_2026-08-12.xlsx")
 
 # system(s) of interest: any of: Brazil, Panama, Pennsylvania, Sierra Nevada
 soi = c("Pennsylvania")
@@ -52,7 +52,7 @@ lookup_samples = import(sample_lookup_file, which = "SEQUENCING") %>%
 
 # Parse search directory
 ```{r}
-# search sequencing piles exhaustively, excluding those in excluded dirs, and extract identifiers from file names
+# search sequencing files exhaustively, excluding those in excluded dirs, and extract identifiers from file names
 source_dir_files = tibble(relative_filepath = c(list.files(source_dir, recursive = TRUE))) %>%
   filter(str_detect(relative_filepath, "\\.fastq(\\.gz)?$")) %>%
   mutate(absolute_filepath = here(source_dir, relative_filepath),
@@ -70,12 +70,13 @@ source_dir_files = tibble(relative_filepath = c(list.files(source_dir, recursive
     any(str_starts(f, fixed(excluded_dirs)))
   }))
 
+# pivot wider to have 1 row per sample, with columns for forward and reverse reads
 source_dir_samples = source_dir_files %>%
   pivot_wider(id_cols = c("relative_parent_dir", "sequencing_base"),
               names_from = read_dir,
               values_from = absolute_filepath)
 
-# check for duplicates
+# check for sequencing_base duplicates
 check_sample_dupes = get_dupes(source_dir_samples, sequencing_base)
 
 # check for any without a forward or reverse read
