@@ -23,11 +23,7 @@ This document is designed to guide you through the steps to set up, process and 
     - [Register with NCBI](https://account.ncbi.nlm.nih.gov/signup/) (if you have not already)
     - Log in and generate an Entrez API key following [this guidance](https://support.nlm.nih.gov/kbArticle/?pn=KA-05317). Copy your API key.
     - Save this key to your local `.Renviron` file. In RStudio, run the following lines:
-    
-4. **Establish a connection to RIBBiTR database:** This will allow you to link eDNA results with collection metadata (used in `analysis/general/r/07_join_sample_collection.Rmd`):
 
-    - Follow the [RIBBiTR DB connection tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html) to connect in RStudio.
-  
 ```{r}
 #| eval: false
 #| include: true
@@ -38,6 +34,12 @@ usethis::edit_r_environ()
     In the .Renviron document that is opened, save your copied API key as: 
 
         `ENTREZ_KEY = "your-key-here".`
+
+
+4. **Establish a connection to RIBBiTR database:** This will allow you to link eDNA results with collection metadata (used in `analysis/general/r/07_join_sample_collection.Rmd`):
+
+    - Follow the [RIBBiTR DB connection tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html) to connect in RStudio.
+  
 
 # Processing
 To conduct your own personalized sequence processing run, follow the `Sequence Processing Run` instructions in the [16S_sequence_processing README.md](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/16S_sequence_processing) file. A few tips:

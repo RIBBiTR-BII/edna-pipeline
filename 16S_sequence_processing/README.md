@@ -18,8 +18,8 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 2. Install Podman -- Choose one of the options below:
 
-   - **Windows:** Install [Podman Desktop for Windows](https://podman-desktop.io/). This will also set up Podman Machine, a lightweight Linux virtual machine (VM) that Podman uses on Windows. During first launch, follow the prompt to initialise Podman Machine.
-   - **macOS:** Install [Podman Desktop for Mac](https://podman-desktop.io/). After installation, initialise Podman Machine from the Podman Desktop interface or run `podman machine init && podman machine start` in the terminal.
+   - **Windows:** Install [Podman Desktop for Windows](https://podman-desktop.io/). This will also set up Podman Machine, a lightweight Linux virtual machine (VM) that Podman uses on Windows. During first launch, follow the prompt to initialize Podman Machine.
+   - **macOS:** Install [Podman Desktop for Mac](https://podman-desktop.io/). After installation, initialize Podman Machine from the Podman Desktop interface or run `podman machine init && podman machine start` in the terminal.
    - **Linux:** Install Podman Engine directly — no VM required:
      ```bash
      sudo apt-get update && sudo apt-get install -y podman   # Debian/Ubuntu
@@ -117,7 +117,7 @@ This workflow makes assumptions and choices which substantially influence the ou
      podman run -it --rm -v $(pwd):/data:z edna-pipeline bash run-seq-processing.sh
      ```
 
-6. Analysis
+6. Analysis:
 
 You are ready to analyze your results! Go to the [Analysis](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/analysis) README for instructions and to begin analyzing processed sequence results.
 
