@@ -10,5 +10,5 @@ This repository contains the Amphibian 16S Sequence Processing workflow used in 
 
 ## Getting Started
 
-  - To begin processing eDNA sequences, navigate to [16S_sequence_processing](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/16S_sequence_processing) and work through the setup instructions.
-  - To analyze results from the Amphibian 16S Sequence Processing workflow, review the steps in the [Analysis workflow](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/analysis).
+  - To begin processing eDNA sequences, navigate to [16S_sequence_processing](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/16S_sequence_processing) and work through the setup and steps.
+  - To analyze results from the Amphibian 16S Sequence Processing workflow, navigate to the [Analysis workflow](https://github.com/RIBBiTR-BII/edna-pipeline/tree/main/analysis) and work through the setup and steps.
