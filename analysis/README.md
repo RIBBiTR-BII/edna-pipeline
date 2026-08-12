@@ -44,17 +44,17 @@ At this point you have successfully processed some sequences through the [Amphib
 The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts which should be run in RStudio in succession. They have not been automated, as each script contains decisions for users to consider as the analysis progresses. To begin, navigate to the `analysis/general/r/` folder. Open each script in RStudio, review the header notes, set the parameters in the configuration ("config") sections at the top to meet your needs, and run each script.
 
 4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions below to upload the representative sequences to [NCBI's Web Blast](https://blast.ncbi.nlm.nih.gov/Blast.cgi) service, and download the query results. This script parses the .json outputs from the Web BLAST query.
-  - a. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
-    - Visit https://blast.ncbi.nlm.nih.gov/Blast.cgi, click on Nucleotide BLAST
-    - In the `Enter Query Sequence` panel, beside `Or, upload file`, click `Browse` and navigate to the ASV representative sequences .fasta file at: `[your-run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
-    - Add a descriptive `Job Title`
-    - Under `Program Selection: Optimize for`, select `More dissimilar sequences (discontiguous megablast)` (ideal for eDNA)
-    - Under `Algorithm parameters`
-      - adjust the max number of hits as desired (10 - 100 is likely fine)
-      - adjust the `Expect threshold` (0.03 is recommended)
-    - Click `BLAST` and wait for the query to finish
-  - b. In the main Web BLAST results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[your-run-directory]/outout/`
-  - c. Once you have the results file, adjust the parameters in the `Config` section to match your needs. You can then run this script to parse and structure the results for downstream analysis.
+    - a. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
+      - Visit https://blast.ncbi.nlm.nih.gov/Blast.cgi, click on Nucleotide BLAST
+      - In the `Enter Query Sequence` panel, beside `Or, upload file`, click `Browse` and navigate to the ASV representative sequences .fasta file at: `[your-run-directory]/analysis/s06_denoised_16S_eDNA/representative sequences/.../data/dna-sequences.fasta`
+      - Add a descriptive `Job Title`
+      - Under `Program Selection: Optimize for`, select `More dissimilar sequences (discontiguous megablast)` (ideal for eDNA)
+      - Under `Algorithm parameters`
+        - adjust the max number of hits as desired (10 - 100 is likely fine)
+        - adjust the `Expect threshold` (0.03 is recommended)
+      - Click `BLAST` and wait for the query to finish
+    - b. In the main Web BLAST results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[your-run-directory]/outout/`
+    - c. Once you have the results file, adjust the parameters in the `Config` section to match your needs. You can then run this script to parse and structure the results for downstream analysis.
 
 5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in the study system of interest, to prioritize classification of local species and provide context for interpretation. This pulls in hits from any of the following sources: BLAST, Vsearch, or Web BLAST.
   - This script requires API keys for GBIF in .Renviron (see `Setup` above).
