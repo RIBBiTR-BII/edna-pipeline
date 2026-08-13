@@ -13,33 +13,31 @@ This is a utility script which parses through nested folders for .fastq sequenci
 Fill out the parameters below to point to the corresponding local directories and files.
 ```{r}
 # load required packages
-librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio)
+librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio, readr)
 
 # directory to search recursively
-source_dir = here(Sys.getenv("data_dir"), "edna_results")
+source_dir = "/home/cob/All_Sequence_Runs/"
 
-# directories (or start of directories) to exclude from search and copy
-excluded_dirs = c(
-  here(source_dir, "July_2024_poorquality"),  # re-sequenced in August 2024/sierra_2022
-  here(source_dir, "December 2023/All_Sequences/MINI824"),  # re-sequenced in Mini816
-  here(source_dir, "December 2023/All_Sequences/MINI825"),  # re-sequenced in Mini816
-  here(source_dir, "April 2024", "Sequencing_April2024", "Full_Run", "Miseq_835_Brandon_47942-417083877"),  # duplicated in April 2024
-  here(source_dir, "July_2_2026/Project_Fluidigm_PITT-509339831/BaseSpace_CLI_07_02_2026_1_53_11-937308385")  # single duplicated sample
-)
-# 
-# excluded_dirs = c(here(source_dir, "July_2024_poorquality"),
-#                   here(source_dir, "December 2023", "All_Sequences", "Mini816"),
-#                   here(source_dir, "December 2023", "All_Sequences", "MINI824"),
-#                   here(source_dir, "December 2023", "All_Sequences", "Miseq_816"))
+# test access/location of source dir (you should see the expected sequencing subfolders)
+list.files(source_dir)
 
-# directory to copy files to
-destination_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-12", "sequences")
+# specify directories to prioritize (in order) if duplicate sequencing file names are found
+priority_dirs = c("December_2023/data/All_Sequences/Mini816_Brandon-Hoenig_47110-12S-405228845",
+                  "February_2023/Sequences/384207224",
+                  "December_2023/data/16S_MiSeq",
+                  "August_2024-July2024Rerun",
+                  "April_2024/Sequencing_April2024/Full_Run/sequences",
+                  "December_2023/data/QC_Run/16S_Seqs/Mini816_Brandon-Hoenig_47110_16S-405228846",
+                  "July_2_2026/Project_Fluidigm_PITT-509339831/BaseSpace_CLI_07_02_2026_1_43_47-937609681")
 
 # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
-sample_lookup_file = here(source_dir, "RIBBiTR eDNA Processing 22-25_2026-08-12.xlsx")
+sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-13.xlsx")
+
+# directory to copy files to
+destination_dir = here("16S_sequence_processing", "runs", "sierra_2026-08-13", "sequences")
 
 # system(s) of interest: any of: Brazil, Panama, Pennsylvania, Sierra Nevada
-soi = c("Brazil")
+soi = c("Sierra Nevada")
 
 ```
 
@@ -53,8 +51,36 @@ lookup_samples = import(sample_lookup_file, which = "SEQUENCING") %>%
 
 # Parse search directory
 ```{r}
+# defin function
+resolve_priority_dupes = function(df, priority_dirs,
+                                    id_col = "sequencing_base",
+                                    dir_col = "relative_parent_dir") {
+
+  # for a single directory value, find the rank of the first (highest-priority)
+  # priority_dirs entry that is an ancestor of (or equal to) it
+  match_rank = function(dir_val) {
+    is_match = (dir_val == priority_dirs) |
+      startsWith(dir_val, paste0(priority_dirs, "/"))
+    if (any(is_match)) min(which(is_match)) else NA_integer_
+  }
+
+  df %>%
+    mutate(.priority_rank = vapply(.data[[dir_col]], match_rank, integer(1))) %>%
+    group_by(.data[[id_col]]) %>%
+    mutate(
+      .has_priority_match = any(!is.na(.priority_rank)),
+      .min_rank = suppressWarnings(min(.priority_rank, na.rm = TRUE))
+    ) %>%
+    filter(!.has_priority_match | .priority_rank == .min_rank) %>%
+    ungroup() %>%
+    select(-.priority_rank, -.has_priority_match, -.min_rank)
+}
+
+
+source_dir_files_raw = tibble(relative_filepath = c(list.files(source_dir, recursive = TRUE)))
+
 # search sequencing files exhaustively, excluding those in excluded dirs, and extract identifiers from file names
-source_dir_files = tibble(relative_filepath = c(list.files(source_dir, recursive = TRUE))) %>%
+source_dir_files = source_dir_files_raw %>%
   filter(str_detect(relative_filepath, "\\.fastq(\\.gz)?$")) %>%
   mutate(absolute_filepath = here(source_dir, relative_filepath),
          relative_parent_dir = dirname(relative_filepath),
@@ -66,16 +92,20 @@ source_dir_files = tibble(relative_filepath = c(list.files(source_dir, recursive
          read_dir = case_when(
            grepl("_R1_", processing_id) ~ "forward",
            grepl("_R2_", processing_id) ~ "reverse",
-           .default = NA)) %>%
-  filter(!purrr::map_lgl(absolute_filepath, function(f) {
-    any(str_starts(f, fixed(excluded_dirs)))
-  }))
+           .default = NA))
+
+# %>%
+#   filter(!purrr::map_lgl(absolute_filepath, function(f) {
+#     any(str_starts(f, fixed(excluded_dirs)))
+#   }))
+
 
 # pivot wider to have 1 row per sample, with columns for forward and reverse reads
 source_dir_samples = source_dir_files %>%
   pivot_wider(id_cols = c("relative_parent_dir", "sequencing_base"),
               names_from = read_dir,
-              values_from = absolute_filepath)
+              values_from = absolute_filepath) %>%
+  resolve_priority_dupes(priority_dirs = priority_dirs)
 
 # check for sequencing_base duplicates
 check_sample_dupes = get_dupes(source_dir_samples, sequencing_base)
@@ -92,7 +122,7 @@ if (nrow(check_sample_missing_dir) > 0) {
 # align with lookup table
 ```{r}
 match_fun = function(a, b) {
-  pattern = paste0("(?<![0-9])", stringr::str_escape(b), "(?![0-9])")
+  pattern = paste0("(?<![0-9A-Za-z])", stringr::str_escape(b), "$")
   stringr::str_detect(a, pattern)
 }
 
@@ -102,17 +132,17 @@ source_dir_matched = fuzzy_full_join(
   match_fun = match_fun)
 
 # checks
-## many to one
+## one sequence file to many samples (generally not good)
 check_m2o = source_dir_matched %>%
   count(sequencing_base) %>%
   filter(n > 1,
-         !is.na(sequencing_base))  # rows in A matched by more than one b
+         !is.na(sequencing_base))
 
-## one to many
+## one sample to many sequence files (generally ok)
 check_o2m = source_dir_matched %>%
   count(sequencing_id) %>%
   filter(n > 1,
-         !is.na(sequencing_id))  # rows in B matched by more than one a
+         !is.na(sequencing_id))
 
 ## no sequence
 check_no_seq = source_dir_matched %>%
