@@ -15,7 +15,7 @@ See the algorithm below for details on each `accept_method` and to adjust parame
 librarian::shelf(tidyverse, yaml, here, phylotools)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -24,7 +24,7 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 sequence_overlap_cutoff = 0
 
 # Did you run a gbif query (script 05) for local taxa, which you want incorporated in classification?
-gbif_query = TRUE
+gbif_query = FALSE
 
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))

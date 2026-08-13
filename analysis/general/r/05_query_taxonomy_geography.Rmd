@@ -20,7 +20,7 @@ librarian::shelf(tidyverse, yaml, here, rgbif)
 # requires GBIF token in .Renviron
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -28,7 +28,7 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 # geographic systems
 #   any of: brazil, panama, california, pennsylvania
 # recommend running one system at a time, for cleaner geographic distinction
-study_system = "pennsylvania"
+study_system = "brazil"
 
 taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv"))
 
@@ -48,7 +48,15 @@ if (file.exists(here(run_dir, "output", paste0(config$run$name, "_02_taxonomy_ta
 if (file.exists(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv")))) {
   taxa_web_blast_metazoa = read_csv(here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))) %>%
     mutate(species = sub("^\\S+\\s+", "", species)) %>%
-    select(all_of(colnames(taxa_raw))) %>%
+    select("accession",
+           "domain",
+           "kingdom",
+           "phylum",
+           "class",
+           "order",
+           "family",
+           "genus",
+           "species") %>%
     filter(kingdom == "Metazoa")
 } else {
   cat("No web blast results found, skipping.\n")
@@ -204,7 +212,7 @@ gbif_backbone_key = bind_rows(gbif_backbone_key_species,
                               gbif_backbone_key_genus,
                               gbif_backbone_key_family)
 
-cat("\tQuerying local taxa occurences\n")
+cat("\tQuerying local taxa occurrences\n")
 
 gbif_country_code = recode_values(study_system,
                                   "brazil" ~ "BR",
@@ -212,55 +220,46 @@ gbif_country_code = recode_values(study_system,
                                   "california" ~ "US",
                                   "pennsylvania" ~ "US")
 
-gbif_state_province = recode_values(study_system,
-                                    "brazil" ~ NA,
-                                    "panama" ~ NA,
-                                    "california" ~ "California",
-                                    "pennsylvania" ~ "Pennsylvania")
+gbif_gid1_code = recode_values(study_system,
+                               "brazil" ~ "BRA.25_1",
+                               "panama" ~ NA,
+                               "california" ~ "USA.5_1",
+                               "pennsylvania" ~ "USA.39_1")
 
-# SQL query
 valid_keys = na.omit(gbif_backbone_key$usageKey)
-keys_sql = paste(valid_keys, collapse = ", ")
 
-if (is.na(gbif_state_province)) {
-  sql_query = paste0("
-    SELECT taxonKey, speciesKey, familyKey, orderKey, 
-           species, genus, family,
-           COUNT(*) AS occ_count
-    FROM occurrence
-    WHERE countryCode = '", gbif_country_code, "'
-    AND taxonKey IN (", keys_sql, ")
-    GROUP BY taxonKey, speciesKey, familyKey, orderKey,
-             species, genus, family
-  ")
-} else {
-    sql_query = paste0("
-    SELECT taxonKey, speciesKey, familyKey, orderKey, 
-           species, genus, family,
-           COUNT(*) AS occ_count
-    FROM occurrence
-    WHERE countryCode = '", gbif_country_code, "'
-    AND stateProvince = '", gbif_state_province, "'
-    AND taxonKey IN (", keys_sql, ")
-    GROUP BY taxonKey, speciesKey, familyKey, orderKey,
-             species, genus, family
-  ")
+# build predicate list
+preds = list(
+  pred("country", gbif_country_code),
+  pred_in("taxonKey", valid_keys)
+)
+
+if (!is.na(gbif_gid1_code)) {
+  preds = c(preds, list(pred("gadm", gbif_gid1_code)))
 }
 
-# submit query
-sql_submission = occ_download_sql(sql_query)
+# submit download
+download_submission = occ_download(
+  pred_and(.list = preds),
+  format = "SIMPLE_CSV"
+)
 
-# Wait until query is complete
-occ_download_wait(sql_submission)
+# wait until query is complete
+occ_download_wait(download_submission)
 
 # download data
-occ_download_file = occ_download_get(sql_submission, path = here(run_dir, "output"))
+occ_download_file = occ_download_get(download_submission, path = here(run_dir, "output"))
 
 # import data
-occ_data = occ_download_import(occ_download_file)
+occ_data_raw = occ_download_import(occ_download_file)
+
+# aggregate locally (replaces the SQL GROUP BY)
+occ_data_summary = occ_data_raw %>%
+  group_by(taxonKey, speciesKey, species, genus, family) %>%
+  summarise(occ_count = n(), .groups = "drop")
 
 # export with reusable name
-write_csv(occ_data, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))
+write_csv(occ_data_summary, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))
 
 # drop downloads to reduce clutter
 if (file.exists(as.character(occ_download_file)) & file.exists(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))) {
@@ -272,13 +271,13 @@ if (file.exists(as.character(occ_download_file)) & file.exists(here(run_dir, "ou
 
 # Process GBIF data
 ```{r}
-occ_data = read_csv(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv"))) %>%
-  mutate(usageKey = as.character(taxonkey)) %>%
+occ_data_summary = read_csv(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv"))) %>%
+  mutate(usageKey = as.character(taxonKey)) %>%
   select(usageKey,
          occ_count)
 
 gbif_backbone_key_occ = gbif_backbone_key %>%
-  left_join(occ_data, by = "usageKey") %>%
+  left_join(occ_data_summary, by = "usageKey") %>%
   mutate(local_occ_count = ifelse(is.na(occ_count), 0, occ_count))
 
 # join with taxa_out
