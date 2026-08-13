@@ -228,53 +228,43 @@ this_row = study_system_lookup[study_system_lookup$study_system == study_system,
 gbif_country_code = this_row$gbif_country_code
 gbif_gid1_code = this_row$gbif_gid1_code
 
-valid_keys = na.omit(gbif_backbone_key$usageKey)
+valid_keys = unique(na.omit(gbif_backbone_key$usageKey))
 
-# build predicate list
 preds = list(
   pred("country", gbif_country_code),
   pred_in("taxonKey", valid_keys)
 )
-
-if (!is.na(gbif_gid1_code)) {
-  preds = c(preds, list(pred("gadm", gbif_gid1_code)))
+if (!is.na(gbif_gadm_gid)) {
+  preds = c(preds, list(pred("gadm", gbif_gadm_gid)))
 }
 
-# submit download
 download_submission = occ_download(
   pred_and(.list = preds),
   format = "SIMPLE_CSV"
 )
 
-# wait until query is complete
 occ_download_wait(download_submission)
 
-# download data
 occ_download_file = occ_download_get(download_submission, path = here(run_dir, "output"))
-
-# import data
 occ_data_raw = occ_download_import(occ_download_file)
 
-# aggregate locally (replaces the SQL GROUP BY)
+# clean, exact per-key counts — no facet, no hierarchy contamination
 occ_data_summary = occ_data_raw %>%
-  group_by(taxonKey, speciesKey, species, genus, family) %>%
-  summarise(occ_count = n(), .groups = "drop")
+  count(taxonKey, name = "occ_count") %>%
+  rename(usageKey = taxonKey)
 
-# export with reusable name
 write_csv(occ_data_summary, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))
 
-# drop downloads to reduce clutter
-if (file.exists(as.character(occ_download_file)) & file.exists(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))) {
+# cleanup
+if (file.exists(as.character(occ_download_file))) {
   file.remove(as.character(occ_download_file))
-} else {
-  stop("Download file error (Panama), stopping.")
 }
 ```
 
 # Process GBIF data
 ```{r}
 occ_data_summary = read_csv(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv"))) %>%
-  mutate(usageKey = as.character(taxonKey)) %>%
+  mutate(usageKey = as.character(usageKey)) %>%
   select(usageKey,
          occ_count)
 
