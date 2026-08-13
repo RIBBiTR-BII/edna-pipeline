@@ -214,17 +214,19 @@ gbif_backbone_key = bind_rows(gbif_backbone_key_species,
 
 cat("\tQuerying local taxa occurrences\n")
 
-gbif_country_code = recode_values(study_system,
-                                  "brazil" ~ "BR",
-                                  "panama" ~ "PA",
-                                  "california" ~ "US",
-                                  "pennsylvania" ~ "US")
+# lookup table
+study_system_lookup = data.frame(
+  study_system = c("brazil", "panama", "california", "pennsylvania"),
+  gbif_country_code = c("BR", "PA", "US", "US"),
+  gbif_gid1_code = c("BRA.25_1", NA, "USA.5_1", "USA.39_1"),
+  stringsAsFactors = FALSE
+)
 
-gbif_gid1_code = recode_values(study_system,
-                               "brazil" ~ "BRA.25_1",
-                               "panama" ~ NA,
-                               "california" ~ "USA.5_1",
-                               "pennsylvania" ~ "USA.39_1")
+# index into it
+this_row = study_system_lookup[study_system_lookup$study_system == study_system, ]
+
+gbif_country_code = this_row$gbif_country_code
+gbif_gid1_code = this_row$gbif_gid1_code
 
 valid_keys = na.omit(gbif_backbone_key$usageKey)
 
