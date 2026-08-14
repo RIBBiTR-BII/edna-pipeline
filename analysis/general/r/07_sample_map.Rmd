@@ -9,13 +9,13 @@ This script aligns illumina samples with sample names and IDs in the RIBBiTR dat
 
 # Config
 ```{r}
-librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janitor, rio)
+librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janitor, rio, fuzzyjoin, uuid)
 
-# methods samples lookup file
-methods_lookup_in = here(Sys.getenv("data_dir"), "edna_results", "Illumina_runs_for_paper_2026-03-05.xlsx")
+# Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
+sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-13.xlsx")
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -23,108 +23,150 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 # sample map out file
 map_out = here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv"))
 
-# establish database connection
-dbcon = hopToDB("ribbitr")
+# # establish database connection
+# dbcon = hopToDB("ribbitr")
 
 ```
 
 # Load data
 ```{r}
 
-# db table pointers
-db_edna = tbl(dbcon, Id("survey_data", "edna_collection"))
-db_env = tbl(dbcon, Id("survey_data", "environmental"))
-db_survey = tbl(dbcon, Id("survey_data", "survey"))
-db_visit = tbl(dbcon, Id("survey_data", "visit"))
-db_site = tbl(dbcon, Id("survey_data", "site"))
-db_region = tbl(dbcon, Id("survey_data", "region"))
-db_country = tbl(dbcon, Id("survey_data", "country"))
+# # db table pointers
+# db_edna = tbl(dbcon, Id("survey_data", "edna_collection"))
+# db_env = tbl(dbcon, Id("survey_data", "environmental"))
+# db_survey = tbl(dbcon, Id("survey_data", "survey"))
+# db_visit = tbl(dbcon, Id("survey_data", "visit"))
+# db_site = tbl(dbcon, Id("survey_data", "site"))
+# db_region = tbl(dbcon, Id("survey_data", "region"))
+# db_country = tbl(dbcon, Id("survey_data", "country"))
 
-# read in methods lookup file
-methods_lookup = import(methods_lookup_in) %>%
+# # read in methods lookup file
+# methods_lookup = import(methods_lookup_in) %>%
+#   clean_names() %>%
+#   mutate(sequencing_sample_name = if_else(grepl("PENN_", sequencing_sample_name),
+#                                           gsub("PENN-", "PENN_", gsub("_", "-", sequencing_sample_name)),
+#                                           sequencing_sample_name),
+#          edna_sample_name = if_else(grepl("PAN_22", id_e_dna_sample),
+#                                     id_e_dna_sample_edited,
+#                                     id_e_dna_sample),
+#          edna_sample_name = gsub("(^[0-9]{6})_", "\\1_eDNA_", edna_sample_name),
+#          edna_sample_name = if_else(grepl("^Pe_eDNA\\d{5}$", edna_sample_name), gsub("Pe_eDNA00", "Pe_23_eDNA_", edna_sample_name), edna_sample_name)) %>%
+#   filter(!is.na(edna_sample_name),
+#          edna_sample_name != "NA") %>%
+#   rename(illumina_sample_raw = sequencing_sample_name,
+#          edna_sample_name_lookup = edna_sample_name) %>%
+#   select(edna_sample_name_lookup,
+#          illumina_sample_raw)
+
+# import sample lookup table
+sample_lookup = import(sample_lookup_file, which = "SEQUENCING", na = c("NA", "", "?")) %>%
   clean_names() %>%
-  mutate(sequencing_sample_name = if_else(grepl("PENN_", sequencing_sample_name),
-                                          gsub("PENN-", "PENN_", gsub("_", "-", sequencing_sample_name)),
-                                          sequencing_sample_name),
-         edna_sample_name = if_else(grepl("PAN_22", id_e_dna_sample),
-                                    id_e_dna_sample_edited,
-                                    id_e_dna_sample),
-         edna_sample_name = gsub("(^[0-9]{6})_", "\\1_eDNA_", edna_sample_name),
-         edna_sample_name = if_else(grepl("^Pe_eDNA\\d{5}$", edna_sample_name), gsub("Pe_eDNA00", "Pe_23_eDNA_", edna_sample_name), edna_sample_name)) %>%
-  filter(!is.na(edna_sample_name),
-         edna_sample_name != "NA") %>%
-  rename(illumina_sample_raw = sequencing_sample_name,
-         edna_sample_name_lookup = edna_sample_name) %>%
-  select(edna_sample_name_lookup,
-         illumina_sample_raw)
+  filter(!is.na(sequencing_id),
+         sequencing_date != "Not sent") %>%
+  mutate(negative_control = (sample_type %in% c("Extraction NC",
+                                                "Filtration NC",
+                                                "PCR NC",
+                                                "PCR PC",
+                                                "STERILE")),
+         field_negative_control = sample_type == "Filtration NC",
+         control_type = recode_values(sample_type,
+           "PCR PC" ~ "positive_lab",
+           "Filtration NC" ~ "negative_field",
+           c("Extraction NC",
+             "PCR NC",
+             "PCR PC",
+             "STERILE") ~ "negative_lab",
+           default = NA)) %>%
+  group_by(collection_date) %>%
+  mutate(field_negative_control_group_id = UUIDgenerate()) %>%
+  ungroup() %>%
+  mutate(field_negative_control_group_id = if_else(is.na(collection_date), NA, field_negative_control_group_id))
 
-# samples
+# define fuzzy matching function
+match_fun = function(a, b) {
+  pattern = paste0("(?<![0-9A-Za-z])", stringr::str_escape(b), "$")
+  stringr::str_detect(a, pattern)
+}
+
+# import feature table
 feature_table =
   read_tsv(here(run_dir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
   as.data.frame() %>%
   rename("asv_id" = "#OTU ID") %>%
   arrange(asv_id)
 
-feature_long = feature_table %>%
-  pivot_longer(cols = -asv_id,
-               names_to = "illumina_sample_raw",
-               values_to = "asv_count") %>%
-  filter(asv_count != 0) %>%
-  left_join(methods_lookup, by = "illumina_sample_raw") %>%
-  mutate(edna_sample_name = gsub("-B$", "", illumina_sample_raw),
-         edna_sample_name = gsub("(_\\d{2}-)(\\d{2}$)", "\\10\\2", edna_sample_name),
-         edna_sample_name = gsub("^Pe_(\\d{2})-", "Pe_\\1_eDNA_", edna_sample_name),
-         edna_sample_name = gsub("(^Pe_\\d{2}_eDNA_\\d{3})-d.*", "\\1", edna_sample_name),
-         edna_sample_name = coalesce(edna_sample_name_lookup, edna_sample_name)) %>%
-  select(edna_sample_name,
-         illumina_sample_raw,
-         asv_id,
-         asv_count)
-
-unique_samples = feature_long %>%
-  select(edna_sample_name,
-         illumina_sample_raw) %>%
+sample_map = tibble(sequencing_raw = colnames(feature_table %>%
+                                                select(-asv_id))) %>%
   distinct() %>%
-  arrange(edna_sample_name)
+  arrange(sequencing_raw) %>%
+  mutate(sequencing_base = gsub("-", "_", sequencing_raw)) %>%
+  fuzzy_left_join(sample_lookup,
+                  by = c("sequencing_base" = "sequencing_id"),
+                  match_fun = match_fun) %>%
+  rename(edna_sample_name = sample_id)
+
+# reshape and join
+# feature_long = feature_table %>%
+#   pivot_longer(cols = -asv_id,
+#                names_to = "sequencing_raw",
+#                values_to = "asv_count") %>%
+#   filter(asv_count != 0) %>%
+#   left_join(sample_map, by = "sequencing_raw")
+# 
+# unique_samples = feature_long %>%
+#   select(edna_sample_name,
+#          sequencing_raw) %>%
+#   distinct() %>%
+#   arrange(edna_sample_name)
 ```
 
 # Query database
 ```{r}
 # survey data
-edna_collection = db_edna %>%
-  left_join(db_survey, by = "survey_id") %>%
-  left_join(db_visit, by = "visit_id") %>%
-  left_join(db_site, by = "site_id") %>%
-  left_join(db_region, by = "region_id") %>%
-  left_join(db_country, by = "country_id") %>%
-  select(all_of(colnames(db_edna)),
-         transect,
-         site,
-         date,
-         visit_id,
-         region,
-         country) %>%
-  collect()
+# edna_collection = db_edna %>%
+#   left_join(db_survey, by = "survey_id") %>%
+#   left_join(db_visit, by = "visit_id") %>%
+#   left_join(db_site, by = "site_id") %>%
+#   left_join(db_region, by = "region_id") %>%
+#   left_join(db_country, by = "country_id") %>%
+#   filter(!is.na(edna_sample_name)) %>%
+#   select(all_of(colnames(db_edna)),
+#          transect,
+#          site,
+#          date,
+#          visit_id,
+#          region,
+#          country) %>%
+#   collect()
 ```
 
 # Join and export
 ```{r}
-samps_joined = unique_samples %>%
-  left_join(edna_collection, by = "edna_sample_name") %>%
-  mutate(lab_control = case_when(
-    grepl("NC|Negative", illumina_sample_raw) ~ "negative",
-    grepl("Positive", illumina_sample_raw) ~ "positive",
-    .default = NA
-  ))
+# samps_joined = sample_map %>%
+#   left_join(edna_collection %>%
+#               select(edna_id,
+#                      edna_sample_name,
+#                      negative_control,
+#                      negative_control_group_id), by = "edna_sample_name") %>%
+#   mutate(lab_control = case_when(
+#     grepl("NC|Negative", sequencing_raw) ~ "negative",
+#     grepl("Positive", sequencing_raw) ~ "positive",
+#     .default = NA
+#   )) %>%
+#   select(sequencing_raw,
+#          sequencing_base,
+#          edna_sample_name,
+#          edna_id,
+#          everything())
 
-sample_map_out = samps_joined %>%
-  select(illumina_sample_raw,
-         edna_id,
-         edna_sample_name,
-         negative_control,
-         negative_control_group_id) %>%
-  distinct() %>%
-  filter(!is.na(edna_id))
+# sample_map_out = samps_joined %>%
+#   select(illumina_sample_raw,
+#          edna_id,
+#          edna_sample_name,
+#          negative_control,
+#          negative_control_group_id) %>%
+#   distinct() %>%
+#   filter(!is.na(edna_id))
 
-write.csv(sample_map_out, map_out, row.names = FALSE)
+write.csv(sample_map, map_out, row.names = FALSE)
 ```

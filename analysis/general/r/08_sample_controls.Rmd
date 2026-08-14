@@ -13,7 +13,7 @@ This script calculates controlled ASV reads for each sample by subtracting any r
 librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor, phylotools)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "penn_2026-03-10")
+run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -29,9 +29,9 @@ control_out = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlle
 # Load data
 ```{r}
 
-sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv"))) %>%
-  rename(field_negative_control = negative_control,
-         field_negative_control_group_id = negative_control_group_id)
+sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv")))
+  # rename(field_negative_control = negative_control,
+  #        field_negative_control_group_id = negative_control_group_id)
 
 feature_table =
   read_tsv(here(run_dir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
@@ -41,15 +41,10 @@ feature_table =
 
 sample_asv = feature_table %>%
   pivot_longer(cols = -asv_id,
-               names_to = "illumina_sample_raw",
+               names_to = "sequencing_raw",
                values_to = "asv_count") %>%
   # filter(asv_count != 0) %>%
-  left_join(sample_map, by = "illumina_sample_raw") %>%
-  mutate(control_type = case_when(
-    grepl("^Positive", illumina_sample_raw) ~ "positive_lab",
-    grepl("^Neg|NC", illumina_sample_raw) ~ "negative_lab",
-    field_negative_control %in% c(TRUE) ~ "negative_field",
-    .default = NA))
+  left_join(sample_map, by = "sequencing_raw")
   
 ```
 

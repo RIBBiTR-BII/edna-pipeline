@@ -24,7 +24,7 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 sequence_overlap_cutoff = 0
 
 # Did you run a gbif query (script 05) for local taxa, which you want incorporated in classification?
-gbif_query = FALSE
+gbif_query = TRUE
 
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
