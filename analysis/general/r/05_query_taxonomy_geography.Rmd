@@ -218,7 +218,7 @@ cat("\tQuerying local taxa occurrences\n")
 study_system_lookup = data.frame(
   study_system = c("brazil", "panama", "california", "pennsylvania"),
   gbif_country_code = c("BR", "PA", "US", "US"),
-  gbif_gid1_code = c("BRA.25_1", NA, "USA.5_1", "USA.39_1"),
+  gbif_gid1_code = c("BRA.25_1", NA, "USA.5_1", "USA.39_1"),  # state/provincial codes
   stringsAsFactors = FALSE
 )
 
