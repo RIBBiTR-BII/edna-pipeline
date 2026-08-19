@@ -1,0 +1,250 @@
+---
+title: "copy_seqs_by_system"
+author: "Cob Staines"
+output: html_document
+---
+
+# Copy Sequence Files by System
+
+This is a utility script which pulls sequencing files from the AWS S3 eDNA server, identifies the sequence_id, and references a lookup table to determine which system they belong to, and copies the desired system(s) to a specified folder. Contrast with `copy_seqs_by_system_local`, which sources sequence files from a locally accessible directory.
+
+*Note* - To access the AWS S3 eDNA server, you must have variables `aws_edna_access_key` and `aws_edna_secret_access_key` saved in your .Renviron file. If you need these, contact your lab PI or the RIBBiTR data manager.
+
+# Configuration
+
+Fill out the parameters below to point to the corresponding local directories and files.
+```{r}
+# load required packages
+librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio, readr, aws.s3)
+
+# Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
+sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-13.xlsx")
+
+# directory to copy files to
+destination_dir = here("16S_sequence_processing", "runs", "brazil_copy_test", "sequences")
+
+# system(s) of interest: any of: Brazil, Panama, Pennsylvania, Sierra Nevada
+soi = c("Brazil")
+
+```
+
+# import lookup table
+```{r}
+lookup_samples = import(sample_lookup_file, which = "SEQUENCING", na.strings = c("NA", ""), guess_max = 2000) %>%
+  clean_names() %>%
+  filter(!is.na(sequencing_id),
+         sequencing_date != "Not sent")
+```
+
+# Parse search directory
+```{r}
+inventory = get_bucket_df(bucket = "ribbitr-edna-sequences",
+                          prefix = "edna_sequences",
+                          max = Inf,
+                          key = Sys.getenv("aws_edna_access_key"),
+                          secret = Sys.getenv("aws_edna_secret_access_key"),
+                          region = "us-west-1")
+
+inventory_parsed = inventory %>%
+  clean_names() %>%
+  filter(str_detect(key, "\\.fastq(\\.gz)?$")) %>%
+  mutate(filename = basename(key),
+         filebase = gsub(".fastq", "", gsub(".gz", "", filename)),
+         parent_dir = dirname(key),
+         processing_id = str_match(filebase, "(_S[0-9]+_L[0-9]+_R[12]_[0-9]+)$")[,2],
+         sequencing_base = gsub("-", "_", str_remove(filebase, paste0(processing_id, "$"))),
+         read_dir = case_when(
+           grepl("_R1_", processing_id) ~ "forward",
+           grepl("_R2_", processing_id) ~ "reverse",
+           .default = NA)) %>%
+  select(key,
+         e_tag,
+         parent_dir,
+         filename,
+         filebase,
+         sequencing_base,
+         read_dir,
+         size)
+
+inventory_samples = inventory_parsed %>%
+  pivot_wider(id_cols = c("parent_dir", "sequencing_base"),
+              names_from = read_dir,
+              values_from = key)
+
+# check for sequencing_base duplicates
+check_etag_dupes = get_dupes(inventory_parsed, e_tag)
+
+if (nrow(check_etag_dupes) > 0) {
+  stop(paste0("Duplicate files found:\n\t", paste0(unique(check_etag_dupes$sequencing_base), collapse = "\n\t")))
+}
+
+# check for sequencing_base duplicates
+check_sample_dupes = get_dupes(inventory_samples, sequencing_base)
+
+if (nrow(check_sample_dupes) > 0) {
+  stop(paste0("Duplicate sequence files found. See variable `check_sample_dupes` to identify the prefered `relative_parent_dir` and add it to `priority_dir` (in configuration chunk). Offending samples:\n\t", paste0(unique(check_sample_dupes$sequencing_base), collapse = "\n\t")))
+}
+
+# check for any without a forward or reverse read
+check_sample_missing_direction = inventory_samples %>%
+  filter(is.na(forward) |is.na(reverse))
+
+if (nrow(check_sample_missing_direction) > 0) {
+  stop(paste0("Samples found with unpaired sequencing reads (only forward or only reverse), see variable `check_sample_missing_direction` to investigate. Offening samples:\n\t", paste0(check_sample_missing_dir$relative_filepath, collapse = "\n\t")))
+}
+```
+
+# align with lookup table
+```{r}
+match_fun = function(a, b) {
+  pattern = paste0("(?<![0-9A-Za-z])", stringr::str_escape(b), "$")
+  stringr::str_detect(a, pattern)
+}
+
+lookup_file_matched = fuzzy_full_join(
+  inventory_samples, lookup_samples,
+  by = c("sequencing_base" = "sequencing_id"),
+  match_fun = match_fun)
+
+# checks
+## one sequence file to many samples (generally not good)
+check_m2o = lookup_file_matched %>%
+  count(sequencing_base) %>%
+  filter(n > 1,
+         !is.na(sequencing_base))
+
+if (nrow(check_m2o) > 0) {
+  stop(paste0("Multiple samples associated with a given sequencing file. See variable `check_m2o` and resolve before proceeding. Offending sequences:\n\t", paste0(check_m20$sequencing, collapse = "\n\t")))
+}
+
+## one sample to many sequence files (generally ok)
+check_o2m = lookup_file_matched %>%
+  count(sequencing_id) %>%
+  filter(n > 1,
+         !is.na(sequencing_id))
+
+## no sequence
+check_no_seq = lookup_file_matched %>%
+  filter(is.na(sequencing_base))
+
+## no extraction_id
+check_no_ext = lookup_file_matched %>%
+  filter(is.na(sequencing_id))
+
+check_misaligned = lookup_file_matched %>%
+  filter(is.na(sequencing_base) | is.na(sequencing_id)) %>%
+  arrange(sequencing_base,
+         sequencing_id) %>%
+  select(sequencing_base,
+         sequencing_id,
+         parent_dir,
+         sequencing_date,
+         everything())
+
+if (nrow(check_no_seq) > 0) {
+  cat(paste0(nrow(check_no_seq), " samples with no associated sequencing files. See variable `check_misaligned` for details.\n"))
+}
+
+if (nrow(check_no_ext) > 0) {
+  cat(paste0(nrow(check_no_ext), " sequencing file pairs with no associated sample metadata. See variable `check_misaligned` for details.\n"))
+}
+```
+
+# Filter to system of interest
+```{r}
+# files of interest
+lookup_file_aligned = lookup_file_matched %>%
+  filter(!is.na(sequencing_base),
+         !is.na(sequencing_id))
+
+lookup_file_filtered = lookup_file_aligned %>%
+  filter(study_system %in% soi)
+
+lookup_file_filtered_files = lookup_file_filtered %>%
+  pivot_longer(cols = c("forward", "reverse"),
+               names_to = "read_dir",
+               values_to = "key") %>%
+  left_join(inventory_parsed %>%
+              select(key,
+                     size), by = "key")
+
+total_filesize_gb = sum(as.integer(lookup_file_filtered_files$size), na.rm = TRUE) / 1073741824
+
+cat(paste0("---Pre-Copying Summary---\n\t",
+           "File count: ", nrow(lookup_file_filtered_files), "\n\t",
+           "Sample count: ", nrow(lookup_file_filtered), "\n\t",
+           "Study system(s): ", paste0(soi, collapse = ", "), "\n\t",
+           "Total file size: ", total_filesize_gb, " Gb\n\t",
+           "From AWS S3 Bucket: ribbitr-edna-sequences\n\t",
+           "To directory: ", destination_dir, "\n\n"))
+
+copy_input = readline(prompt = "Proceed with copy? [y/n]: ");
+
+if (tolower(copy_input == "n")) {
+  stop("User Aborted.\n")
+} else if (tolower(copy_input != "y")) {
+  stop("Unexpected input. Copy aborted.\n")
+}
+```
+
+# Copy files to copy directory
+```{r}
+
+# create destination dir if it does not exist
+if (!dir.exists(destination_dir)) {
+  dir.create(destination_dir, recursive = TRUE)
+}
+
+# delete all existing files in directory first
+if (length(list.files(destination_dir)) > 0) {
+  drop_input = readline(prompt = "Files exist in the copy directory. Do you want to delete these files before copying? [y/n]"); 
+  
+  if (tolower(drop_input == "y")) {
+    cat("Deleting existing files in destination directory.\n")
+    unlink(here(destination_dir, "*"))
+  } else if (tolower(drop_input == "n")) {
+    cat("Leaving existing files in destination directory. Proceeding to copy new files.\n")
+  } else {
+    stop("Input not recognized. Copy aborted.")
+  }
+}
+
+cat(paste0("Copying ", as.character(nrow(lookup_file_filtered_files)), " sequence files to destination directory... "))
+
+pb = txtProgressBar(min = 1, max = nrow(lookup_file_filtered_files), style = 3)
+
+for (ii in 1:length(lookup_file_filtered_files$key)) {
+  kk = lookup_file_filtered_files$key[ii]
+  save_object(
+    object = kk,
+    bucket = "ribbitr-edna-sequences",
+    key = Sys.getenv("aws_edna_access_key"),
+    secret = Sys.getenv("aws_edna_secret_access_key"),
+    region = "us-west-1",
+    file = file.path(destination_dir, basename(kk))
+  )
+  setTxtProgressBar(pb, ii)
+}
+
+cat("done.")
+```
+
+# copied files check
+```{r}
+dest_dir_files_raw = tibble(absolute_filepath = c(list.files(destination_dir, full.names = FALSE, recursive = TRUE))) %>%
+  mutate(filename = basename(absolute_filepath))
+
+missing_files = lookup_file_filtered_files %>%
+  mutate(filename = basename(key)) %>%
+  anti_join(dest_dir_files_raw, by = "filename")
+
+if (nrow(check_missing_files) > 0) {
+  cat(paste0(nrow(missing_files), " expected files missing from destination directory. See variable `check_missing_files` for details.\n"))
+}
+
+# write_csv(missing_files, here(destination_dir, "missing_copied_files.csv"))
+# 
+# # attempt to recopy
+# source_dir_filtered_files = missing_files
+
+```

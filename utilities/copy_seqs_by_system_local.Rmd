@@ -4,9 +4,9 @@ author: "Cob Staines"
 output: html_document
 ---
 
-# Copy Sequence Files by System
+# Copy Sequence Files by System (remote)
 
-This is a utility script which parses through nested folders for .fastq sequencing files, identifies the sequence_id, and references a lookup table to determine which system they belong to, and copies the desired system(s) to a specified folder.
+This is a utility script which parses through nested folders for .fastq sequencing files, identifies the sequence_id, and references a lookup table to determine which system they belong to, and copies the desired system(s) to a specified folder. Contrast with `copy_seqs_by_system_remote`, which sources sequence files from the AWS S3 eDNA server.
 
 # Configuration
 
@@ -15,35 +15,20 @@ Fill out the parameters below to point to the corresponding local directories an
 # load required packages
 librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio, readr)
 
-# directory to search recursively
-source_dir = "/home/cob/All_Sequence_Runs/"
-
-# test access/location of source dir (you should see the expected sequencing subfolders)
-list.files(source_dir)
-
-# specify directories to prioritize (in order) if duplicate sequencing file names are found
-priority_dirs = c("December_2023/data/All_Sequences/Mini816_Brandon-Hoenig_47110-12S-405228845",
-                  "February_2023/Sequences/384207224",
-                  "December_2023/data/16S_MiSeq",
-                  "August_2024-July2024Rerun",
-                  "April_2024/Sequencing_April2024/Full_Run/sequences",
-                  "December_2023/data/QC_Run/16S_Seqs/Mini816_Brandon-Hoenig_47110_16S-405228846",
-                  "July_2_2026/Project_Fluidigm_PITT-509339831/BaseSpace_CLI_07_02_2026_1_43_47-937609681")
-
 # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
 sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-13.xlsx")
 
 # directory to copy files to
-destination_dir = here("16S_sequence_processing", "runs", "sierra_2026-08-13", "sequences")
+destination_dir = here("16S_sequence_processing", "runs", "brazil_copy_test", "sequences")
 
 # system(s) of interest: any of: Brazil, Panama, Pennsylvania, Sierra Nevada
-soi = c("Sierra Nevada")
+soi = c("Brazil")
 
 ```
 
 # import lookup table
 ```{r}
-lookup_samples = import(sample_lookup_file, which = "SEQUENCING") %>%
+lookup_samples = import(sample_lookup_file, which = "SEQUENCING", na.strings = c("NA", ""), guess_max = 2000) %>%
   clean_names() %>%
   filter(!is.na(sequencing_id),
          sequencing_date != "Not sent")
@@ -110,12 +95,16 @@ source_dir_samples = source_dir_files %>%
 # check for sequencing_base duplicates
 check_sample_dupes = get_dupes(source_dir_samples, sequencing_base)
 
+if (nrow(check_sample_dupes) > 0) {
+  stop(paste0("Duplicate sequence files found. See variable `check_sample_dupes` to identify the prefered `relative_parent_dir` and add it to `priority_dir` (in configuration chunk). Offending samples:\n\t", paste0(unique(check_sample_dupes$sequencing_base), collapse = "\n\t")))
+}
+
 # check for any without a forward or reverse read
-check_sample_missing_dir = source_dir_samples %>%
+check_sample_missing_direction = source_dir_samples %>%
   filter(is.na(forward) |is.na(reverse))
 
-if (nrow(check_sample_missing_dir) > 0) {
-  stop(paste0("Unpaired reads found for the following samples:\n\t", paste0(check_sample_missing_dir$relative_filepath, collapse = "\n\t")))
+if (nrow(check_sample_missing_direction) > 0) {
+  stop(paste0("Samples found with unpaired sequencing reads (only forward or only reverse), see variable `check_sample_missing_direction` to investigate. Offening samples:\n\t", paste0(check_sample_missing_dir$relative_filepath, collapse = "\n\t")))
 }
 ```
 
@@ -137,6 +126,10 @@ check_m2o = source_dir_matched %>%
   count(sequencing_base) %>%
   filter(n > 1,
          !is.na(sequencing_base))
+
+if (nrow(check_m2o) > 0) {
+  stop(paste0("Multiple samples associated with a given sequencing file. See variable `check_m2o` and resolve before proceeding. Offending sequences:\n\t", paste0(check_m20$sequencing, collapse = "\n\t")))
+}
 
 ## one sample to many sequence files (generally ok)
 check_o2m = source_dir_matched %>%
@@ -162,24 +155,48 @@ check_misaligned = source_dir_matched %>%
          sequencing_date,
          everything())
 
+if (nrow(check_no_seq) > 0) {
+  cat(paste0(nrow(check_no_seq), " samples with no associated sequencing files. See variable `check_misaligned` for details.\n"))
+}
+
+if (nrow(check_no_ext) > 0) {
+  cat(paste0(nrow(check_no_ext), " sequencing file pairs with no associated sample metadata. See variable `check_misaligned` for details.\n"))
+}
+
 ```
 
 # Filter to system of interest
 ```{r}
 # files of interest
-source_dir_filtered = source_dir_matched %>%
+source_dir_aligned = source_dir_matched %>%
   filter(!is.na(sequencing_base),
-         !is.na(sequencing_id),
-         study_system %in% soi)
+         !is.na(sequencing_id))
+
+source_dir_filtered = source_dir_aligned %>%
+  filter(study_system %in% soi)
 
 source_dir_filtered_files = source_dir_filtered %>%
   pivot_longer(cols = c("forward", "reverse"),
                names_to = "read_dir",
                values_to = "absolute_filepath")
 
-## for testing
-# source_dir_filtered_files = head(source_dir_filtered_files, n = 10)
+total_filesize_gb = sum(file.size(source_dir_filtered_files$absolute_filepath), na.rm = TRUE) / 1073741824
 
+cat(paste0("---Pre-Copying Summary---\n\t",
+           "File count: ", nrow(source_dir_filtered_files), "\n\t",
+           "Sample count: ", nrow(source_dir_filtered), "\n\t",
+           "Study system(s): ", paste0(soi, collapse = ", "), "\n\t",
+           "Total file size: ", total_filesize_gb, " Gb\n\t",
+           "From directory: ", source_dir, "\n\t",
+           "To directory: ", destination_dir, "\n\n"))
+
+copy_input = readline(prompt = "Proceed with copy? [y/n]: ");
+
+if (tolower(copy_input == "n")) {
+  stop("User Aborted.\n")
+} else if (tolower(copy_input != "y")) {
+  stop("Unexpected input. Copy aborted.\n")
+}
 ```
 
 # Copy files to copy directory
@@ -209,4 +226,20 @@ cat(paste0("Copying ", as.character(nrow(source_dir_filtered_files)), " sequence
 file.copy(source_dir_filtered_files$absolute_filepath, destination_dir)
 
 cat("done.")
+```
+
+# copied files check
+```{r}
+dest_dir_files_raw = tibble(absolute_filepath = c(list.files(destination_dir, full.names = FALSE, recursive = TRUE))) %>%
+  mutate(filename = basename(absolute_filepath))
+
+missing_files = source_dir_filtered_files %>%
+  mutate(filename = basename(absolute_filepath)) %>%
+  anti_join(dest_dir_files_raw, by = "filename")
+
+write_csv(missing_files, here(destination_dir, "missing_copied_files.csv"))
+
+# attempt to recopy
+source_dir_filtered_files = missing_files
+
 ```
