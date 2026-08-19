@@ -8,7 +8,7 @@ output: html_document
 
 This is a utility script which pulls sequencing files from the AWS S3 eDNA server, identifies the sequence_id, and references a lookup table to determine which system they belong to, and copies the desired system(s) to a specified folder. Contrast with `copy_seqs_by_system_local`, which sources sequence files from a locally accessible directory.
 
-*Note* - To access the AWS S3 eDNA server, you must have variables `aws_edna_access_key` and `aws_edna_secret_access_key` saved in your .Renviron file. If you need these, contact your lab PI or the RIBBiTR data manager.
+*Note* - To access the AWS S3 eDNA server, you must have variables `aws_edna_access_key` and `aws_edna_secret_access_key` saved in your .Renviron file (`usethis::edit_r_environ()`). If you need these, contact your lab PI or the RIBBiTR data manager.
 
 # Configuration
 
@@ -18,7 +18,7 @@ Fill out the parameters below to point to the corresponding local directories an
 librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio, readr, aws.s3)
 
 # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
-sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-13.xlsx")
+sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-19.xlsx")
 
 # directory to copy files to
 destination_dir = here("16S_sequence_processing", "runs", "brazil_copy_test", "sequences")
@@ -113,8 +113,9 @@ check_m2o = lookup_file_matched %>%
   filter(n > 1,
          !is.na(sequencing_base))
 
-if (nrow(check_m2o) > 0) {
-  stop(paste0("Multiple samples associated with a given sequencing file. See variable `check_m2o` and resolve before proceeding. Offending sequences:\n\t", paste0(check_m20$sequencing, collapse = "\n\t")))
+if (nrow(check_m2o %>%
+         filter(sequencing_base != "CZ265_PAN_BRZ_N_001")) > 0) {
+  stop(paste0("Multiple samples associated with a given sequencing file (other than `CZ265_PAN_BRZ_N_001` which is expected). See variable `check_m2o` and resolve before proceeding. Offending sequences:\n\t", paste0(check_m2o$sequencing_base, collapse = "\n\t")))
 }
 
 ## one sample to many sequence files (generally ok)
@@ -226,7 +227,7 @@ for (ii in 1:length(lookup_file_filtered_files$key)) {
   setTxtProgressBar(pb, ii)
 }
 
-cat("done.")
+cat("\ndone.")
 ```
 
 # copied files check
@@ -234,12 +235,12 @@ cat("done.")
 dest_dir_files_raw = tibble(absolute_filepath = c(list.files(destination_dir, full.names = FALSE, recursive = TRUE))) %>%
   mutate(filename = basename(absolute_filepath))
 
-missing_files = lookup_file_filtered_files %>%
+check_missing_files = lookup_file_filtered_files %>%
   mutate(filename = basename(key)) %>%
   anti_join(dest_dir_files_raw, by = "filename")
 
 if (nrow(check_missing_files) > 0) {
-  cat(paste0(nrow(missing_files), " expected files missing from destination directory. See variable `check_missing_files` for details.\n"))
+  cat(paste0(nrow(check_missing_files), " expected files missing from destination directory. See variable `check_missing_files` for details.\n"))
 }
 
 # write_csv(missing_files, here(destination_dir, "missing_copied_files.csv"))
