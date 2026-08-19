@@ -15,8 +15,23 @@ Fill out the parameters below to point to the corresponding local directories an
 # load required packages
 librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio, readr)
 
+# directory to search recursively
+source_dir = "/home/cob/All_Sequence_Runs/"
+
+# test access/location of source dir (you should see the expected sequencing subfolders)
+list.files(source_dir)
+
+# specify directories to prioritize (in order) if duplicate sequencing file names are found
+priority_dirs = c("December_2023/data/All_Sequences/Mini816_Brandon-Hoenig_47110-12S-405228845",
+                  "February_2023/Sequences/384207224",
+                  "December_2023/data/16S_MiSeq",
+                  "August_2024-July2024Rerun",
+                  "April_2024/Sequencing_April2024/Full_Run/sequences",
+                  "December_2023/data/QC_Run/16S_Seqs/Mini816_Brandon-Hoenig_47110_16S-405228846",
+                  "July_2_2026/Project_Fluidigm_PITT-509339831/BaseSpace_CLI_07_02_2026_1_43_47-937609681")
+
 # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
-sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-13.xlsx")
+sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-19.xlsx")
 
 # directory to copy files to
 destination_dir = here("16S_sequence_processing", "runs", "brazil_copy_test", "sequences")
@@ -127,8 +142,8 @@ check_m2o = source_dir_matched %>%
   filter(n > 1,
          !is.na(sequencing_base))
 
-if (nrow(check_m2o) > 0) {
-  stop(paste0("Multiple samples associated with a given sequencing file. See variable `check_m2o` and resolve before proceeding. Offending sequences:\n\t", paste0(check_m20$sequencing, collapse = "\n\t")))
+if (nrow(check_m2o) > 1) {
+  stop(paste0("Multiple samples associated with a given sequencing file (other than `CZ265_PAN_BRZ_N_001` which is expected). See variable `check_m2o` and resolve before proceeding. Offending sequences:\n\t", paste0(check_m2o$sequencing, collapse = "\n\t")))
 }
 
 ## one sample to many sequence files (generally ok)
