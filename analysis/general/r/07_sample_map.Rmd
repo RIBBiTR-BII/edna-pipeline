@@ -59,7 +59,7 @@ map_out = here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv
 #          illumina_sample_raw)
 
 # import sample lookup table
-sample_lookup = import(sample_lookup_file, which = "SEQUENCING", na = c("NA", "", "?")) %>%
+sample_lookup = rio::import(sample_lookup_file, which = "SEQUENCING", na = c("NA", "", "?")) %>%
   clean_names() %>%
   filter(!is.na(sequencing_id),
          sequencing_date != "Not sent") %>%
