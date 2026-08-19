@@ -14,9 +14,7 @@ This workflow makes assumptions and choices which substantially influence the ou
 
 ### Setup
 
-1. [Download](https://github.com/RIBBiTR-BII/edna-pipeline/archive/refs/heads/main.zip) or clone (`git clone https://github.com/RIBBiTR-BII/edna-pipeline.git`) this repository to a local working directory. This should be redone any time the pipeline has been updated.
-
-2. Install Podman -- Choose one of the options below:
+1. Install Podman -- Choose one of the options below:
 
    - **Windows:** Install [Podman Desktop for Windows](https://podman-desktop.io/). This will also set up Podman Machine, a lightweight Linux virtual machine (VM) that Podman uses on Windows. During first launch, follow the prompt to initialize Podman Machine.
    - **macOS:** Install [Podman Desktop for Mac](https://podman-desktop.io/). After installation, initialize Podman Machine from the Podman Desktop interface or run `podman machine init && podman machine start` in the terminal.
@@ -32,12 +30,12 @@ This workflow makes assumptions and choices which substantially influence the ou
 
    > **Note for WSL2 users:** If you are running a Linux virtual machine on Windows via WSL2, you can install Podman Engine inside the VM directly and run all commands from within the VM terminal, without needing Podman Desktop.
 
-3. Navigate to the `16S_sequence_processing` subfolder in the command line:
+2. Navigate to the `16S_sequence_processing` subfolder in the command line:
    ```bash
    cd your/path/to/edna-pipeline-main/16S_sequence_processing
    ```
 
-4. Build the container image:
+3. Build the container image:
     - *from Dockerfile (default):*
       ```bash
       podman build -t edna-pipeline .

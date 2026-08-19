@@ -40,6 +40,8 @@ At this point you have successfully processed some sequences through the [Amphib
 
     - Follow the [RIBBiTR DB connection tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html) to connect in RStudio.
 
+4. **Create an RStudio project (optional):** Open RStudio, select `File -> New Project -> Existing Directory -> Browse` and browse to your local directory of this `edna-pipeline` repository. Thel select `Create Project`. This is not required, but will make it easier to navigate between the various analysis scripts.
+
 ## Analysis
 The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts which should be run in RStudio in succession. They have not been automated, as each script contains decisions for users to consider as the analysis progresses. To begin, navigate to the `analysis/general/r/` folder. Open each script in RStudio, review the header notes, set the parameters in the configuration ("config") sections at the top to meet your needs, and run each script.
 
@@ -74,3 +76,9 @@ The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts wh
 9. **Export Results** *(09_export_results.Rmd)*: This script combines results from steps 6, 7, and 8, and as well as sample metadata from the RIBBiTR database, to create two cohesive outputs:
   a. for ASVs (reads, classifications, etc.)
   b. field samples (collection site, date, filter method, etc.)
+  
+## After Preliminary Analysis
+
+You are now ready to move into your own analysis to address the research questions you have at hand!
+
+**Note on archiving run directories:** Once you are confident that you are done with the processing and analysis workflows for a given dataset, you may consider deleting the `sequences` and `analysis` folders from your run directory. The remaining `outputs` folder should have all the outputs from theis pipeline, and metadata on the sequence files used and the configuration settings if needed for future reference. This will help you reclaim some space on your machine (just make sure that the sequence files are archived somewhere else!).
