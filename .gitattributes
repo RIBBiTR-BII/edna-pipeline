@@ -1,0 +1,10 @@
+# Force LF line endings for files that get executed inside the Linux
+# container, regardless of the OS/git config used to check them out.
+# Without this, Windows checkouts with core.autocrlf=true rewrite these
+# to CRLF, which breaks bash (`$'\r': command not found`) once the repo
+# is bind-mounted into the container.
+*.sh   text eol=lf
+*.R    text eol=lf
+*.Rmd  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
