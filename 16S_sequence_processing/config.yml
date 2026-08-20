@@ -1,8 +1,8 @@
 ---
 run:
-  name: test_run_01                          # a unique run name
-  runDir: runs/test_run_01                   # the run folder of interest. This folder should have a subfolder `sequences/` which contains all sequence files 
-  description: A test run with example data  # run description
+  name: test_run_01                           # a unique run name
+  runDir: runs/test_run_01                    # the run folder of interest. This folder should have a subfolder `sequences/` which contains all sequence files 
+  description: A test run with provided data  # run description
   technician: your-name-here                 # who is processing these data, for communication
 taxonomy:
   gene: 16S                # 12S or 16S
