@@ -234,8 +234,8 @@ preds = list(
   pred("country", gbif_country_code),
   pred_in("taxonKey", valid_keys)
 )
-if (!is.na(gbif_gadm_gid)) {
-  preds = c(preds, list(pred("gadm", gbif_gadm_gid)))
+if (!is.na(gbif_gid1_code)) {
+  preds = c(preds, list(pred("gadm", gbif_gid1_code)))
 }
 
 download_submission = occ_download(
