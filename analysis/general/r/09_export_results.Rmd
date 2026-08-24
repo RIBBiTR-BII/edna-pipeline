@@ -48,8 +48,8 @@ sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sampl
 # join and export ASVs
 ```{r}
 asv_out = asv_controlled %>%
-  filter(is.na(control_type),
-         asv_count_controlled > 0) %>%
+  # filter(is.na(control_type),
+  #        asv_count_controlled > 0) %>%
   left_join(asv_seq, by = "asv_id") %>%
   left_join(asv_classification, by = "asv_id") %>%
   filter(!is.na(taxonomic_rank)) %>%
@@ -77,6 +77,9 @@ asv_out = asv_controlled %>%
          species,
          n_hits,
          p_identical_max,
+         gbif_count_family_local,
+         gbif_count_genus_local,
+         gbif_count_species_local,
          any_of(colnames(sample_map))) %>%
   arrange(edna_sample_name,
           desc(asv_reads_controlled))

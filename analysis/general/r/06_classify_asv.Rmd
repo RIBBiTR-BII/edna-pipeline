@@ -890,7 +890,10 @@ accept_out = hits_accept_qc %>%
          n_hits,
          p_identical_max,
          seq_overlap_max,
-         consensus_value)
+         consensus_value,
+         gbif_count_family_local,
+         gbif_count_genus_local,
+         gbif_count_species_local)
 
 # export classifications
 write.csv(accept_out, classification_out, row.names = FALSE)

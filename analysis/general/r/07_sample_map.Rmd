@@ -12,7 +12,7 @@ This script aligns illumina samples with sample names and IDs in the RIBBiTR dat
 librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janitor, rio, fuzzyjoin, uuid)
 
 # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
-sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-13.xlsx")
+sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-23.xlsx")
 
 # import run config file
 run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
