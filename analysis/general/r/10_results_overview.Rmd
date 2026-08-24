@@ -1,0 +1,205 @@
+---
+title: "10_results_overview"
+output: html_document
+---
+
+# Description
+
+This script provides a first look at the processed and analyzed results, including some checks and preliminary summaries to identify any anomalies or curiosities.
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr)
+
+# import run config file
+run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
+
+# read in config file
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+```
+
+# load results
+```{r}
+# hybrid classification
+res_06_class = read_csv(here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv")))
+
+# controls
+res_08_controlled = read_csv(here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv")))
+
+# exported file
+res_09_export = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_prelim_results.csv")))
+
+# metadata_in = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_prelim_results_metadata.csv")))
+
+```
+
+# Read counts
+```{r}
+# summary stats for samples (including controls)
+sample_read_count = res_09_export %>%
+  # drop all controls
+  filter(is.na(control_type)) %>%
+  group_by(edna_sample_name,
+           filter_size_um,
+           filtering_method) %>%
+  mutate(detected_raw = asv_reads_raw > 0,
+         detected_controlled = asv_reads_controlled > 0) %>%
+  summarize(
+    # number of reads
+    n_reads = sum(asv_count),
+    # number of reads classified
+    n_reads_class = sum(if_else(!is.na(taxonomic_rank), asv_reads_raw, 0L), na.rm = TRUE),
+    # number of reads classified chordata
+    n_reads_class_chord = sum(if_else(phylum == "Chordata", asv_reads_raw, 0L), na.rm = TRUE),
+    # number of reads classified as amphibians
+    n_reads_class_chord_amph = sum(if_else(class == "Amphibia", asv_reads_raw, 0L), na.rm = TRUE),
+    # controlled number of reads classified as amphibians
+    n_reads_class_chord_amph_ctrl = sum(if_else(class == "Amphibia", asv_reads_controlled, 0L), na.rm = TRUE),
+    # number of reads classified as amphibians to the species level
+    n_reads_class_chord_amph_spp = sum(if_else((class == "Amphibia") & (taxonomic_rank == "species"), asv_reads_raw, 0L), na.rm = TRUE),
+    # controlled number of reads classified as amphibians to the species level
+    n_reads_class_chord_amph_spp_ctrl = sum(if_else((class == "Amphibia") & (taxonomic_rank == "species"), asv_reads_controlled, 0L), na.rm = TRUE),
+    # number of reads classified as human
+    n_reads_class_chord_sapien = sum(if_else((species == "sapiens"), asv_reads_raw, 0L), na.rm = TRUE),
+    ## ASVs
+    # number of ASVs (before controls)
+    n_asv = sum(detected_raw),
+    # number of ASVs (after controls)
+    n_asv_controlled = sum(detected_controlled, na.rm = TRUE),
+    # number of ASVs classified
+    n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_rank), na.rm = TRUE),
+    # number of ASVs classified chordata
+    n_asv_controlled_class_chord = sum(detected_controlled & (phylum == "Chordata"), na.rm = TRUE),
+    # number of ASVs classified as amphibians
+    n_asv_controlled_class_xamph = sum(detected_controlled & (class == "Amphibia"), na.rm = TRUE),
+    # number of ASVs classified as amphibians to the species level
+    n_asv_controlled_class_xamph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_rank == "species"), na.rm = TRUE),
+    .groups = "drop") %>%
+  mutate(ratio_amph = n_reads_class_chord_amph_ctrl / n_reads,
+         ratio_sapiens = n_reads_class_chord_sapien / n_reads)
+
+# pivot longer for plotting
+sample_read_count_long = sample_read_count %>%
+  pivot_longer(cols = c(n_reads,
+                        n_reads_class,
+                        n_reads_class_chord,
+                        n_reads_class_chord_amph,
+                        n_reads_class_chord_amph_ctrl,
+                        n_reads_class_chord_amph_spp,
+                        n_reads_class_chord_amph_spp_ctrl,
+                        n_reads_class_chord_sapien),
+               names_to = "count_type",
+               values_to = "n") %>%
+  mutate(log10_n = log10(n + 1))
+
+# gene
+ggplot(sample_read_count_long, aes(y = log10_n, color = count_type)) +
+  geom_boxplot()
+
+```
+
+# Taxa groups
+```{r}
+sample_taxa_group = res_09_export %>%
+  mutate(taxa_group = case_when(
+    domain == "Bacteria" ~ "Bacteria",
+    species == "sapiens" ~ "Homo sapiens",
+    class == "Amphibia" ~ "Amphibia",
+    class == "Mammalia" ~ "Mammalia Other",
+    class == "Aves" ~ "Aves",
+    class == "Actinopteri" ~ "Actinopteri",
+    class == "Reptilia" ~ "Reptilia",
+    #class == "Branchiopoda" ~ "Branchiopoda",
+    #class == "Insecta" ~ "Insecta",
+    #class == "Lepidosauria" ~ "Lepidosauria",
+    #class == "Ostracoda" ~ "Ostracoda",
+    kingdom == "Metazoa" ~ "Metazoa Other",
+    # kingdom == "Viridiplantae" ~ "Viridiplantae",
+    !is.na(domain) ~ "Other",
+    .default = "Unassigned"))
+
+# 1. proportions per replicate
+replicate_props_co = sample_taxa_group |>
+  group_by(edna_sample_name, taxa_group) |>
+  summarize(
+    taxa_reads      = sum(asv_reads_raw),
+    taxa_reads_ctrl = sum(asv_reads_controlled),
+    .groups = "drop_last"  # drops taxa_group, keeping replicate groups for total
+  ) |>
+  mutate(
+    replicate_reads      = sum(taxa_reads),
+    replicate_reads_ctrl = sum(taxa_reads_ctrl),
+    prop      = taxa_reads      / replicate_reads,
+    prop_ctrl = taxa_reads_ctrl / replicate_reads_ctrl
+  ) |>
+  ungroup()
+
+# 2. average proportions across replicates within each sample
+sample_props_co = replicate_props_co |>
+  group_by(edna_sample_name, taxa_group) |>
+  summarize(
+    prop      = mean(prop, na.rm = TRUE),
+    prop_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 3. average proportions across samples within each gene
+gene_props_co = sample_props_co |>
+  group_by(taxa_group) |>
+  summarize(
+    group_reads      = mean(prop, na.rm = TRUE),
+    group_reads_ctrl = mean(prop_ctrl, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+sample_taxa_group_agg_long_co = gene_props_co %>%
+  pivot_longer(cols = c("group_reads",
+                        "group_reads_ctrl"),
+               names_to = "ctrl",
+               values_to = "group_reads") %>%
+  mutate(ctrl = recode_values(ctrl,
+                              "group_reads" ~ "Uncontrolled",
+                              "group_reads_ctrl" ~ "Controlled")) %>%
+  group_by(ctrl) %>%
+  mutate(group_read_proportion = group_reads / sum(group_reads),
+         ctrl = factor(ctrl, levels = c("Uncontrolled", "Controlled")))
+
+# Build a named color vector
+taxa_colors <- setNames(
+  c(RColorBrewer::brewer.pal(8, "Dark2"), "grey80"),
+  c("Actinopteri", "Amphibia", "Aves", "Bacteria",
+    "Homo sapiens", "Mammalia Other", "Metazoa Other", "Other",
+    "Unassigned")
+)
+
+p_taxa_prop_co = ggplot(sample_taxa_group_agg_long_co,
+                       aes(x = ctrl, y = group_reads, fill = taxa_group)) +
+  geom_bar(stat = "identity", position = "fill", color = "black") +
+  geom_text(
+    aes(label = ifelse(group_read_proportion > 0.05, taxa_group, "")),
+    stat     = "identity",
+    position = position_fill(vjust = 0.5),
+    size     = 3,
+    color    = "white",
+    fontface = "bold"
+  ) +
+  # facet_grid(country ~ gene) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_fill_manual(values = taxa_colors) +        # <-- replaces scale_fill_brewer
+  labs(
+    # title = "Taxonomic group proportions before and after control, by gene",
+    x     = "Study System",
+    y     = "Mean proportion of reads per sample",
+    fill  = "Taxonomic group"
+  ) +
+  theme_bw() +
+  theme(
+    strip.text      = element_text(face = "bold", size = 11),
+    axis.text.x     = element_text(size = 10),
+    legend.position = "bottom"
+  )
+
+p_taxa_prop_co
+
+```
