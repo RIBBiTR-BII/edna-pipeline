@@ -30,8 +30,10 @@ priority_dirs = c("December_2023/data/All_Sequences/Mini816_Brandon-Hoenig_47110
                   "December_2023/data/QC_Run/16S_Seqs/Mini816_Brandon-Hoenig_47110_16S-405228846",
                   "July_2_2026/Project_Fluidigm_PITT-509339831/BaseSpace_CLI_07_02_2026_1_43_47-937609681")
 
+exclusion_dirs = c("July_2024_poorquality/qc_run_sequences")
+
 # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
-sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-19.xlsx")
+sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-09-01.xlsx")
 
 # directory to copy files to
 destination_dir = here("16S_sequence_processing", "runs", "brazil_copy_test", "sequences")
@@ -92,12 +94,10 @@ source_dir_files = source_dir_files_raw %>%
          read_dir = case_when(
            grepl("_R1_", processing_id) ~ "forward",
            grepl("_R2_", processing_id) ~ "reverse",
-           .default = NA))
-
-# %>%
-#   filter(!purrr::map_lgl(absolute_filepath, function(f) {
-#     any(str_starts(f, fixed(excluded_dirs)))
-#   }))
+           .default = NA)) %>%
+  filter(!purrr::map_lgl(absolute_filepath, function(f) {
+    any(str_starts(f, fixed(exclusion_dirs)))
+  }))
 
 
 # pivot wider to have 1 row per sample, with columns for forward and reverse reads
