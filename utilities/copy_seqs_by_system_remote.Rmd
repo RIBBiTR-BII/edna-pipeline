@@ -15,165 +15,194 @@ This is a utility script which pulls sequencing files from the AWS S3 eDNA serve
 Fill out the parameters below to point to the corresponding local directories and files.
 ```{r}
 # load required packages
-librarian::shelf(tidyverse, fuzzyjoin, here, janitor, rio, readr, aws.s3)
-
-# Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
-sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-19.xlsx")
+librarian::shelf(tidyverse, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, here, janitor, aws.s3)
 
 # directory to copy files to
 destination_dir = here("16S_sequence_processing", "runs", "brazil_copy_test", "sequences")
 
-# system(s) of interest: any of: Brazil, Panama, Pennsylvania, Sierra Nevada
-soi = c("Brazil")
+# system(s) of interest, any of: brazil, panama, pennsylvania, sierra_nevada (case sensitive)
+soi = c("brazil")
+
+# Boolean: if true, drops duplicate sequences with later sequencing dates
+most_recent_seqs_only = TRUE
+
+# hard coded extractions to include for each study system
+include_extractions_list = list(
+  brazil = c("RP_330",
+             "RP_343",
+             "RP_345",
+             "RP_346"),
+  pennsylvania = c("Tissue_63"),
+  panama = c(),
+  sierra_nevada = c()
+)
 
 ```
 
-# import lookup table
+# database connection
 ```{r}
-lookup_samples = import(sample_lookup_file, which = "SEQUENCING", na.strings = c("NA", ""), guess_max = 2000) %>%
-  clean_names() %>%
-  filter(!is.na(sequencing_id),
-         sequencing_date != "Not sent")
+# connection
+dbcon = hopToDB("ribbitr")
+
+# pointers=
+db_edna_samp = tbl(dbcon, Id("survey_data", "edna_sample"))
+db_edna_ext = tbl(dbcon, Id("survey_data", "edna_extraction"))
+db_edna_seq = tbl(dbcon, Id("survey_data", "edna_sequencing"))
+
+db_survey = tbl(dbcon, Id("survey_data", "survey"))
+db_visit = tbl(dbcon, Id("survey_data", "visit"))
+db_site = tbl(dbcon, Id("survey_data", "site"))
+db_region = tbl(dbcon, Id("survey_data", "region"))
+db_country = tbl(dbcon, Id("survey_data", "country"))
+
 ```
 
-# Parse search directory
+# metadata pull
 ```{r}
+# check soi
+if (any(!(soi %in% c("brazil", "panama", "pennsylvania", "sierra_nevada")))) {
+  cat(paste0("Unrecognized study systems in config variable `soi`\n\tPermitted values: brazil, panama, pennsylvania, sierra_nevada\n\tUnrecognized value(s): ", paste(soi[!(soi %in% c("brazil", "panama", "pennsylvania", "sierra_nevada"))], collapse = ", ")))
+}
+
+# build study system filter expression
+filter_criteria = list(
+  brazil = quo(country == "brazil"),
+  panama = quo(country == "panama"),
+  pennsylvania = quo(region == "pennsylvania"),
+  sierra_nevada = quo(region == "california")
+)
+
+selected_criteria = filter_criteria[soi]
+filter_expression = reduce(selected_criteria, ~ expr(!!.x | !!.y))
+
+surveys_of_interest = db_survey %>%
+  left_join(db_visit, by = "visit_id") %>%
+  left_join(db_site, by = "site_id") %>%
+  left_join(db_region, by = "region_id") %>%
+  left_join(db_country, by = "country_id") %>%
+  filter(detection_type == "edna",
+         !!filter_expression)
+
+sids = surveys_of_interest %>%
+  pull(survey_id)
+
+# --- samples ---
+samples_nc_groups = db_edna_samp %>%
+  filter(survey_id %in% sids,
+         !is.na(field_negative_control_group)) %>%
+  pull(field_negative_control_group)
+
+samples_nc_ids = db_edna_samp %>%
+  filter(field_negative_control,
+         field_negative_control_group %in% samples_nc_groups) %>%
+  pull(edna_sample_id)
+
+samples_ids = db_edna_samp %>%
+  filter(survey_id %in% sids | edna_sample_id %in% samples_nc_ids) %>%
+  pull(edna_sample_id)
+
+# --- extractions ---
+extractions_nc_groups = db_edna_ext %>%
+  filter(edna_sample_id %in% samples_ids,
+         !is.na(extraction_negative_control_group)) %>%
+  pull(extraction_negative_control_group)
+
+extractions_nc_ids = db_edna_ext %>%
+  filter(extraction_negative_control,
+         extraction_negative_control_group %in% extractions_nc_groups) %>%
+  pull(edna_extraction_id)
+
+extractions_ids = db_edna_ext %>%
+  filter(edna_sample_id %in% samples_ids | edna_extraction_id %in% extractions_nc_ids) %>%
+  pull(edna_extraction_id)
+
+# --- sequences ---
+sequences_c_groups = db_edna_seq %>%
+  filter(edna_extraction_id %in% extractions_ids,
+         !is.na(pcr_control_group)) %>%
+  pull(pcr_control_group)
+
+sequences_c_ids = db_edna_seq %>%
+  filter(pcr_control,
+         pcr_control_group %in% sequences_c_groups) %>%
+  pull(edna_sequencing_id)
+
+sequences_ids = db_edna_seq %>%
+  filter(edna_extraction_id %in% extractions_ids | edna_sequencing_id %in% sequences_c_ids) %>%
+  pull(edna_sequencing_id)
+
+include_extractions = unlist(include_extractions_list[soi])
+
+all_seqs_data = db_edna_seq %>%
+  left_join(db_edna_ext, by = "edna_extraction_id") %>%
+  left_join(db_edna_samp, by = "edna_sample_id") %>%
+  left_join(surveys_of_interest, by = "survey_id") %>%
+  filter(edna_sequencing_id %in% sequences_ids |
+           edna_extraction_name %in% include_extractions) %>%
+  select(all_of(colnames(db_edna_seq)),
+         all_of(colnames(db_edna_ext)),
+         all_of(colnames(db_edna_samp)),
+         time_of_day,
+         date,
+         transect,
+         site,
+         region,
+         country) %>%
+  collect() %>%
+  group_by(sequencing_s3_filepath) %>%
+  slice_head(n = 1) %>%
+  ungroup()
+
+if (most_recent_seqs_only) {
+  all_seqs_data = all_seqs_data %>%
+    arrange(edna_sequencing_name, read_direction, sequencing_date) %>%
+    group_by(edna_sequencing_name, read_direction) %>%
+    slice_tail(n = 1) %>%
+    ungroup()
+}
+
+anti_seq = db_edna_seq %>%
+  left_join(db_edna_ext, by = "edna_extraction_id") %>%
+  left_join(db_edna_samp, by = "edna_sample_id") %>%
+  left_join(surveys_of_interest, by = "survey_id") %>%
+  select(all_of(colnames(db_edna_seq)),
+         all_of(colnames(db_edna_ext)),
+         all_of(colnames(db_edna_samp)),
+         time_of_day,
+         date,
+         transect,
+         site,
+         region,
+         country) %>%
+  filter(!(edna_sequencing_id %in% all_seqs_data$edna_sequencing_id)) %>%
+  collect()
+
+check_sequence_read_run_dupes = get_dupes(all_seqs_data, edna_sequencing_name, read_direction)
+
+```
+
+# Filter to system of interest
+```{r}
+all_seqs_data
+
+# inventory s3
 inventory = get_bucket_df(bucket = "ribbitr-edna-sequences",
                           prefix = "edna_sequences",
                           max = Inf,
                           key = Sys.getenv("aws_edna_access_key"),
                           secret = Sys.getenv("aws_edna_secret_access_key"),
-                          region = "us-west-1")
-
-inventory_parsed = inventory %>%
+                          region = "us-west-1") %>%
   clean_names() %>%
-  filter(str_detect(key, "\\.fastq(\\.gz)?$")) %>%
-  mutate(filename = basename(key),
-         filebase = gsub(".fastq", "", gsub(".gz", "", filename)),
-         parent_dir = dirname(key),
-         processing_id = str_match(filebase, "(_S[0-9]+_L[0-9]+_R[12]_[0-9]+)$")[,2],
-         sequencing_base = gsub("-", "_", str_remove(filebase, paste0(processing_id, "$"))),
-         read_dir = case_when(
-           grepl("_R1_", processing_id) ~ "forward",
-           grepl("_R2_", processing_id) ~ "reverse",
-           .default = NA)) %>%
-  select(key,
-         e_tag,
-         parent_dir,
-         filename,
-         filebase,
-         sequencing_base,
-         read_dir,
-         size)
+  filter(key %in% all_seqs_data$sequencing_s3_filepath)
 
-inventory_samples = inventory_parsed %>%
-  pivot_wider(id_cols = c("parent_dir", "sequencing_base"),
-              names_from = read_dir,
-              values_from = key)
+all_seqs_inventory = all_seqs_data %>%
+  left_join(inventory, by = c("sequencing_s3_filepath" = "key"), relationship = "one-to-one", unmatched = "error")
 
-# check for sequencing_base duplicates
-check_etag_dupes = get_dupes(inventory_parsed, e_tag)
-
-if (nrow(check_etag_dupes) > 0) {
-  stop(paste0("Duplicate files found:\n\t", paste0(unique(check_etag_dupes$sequencing_base), collapse = "\n\t")))
-}
-
-# check for sequencing_base duplicates
-check_sample_dupes = get_dupes(inventory_samples, sequencing_base)
-
-if (nrow(check_sample_dupes) > 0) {
-  stop(paste0("Duplicate sequence files found. See variable `check_sample_dupes` to identify the prefered `relative_parent_dir` and add it to `priority_dir` (in configuration chunk). Offending samples:\n\t", paste0(unique(check_sample_dupes$sequencing_base), collapse = "\n\t")))
-}
-
-# check for any without a forward or reverse read
-check_sample_missing_direction = inventory_samples %>%
-  filter(is.na(forward) |is.na(reverse))
-
-if (nrow(check_sample_missing_direction) > 0) {
-  stop(paste0("Samples found with unpaired sequencing reads (only forward or only reverse), see variable `check_sample_missing_direction` to investigate. Offening samples:\n\t", paste0(check_sample_missing_dir$relative_filepath, collapse = "\n\t")))
-}
-```
-
-# align with lookup table
-```{r}
-match_fun = function(a, b) {
-  pattern = paste0("(?<![0-9A-Za-z])", stringr::str_escape(b), "$")
-  stringr::str_detect(a, pattern)
-}
-
-lookup_file_matched = fuzzy_full_join(
-  inventory_samples, lookup_samples,
-  by = c("sequencing_base" = "sequencing_id"),
-  match_fun = match_fun)
-
-# checks
-## one sequence file to many samples (generally not good)
-check_m2o = lookup_file_matched %>%
-  count(sequencing_base) %>%
-  filter(n > 1,
-         !is.na(sequencing_base))
-
-if (nrow(check_m2o %>%
-         filter(sequencing_base != "CZ265_PAN_BRZ_N_001")) > 0) {
-  stop(paste0("Multiple samples associated with a given sequencing file (other than `CZ265_PAN_BRZ_N_001` which is expected). See variable `check_m2o` and resolve before proceeding. Offending sequences:\n\t", paste0(check_m2o$sequencing_base, collapse = "\n\t")))
-}
-
-## one sample to many sequence files (generally ok)
-check_o2m = lookup_file_matched %>%
-  count(sequencing_id) %>%
-  filter(n > 1,
-         !is.na(sequencing_id))
-
-## no sequence
-check_no_seq = lookup_file_matched %>%
-  filter(is.na(sequencing_base))
-
-## no extraction_id
-check_no_ext = lookup_file_matched %>%
-  filter(is.na(sequencing_id))
-
-check_misaligned = lookup_file_matched %>%
-  filter(is.na(sequencing_base) | is.na(sequencing_id)) %>%
-  arrange(sequencing_base,
-         sequencing_id) %>%
-  select(sequencing_base,
-         sequencing_id,
-         parent_dir,
-         sequencing_date,
-         everything())
-
-if (nrow(check_no_seq) > 0) {
-  cat(paste0(nrow(check_no_seq), " samples with no associated sequencing files. See variable `check_misaligned` for details.\n"))
-}
-
-if (nrow(check_no_ext) > 0) {
-  cat(paste0(nrow(check_no_ext), " sequencing file pairs with no associated sample metadata. See variable `check_misaligned` for details.\n"))
-}
-```
-
-# Filter to system of interest
-```{r}
-# files of interest
-lookup_file_aligned = lookup_file_matched %>%
-  filter(!is.na(sequencing_base),
-         !is.na(sequencing_id))
-
-lookup_file_filtered = lookup_file_aligned %>%
-  filter(study_system %in% soi)
-
-lookup_file_filtered_files = lookup_file_filtered %>%
-  pivot_longer(cols = c("forward", "reverse"),
-               names_to = "read_dir",
-               values_to = "key") %>%
-  left_join(inventory_parsed %>%
-              select(key,
-                     size), by = "key")
-
-total_filesize_gb = sum(as.integer(lookup_file_filtered_files$size), na.rm = TRUE) / 1073741824
+total_filesize_gb = sum(as.integer(all_seqs_inventory$size), na.rm = TRUE) / 1073741824
 
 cat(paste0("---Pre-Copying Summary---\n\t",
-           "File count: ", nrow(lookup_file_filtered_files), "\n\t",
-           "Sample count: ", nrow(lookup_file_filtered), "\n\t",
+           "File count: ", nrow(all_seqs_inventory), "\n\t",
+           "Sequencing ids: ", length(unique(all_seqs_inventory$edna_sequencing_name)), "\n\t",
            "Study system(s): ", paste0(soi, collapse = ", "), "\n\t",
            "Total file size: ", total_filesize_gb, " Gb\n\t",
            "From AWS S3 Bucket: ribbitr-edna-sequences\n\t",
@@ -210,12 +239,12 @@ if (length(list.files(destination_dir)) > 0) {
   }
 }
 
-cat(paste0("Copying ", as.character(nrow(lookup_file_filtered_files)), " sequence files to destination directory... "))
+cat(paste0("Copying ", as.character(nrow(all_seqs_inventory)), " sequence files to destination directory from s3 server... "))
 
-pb = txtProgressBar(min = 1, max = nrow(lookup_file_filtered_files), style = 3)
+pb = txtProgressBar(min = 1, max = nrow(all_seqs_inventory), style = 3)
 
-for (ii in 1:length(lookup_file_filtered_files$key)) {
-  kk = lookup_file_filtered_files$key[ii]
+for (ii in 1:length(all_seqs_inventory$sequencing_s3_filepath)) {
+  kk = all_seqs_inventory$sequencing_s3_filepath[ii]
   save_object(
     object = kk,
     bucket = "ribbitr-edna-sequences",
@@ -235,8 +264,8 @@ cat("\ndone.")
 dest_dir_files_raw = tibble(absolute_filepath = c(list.files(destination_dir, full.names = FALSE, recursive = TRUE))) %>%
   mutate(filename = basename(absolute_filepath))
 
-check_missing_files = lookup_file_filtered_files %>%
-  mutate(filename = basename(key)) %>%
+check_missing_files = all_seqs_inventory %>%
+  mutate(filename = basename(sequencing_s3_filepath)) %>%
   anti_join(dest_dir_files_raw, by = "filename")
 
 if (nrow(check_missing_files) > 0) {
