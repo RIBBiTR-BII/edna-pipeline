@@ -52,7 +52,7 @@ The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts wh
       - Add a descriptive `Job Title`
       - Under `Program Selection: Optimize for`, select `More dissimilar sequences (discontiguous megablast)` (ideal for eDNA)
       - Under `Algorithm parameters`
-        - adjust the max number of hits as desired (10 - 100 is likely fine)
+        - adjust the max number of hits as desired (50 is likely fine)
         - adjust the `Expect threshold` (0.03 is recommended)
       - Click `BLAST` and wait for the query to finish
     - b. In the main Web BLAST results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[your-run-directory]/outout/`
