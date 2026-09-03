@@ -119,7 +119,11 @@ sample_asv_control = sample_asv %>%
          detected_controlled = (detected & !(control_th_below %in% c(TRUE)))) %>%
   rename(asv_count_raw = asv_count) %>%
   arrange(asv_id, desc(asv_count_raw)) %>%
-  select(-any_of(colnames(sample_map_simple)))
+  select(-any_of(c("extraction_negative_control",
+                   "pcr_control",
+                   "pcr_control_type",
+                   "field_negative_control",
+                   "field_negative_control_group")))
 
 write_csv(sample_asv_control, control_out)
 
