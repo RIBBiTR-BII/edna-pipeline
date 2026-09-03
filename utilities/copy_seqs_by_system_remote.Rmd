@@ -18,10 +18,10 @@ Fill out the parameters below to point to the corresponding local directories an
 librarian::shelf(tidyverse, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, here, janitor, aws.s3)
 
 # directory to copy files to
-destination_dir = here("16S_sequence_processing", "runs", "brazil_copy_test", "sequences")
+destination_dir = here("16S_sequence_processing", "runs", "lab_negatives_2026-09-03", "sequences")
 
-# system(s) of interest, any of: brazil, panama, pennsylvania, sierra_nevada (case sensitive)
-soi = c("brazil")
+# system(s) of interest, any of: brazil, panama, pennsylvania, sierra_nevada, lab_controls (case sensitive)
+soi = c("lab_controls")
 
 # Boolean: if true, drops duplicate sequences with later sequencing dates
 most_recent_seqs_only = TRUE
@@ -34,7 +34,8 @@ include_extractions_list = list(
              "RP_346"),
   pennsylvania = c("Tissue_63"),
   panama = c(),
-  sierra_nevada = c()
+  sierra_nevada = c(),
+  lab_negatives = c()
 )
 
 ```
@@ -60,8 +61,8 @@ db_country = tbl(dbcon, Id("survey_data", "country"))
 # metadata pull
 ```{r}
 # check soi
-if (any(!(soi %in% c("brazil", "panama", "pennsylvania", "sierra_nevada")))) {
-  cat(paste0("Unrecognized study systems in config variable `soi`\n\tPermitted values: brazil, panama, pennsylvania, sierra_nevada\n\tUnrecognized value(s): ", paste(soi[!(soi %in% c("brazil", "panama", "pennsylvania", "sierra_nevada"))], collapse = ", ")))
+if (any(!(soi %in% c("brazil", "panama", "pennsylvania", "sierra_nevada", "lab_controls")))) {
+  cat(paste0("Unrecognized study systems in config variable `soi`\n\tPermitted values: brazil, panama, pennsylvania, sierra_nevada, lab_controls\n\tUnrecognized value(s): ", paste(soi[!(soi %in% c("brazil", "panama", "pennsylvania", "sierra_nevada", "lab_controls"))], collapse = ", ")))
 }
 
 # build study system filter expression
@@ -69,7 +70,8 @@ filter_criteria = list(
   brazil = quo(country == "brazil"),
   panama = quo(country == "panama"),
   pennsylvania = quo(region == "pennsylvania"),
-  sierra_nevada = quo(region == "california")
+  sierra_nevada = quo(region == "california"),
+  lab_controls = quo(FALSE)
 )
 
 selected_criteria = filter_criteria[soi]
@@ -133,12 +135,19 @@ sequences_ids = db_edna_seq %>%
 
 include_extractions = unlist(include_extractions_list[soi])
 
+if ("lab_controls" %in% soi) {
+  lab_controls_query = quo(extraction_negative_control | pcr_control)
+} else {
+  lab_controls_query = quo(FALSE)
+}
+
 all_seqs_data = db_edna_seq %>%
   left_join(db_edna_ext, by = "edna_extraction_id") %>%
   left_join(db_edna_samp, by = "edna_sample_id") %>%
   left_join(surveys_of_interest, by = "survey_id") %>%
   filter(edna_sequencing_id %in% sequences_ids |
-           edna_extraction_name %in% include_extractions) %>%
+           edna_extraction_name %in% include_extractions |
+           lab_controls_query) %>%
   select(all_of(colnames(db_edna_seq)),
          all_of(colnames(db_edna_ext)),
          all_of(colnames(db_edna_samp)),
