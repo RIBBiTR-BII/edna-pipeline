@@ -64,54 +64,10 @@ all_edna_data = db_edna_sequencing %>%
          country) %>%
   filter(read_direction == "forward") %>%
   collect() %>%
-  mutate(sequencing_base = basename(sequencing_s3_filepath))
-# # read in methods lookup file
-# methods_lookup = import(methods_lookup_in) %>%
-#   clean_names() %>%
-#   mutate(sequencing_sample_name = if_else(grepl("PENN_", sequencing_sample_name),
-#                                           gsub("PENN-", "PENN_", gsub("_", "-", sequencing_sample_name)),
-#                                           sequencing_sample_name),
-#          edna_sample_name = if_else(grepl("PAN_22", id_e_dna_sample),
-#                                     id_e_dna_sample_edited,
-#                                     id_e_dna_sample),
-#          edna_sample_name = gsub("(^[0-9]{6})_", "\\1_eDNA_", edna_sample_name),
-#          edna_sample_name = if_else(grepl("^Pe_eDNA\\d{5}$", edna_sample_name), gsub("Pe_eDNA00", "Pe_23_eDNA_", edna_sample_name), edna_sample_name)) %>%
-#   filter(!is.na(edna_sample_name),
-#          edna_sample_name != "NA") %>%
-#   rename(illumina_sample_raw = sequencing_sample_name,
-#          edna_sample_name_lookup = edna_sample_name) %>%
-#   select(edna_sample_name_lookup,
-#          illumina_sample_raw)
-
-# # import sample lookup table
-# sample_lookup = rio::import(sample_lookup_file, which = "SEQUENCING", na = c("NA", "", "?")) %>%
-#   clean_names() %>%
-#   filter(!is.na(sequencing_id),
-#          sequencing_date != "Not sent") %>%
-#   mutate(negative_control = (sample_type %in% c("Extraction NC",
-#                                                 "Filtration NC",
-#                                                 "PCR NC",
-#                                                 "PCR PC",
-#                                                 "STERILE")),
-#          field_negative_control = sample_type == "Filtration NC",
-#          control_type = recode_values(sample_type,
-#            "PCR PC" ~ "positive_lab",
-#            "Filtration NC" ~ "negative_field",
-#            c("Extraction NC",
-#              "PCR NC",
-#              "PCR PC",
-#              "STERILE") ~ "negative_lab",
-#            default = NA)) %>%
-#   group_by(collection_date) %>%
-#   mutate(field_negative_control_group_id = UUIDgenerate()) %>%
-#   ungroup() %>%
-#   mutate(field_negative_control_group_id = if_else(is.na(collection_date), NA, field_negative_control_group_id))
-# 
-# define fuzzy matching function
-# match_fun = function(a, b) {
-#   pattern = paste0("(?<![0-9A-Za-z])", stringr::str_escape(b), "$")
-#   stringr::str_detect(a, pattern)
-# }
+  mutate(sequencing_base = basename(sequencing_s3_filepath)) %>%
+  group_by(edna_sequencing_name, read_direction, sequencing_date) %>%
+  slice_head(n = 1) %>%
+  ungroup()
 
 # import feature table
 feature_table =
@@ -120,18 +76,10 @@ feature_table =
   rename("asv_id" = "#OTU ID") %>%
   arrange(asv_id)
 
-# sample_map = tibble(sequencing_raw = colnames(feature_table %>%
-#                                                 select(-asv_id))) %>%
-#   distinct() %>%
-#   arrange(sequencing_raw) %>%
-#   mutate(sequencing_base = gsub("-", "_", sequencing_raw)) %>%
-#   fuzzy_left_join(all_edna_data,
-#                   by = c("sequencing_base" = "sequencing_id"),
-#                   match_fun = match_fun) %>%
-#   rename(edna_sample_name = sample_id)
-
 norm = function(x) tolower(gsub("[-_]", "", x))
 
+seq_bases = sort(all_edna_data$sequencing_base)
+seq_features = sort(colnames(feature_table %>% select(-asv_id)))
 seq_bases_norm = norm(seq_bases)
 
 sample_map = tibble(feature_id = seq_features) %>%
