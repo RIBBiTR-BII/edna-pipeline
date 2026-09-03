@@ -33,6 +33,15 @@ sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sampl
   # rename(field_negative_control = negative_control,
   #        field_negative_control_group_id = negative_control_group_id)
 
+sample_map_simple = sample_map %>%
+  select(feature_id,
+         edna_sequencing_id,
+         extraction_negative_control,
+         pcr_control,
+         pcr_control_type,
+         field_negative_control,
+         field_negative_control_group)
+
 feature_table =
   read_tsv(here(run_dir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
   as.data.frame() %>%
@@ -41,55 +50,66 @@ feature_table =
 
 sample_asv = feature_table %>%
   pivot_longer(cols = -asv_id,
-               names_to = "sequencing_raw",
+               names_to = "feature_id",
                values_to = "asv_count") %>%
   # filter(asv_count != 0) %>%
-  left_join(sample_map, by = "sequencing_raw")
+  left_join(sample_map_simple, by = "feature_id")
   
 ```
 
 # Identify control ASVs
 ```{r}
 # lab positive controls
-control_asv_pos = sample_asv %>%
-  filter(control_type == "positive_lab") %>%
-  group_by(asv_id, control_type) %>%
+control_asv_pcr_pos = sample_asv %>%
+  filter(pcr_control_type == "pcr_positive_control") %>%
+  group_by(asv_id) %>%
   summarise(max_control_asv_count = max(asv_count),
-            .groups = "drop")
+            .groups = "drop") %>%
+  mutate(control_th_source = "pcr_pc")
 
 # lab negative controls
-control_asv_neg_lab = sample_asv %>%
-  filter(control_type == "negative_lab") %>%
-  group_by(asv_id, control_type) %>%
+control_asv_pcr_neg = sample_asv %>%
+  filter(pcr_control_type == "pcr_negative_control") %>%
+  group_by(asv_id) %>%
   summarise(max_control_asv_count = max(asv_count),
-            .groups = "drop")
+            .groups = "drop") %>%
+  mutate(control_th_source = "pcr_nc")
+
+# lab controls (pooled accross run)
+control_asv_extraction = sample_asv %>%
+  filter(extraction_negative_control) %>%
+  group_by(asv_id) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop") %>%
+  mutate(control_th_source = "extraction_nc")
 
 # field negative controls
 control_asv_neg_field = sample_asv %>%
-  filter(control_type == "negative_field") %>%
-  group_by(asv_id, control_type, field_negative_control_group_id) %>%
+  filter(field_negative_control) %>%
+  group_by(asv_id, field_negative_control_group) %>%
   summarise(max_control_asv_count = max(asv_count),
-            .groups = "drop")
+            .groups = "drop") %>%
+  mutate(control_th_source = "field")
 ```
 
 # Calculate controlled reads & export
 ```{r}
 # correct asv reads by controls
-control_asv = bind_rows(control_asv_pos,
-                        control_asv_neg_lab) %>%
+control_asv = bind_rows(control_asv_pcr_pos,
+                        control_asv_pcr_neg,
+                        control_asv_extraction) %>%
   cross_join(bind_rows(control_asv_neg_field %>%
-                         select(field_negative_control_group_id) %>%
+                         select(field_negative_control_group) %>%
                          distinct(),
-                       tibble(field_negative_control_group_id = NA))) %>%
+                       tibble(field_negative_control_group = NA))) %>%
   bind_rows(control_asv_neg_field) %>%
   filter(max_control_asv_count > 0) %>%
-  group_by(asv_id, field_negative_control_group_id) %>%
+  group_by(asv_id, field_negative_control_group) %>%
   slice_max(max_control_asv_count, n = 1, with_ties = FALSE) %>%
-  ungroup() %>%
-  rename(control_th_type = control_type)
+  ungroup()
 
 sample_asv_control = sample_asv %>%
-  left_join(control_asv, by = c("asv_id", "field_negative_control_group_id")) %>%
+  left_join(control_asv, by = c("asv_id", "field_negative_control_group")) %>%
   mutate(max_control_asv_count = replace_na(max_control_asv_count, 0),
          asv_control_th = asv_control_th_factor * max_control_asv_count,
          asv_count_controlled = asv_count - asv_control_th,
@@ -98,7 +118,8 @@ sample_asv_control = sample_asv %>%
          detected = (asv_count > 0),
          detected_controlled = (detected & !(control_th_below %in% c(TRUE)))) %>%
   rename(asv_count_raw = asv_count) %>%
-  arrange(asv_id, desc(asv_count_raw))
+  arrange(asv_id, desc(asv_count_raw)) %>%
+  select(-any_of(colnames(sample_map_simple)))
 
 write_csv(sample_asv_control, control_out)
 
