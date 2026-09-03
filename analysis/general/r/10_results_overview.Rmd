@@ -12,7 +12,7 @@ This script provides a first look at the processed and analyzed results, includi
 librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
+run_dir = here("16S_sequence_processing", "runs", "sierra_2026-08-13")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -236,18 +236,36 @@ p_taxa_prop_co
 # Classification
 ## aggregate by ASV
 ```{r}
+asv_classification_vars = res_06_class %>%
+  filter(is.na(percent_identical),
+         !is.na(accept_method_priority)) %>%
+  group_by(asv_id) %>%
+  slice_min(accept_method_priority, n = 1) %>%
+  select(asv_id,
+         accept_method,
+         accept_method_priority,
+         p_identical_mean,
+         p_identical_max,
+         p_identical_min,
+         seq_overlap_max) %>%
+  distinct()
+
 asv_agg = res_09_export %>%
   select("asv_id", 
          "asv_sequence", "asv_reads_raw", "asv_reads_controlled", "control_th_source", 
          "taxonomic_rank", "domain", "kingdom", "phylum", "class", "order", 
          "family", "genus", "species", "n_hits", "p_identical_max", "gbif_count_family_local", 
          "gbif_count_genus_local", "gbif_count_species_local") %>%
+  left_join(asv_classification_vars, by = "asv_id") %>%
   group_by(across(-c(asv_reads_raw,
                      asv_reads_controlled,
                      control_th_source))) %>%
   summarize(total_asv_reads_raw = sum(asv_reads_raw),
             total_asv_reads_controlled = sum(asv_reads_controlled),
             .groups = "drop")
+
+peace = get_dupes(asv_classification_vars, asv_id)
+
 ```
 
 ## Amphibian species ASVs
@@ -259,13 +277,23 @@ amphibian_asvs = asv_agg %>%
           desc(total_asv_reads_controlled))
 ```
 
+## pick out specific samples
+```{r}
+samples_filtered = res_09_export %>%
+  filter(asv_id == "74ce083ac47674eb5740d03e521385c2",
+         asv_reads_raw > 0) %>%
+  left_join(res_07_sample_map, by = c("edna_sequencing_id",
+                                      "feature_id"))
+
+```
+
 ## GBIF checks
 ```{r}
 check_gbif = asv_agg %>%
   filter(total_asv_reads_controlled > 0,
-         (taxonomic_rank == "species" & gbif_count_species_local) |
-           (taxonomic_rank == "genus" & gbif_count_genus_local) |
-           (taxonomic_rank == "family" & gbif_count_family_local)) %>%
+         (taxonomic_rank == "species" & gbif_count_species_local == 0) |
+           (taxonomic_rank == "genus" & gbif_count_genus_local == 0) |
+           (taxonomic_rank == "family" & gbif_count_family_local == 0)) %>%
   arrange(taxonomic_rank,
           desc(total_asv_reads_controlled))
 ```
