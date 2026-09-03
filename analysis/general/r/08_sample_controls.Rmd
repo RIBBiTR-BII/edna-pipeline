@@ -34,13 +34,20 @@ sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sampl
   #        field_negative_control_group_id = negative_control_group_id)
 
 sample_map_simple = sample_map %>%
+  mutate(sample_type = case_when(
+    pcr_control ~ pcr_control_type,
+    extraction_negative_control ~ "extraction_negative_control",
+    field_negative_control ~ "field_negative_control",
+    grepl("sterile", comments_edna_sample, ignore.case = TRUE) ~ "sterile",
+    .default = "sample")) %>%
   select(feature_id,
          edna_sequencing_id,
          extraction_negative_control,
          pcr_control,
          pcr_control_type,
          field_negative_control,
-         field_negative_control_group)
+         field_negative_control_group,
+         sample_type)
 
 feature_table =
   read_tsv(here(run_dir, "/analysis/s06_denoised_16S_eDNA/sample_table/feature-table.tsv"), skip = 1) %>%
@@ -123,7 +130,12 @@ sample_asv_control = sample_asv %>%
                    "pcr_control",
                    "pcr_control_type",
                    "field_negative_control",
-                   "field_negative_control_group")))
+                   "field_negative_control_group"))) %>%
+  select(asv_id,
+         feature_id,
+         edna_sequencing_id,
+         sample_type,
+         everything())
 
 write_csv(sample_asv_control, control_out)
 
