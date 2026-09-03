@@ -20,17 +20,24 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 ```
 
 # load results
-```{r}
+```{r include=FALSE}
 # hybrid classification
 res_06_class = read_csv(here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv")))
 
-# controls
-res_08_controlled = read_csv(here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv")))
+# # controls
+# res_08_controlled = read_csv(here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv")))
+
+# sample_metadata
+res_07_sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv")))
 
 # exported file
 res_09_export = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_prelim_results.csv")))
 
 # metadata_in = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_prelim_results_metadata.csv")))
+
+# res_09_positive = res_09_export %>%
+#   filter(asv_reads_controlled > 0) %>%
+#   arrange(class, desc(asv_reads_controlled))
 
 ```
 
@@ -39,15 +46,13 @@ res_09_export = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_pr
 # summary stats for samples (including controls)
 sample_read_count = res_09_export %>%
   # drop all controls
-  filter(is.na(control_type)) %>%
-  group_by(edna_sample_name,
-           filter_size_um,
-           filtering_method) %>%
+  filter(sample_type == "sample") %>%
+  group_by(edna_sequencing_id) %>%
   mutate(detected_raw = asv_reads_raw > 0,
          detected_controlled = asv_reads_controlled > 0) %>%
   summarize(
     # number of reads
-    n_reads = sum(asv_count),
+    n_reads = sum(asv_reads_raw),
     # number of reads classified
     n_reads_class = sum(if_else(!is.na(taxonomic_rank), asv_reads_raw, 0L), na.rm = TRUE),
     # number of reads classified chordata
@@ -62,19 +67,27 @@ sample_read_count = res_09_export %>%
     n_reads_class_chord_amph_spp_ctrl = sum(if_else((class == "Amphibia") & (taxonomic_rank == "species"), asv_reads_controlled, 0L), na.rm = TRUE),
     # number of reads classified as human
     n_reads_class_chord_sapien = sum(if_else((species == "sapiens"), asv_reads_raw, 0L), na.rm = TRUE),
+    # number of controlled reads classified as human
+    n_reads_class_chord_sapien_ctrl = sum(if_else((species == "sapiens"), asv_reads_controlled, 0L), na.rm = TRUE),
     ## ASVs
-    # number of ASVs (before controls)
-    n_asv = sum(detected_raw),
-    # number of ASVs (after controls)
-    n_asv_controlled = sum(detected_controlled, na.rm = TRUE),
-    # number of ASVs classified
-    n_asv_controlled_class = sum(detected_controlled & !is.na(taxonomic_rank), na.rm = TRUE),
-    # number of ASVs classified chordata
-    n_asv_controlled_class_chord = sum(detected_controlled & (phylum == "Chordata"), na.rm = TRUE),
-    # number of ASVs classified as amphibians
-    n_asv_controlled_class_xamph = sum(detected_controlled & (class == "Amphibia"), na.rm = TRUE),
-    # number of ASVs classified as amphibians to the species level
-    n_asv_controlled_class_xamph_spp = sum(detected_controlled & (class == "Amphibia") & (taxonomic_rank == "species"), na.rm = TRUE),
+    # number of asvs
+    n_asvs = length(unique(asv_id[asv_reads_raw > 0])),
+    # number of asvs classified
+    n_asvs_class = length(unique(asv_id[asv_reads_raw > 0 & !is.na(taxonomic_rank)])),
+    # number of asvs classified chordata
+    n_asvs_class_chord = length(unique(asv_id[asv_reads_raw > 0 & phylum %in% "Chordata"])),
+    # number of asvs classified as amphibians
+    n_asvs_class_chord_amph = length(unique(asv_id[asv_reads_raw > 0 & class %in% "Amphibia"])),
+    # controlled number of asvs classified as amphibians
+    n_asvs_class_chord_amph_ctrl = length(unique(asv_id[asv_reads_controlled > 0 & class %in% "Amphibia"])),
+    # number of asvs classified as amphibians to the species level
+    n_asvs_class_chord_amph_spp = length(unique(asv_id[asv_reads_raw > 0 & class %in% "Amphibia" & taxonomic_rank == "species"])),
+    # controlled number of asvs classified as amphibians to the species level
+    n_asvs_class_chord_amph_spp_ctrl = length(unique(asv_id[asv_reads_controlled > 0 & class %in% "Amphibia" & taxonomic_rank == "species"])),
+    # number of asvs classified as human
+    n_asvs_class_chord_sapien = length(unique(asv_id[asv_reads_raw > 0 & species %in% "sapiens"])),
+    # number of controlled asvs classified as human
+    n_asvs_class_chord_sapien_ctrl = length(unique(asv_id[asv_reads_controlled > 0 & species %in% "sapiens"])),
     .groups = "drop") %>%
   mutate(ratio_amph = n_reads_class_chord_amph_ctrl / n_reads,
          ratio_sapiens = n_reads_class_chord_sapien / n_reads)
@@ -88,13 +101,30 @@ sample_read_count_long = sample_read_count %>%
                         n_reads_class_chord_amph_ctrl,
                         n_reads_class_chord_amph_spp,
                         n_reads_class_chord_amph_spp_ctrl,
-                        n_reads_class_chord_sapien),
+                        n_reads_class_chord_sapien,
+                        n_reads_class_chord_sapien_ctrl),
                names_to = "count_type",
                values_to = "n") %>%
   mutate(log10_n = log10(n + 1))
 
-# gene
+sample_asv_count_long = sample_read_count %>%
+  pivot_longer(cols = c(n_asvs,
+                        n_asvs_class,
+                        n_asvs_class_chord,
+                        n_asvs_class_chord_amph,
+                        n_asvs_class_chord_amph_ctrl,
+                        n_asvs_class_chord_amph_spp,
+                        n_asvs_class_chord_amph_spp_ctrl,
+                        n_asvs_class_chord_sapien,
+                        n_asvs_class_chord_sapien_ctrl),
+               names_to = "count_type",
+               values_to = "n")
+
+# plot
 ggplot(sample_read_count_long, aes(y = log10_n, color = count_type)) +
+  geom_boxplot()
+
+ggplot(sample_asv_count_long, aes(y = n, color = count_type)) +
   geom_boxplot()
 
 ```
@@ -121,7 +151,7 @@ sample_taxa_group = res_09_export %>%
 
 # 1. proportions per replicate
 replicate_props_co = sample_taxa_group |>
-  group_by(edna_sample_name, taxa_group) |>
+  group_by(edna_sequencing_id, taxa_group) |>
   summarize(
     taxa_reads      = sum(asv_reads_raw),
     taxa_reads_ctrl = sum(asv_reads_controlled),
@@ -137,7 +167,7 @@ replicate_props_co = sample_taxa_group |>
 
 # 2. average proportions across replicates within each sample
 sample_props_co = replicate_props_co |>
-  group_by(edna_sample_name, taxa_group) |>
+  group_by(edna_sequencing_id, taxa_group) |>
   summarize(
     prop      = mean(prop, na.rm = TRUE),
     prop_ctrl = mean(prop_ctrl, na.rm = TRUE),
@@ -202,4 +232,59 @@ p_taxa_prop_co = ggplot(sample_taxa_group_agg_long_co,
 
 p_taxa_prop_co
 
+```
+# Classification
+## aggregate by ASV
+```{r}
+asv_agg = res_09_export %>%
+  select("asv_id", 
+         "asv_sequence", "asv_reads_raw", "asv_reads_controlled", "control_th_source", 
+         "taxonomic_rank", "domain", "kingdom", "phylum", "class", "order", 
+         "family", "genus", "species", "n_hits", "p_identical_max", "gbif_count_family_local", 
+         "gbif_count_genus_local", "gbif_count_species_local") %>%
+  group_by(across(-c(asv_reads_raw,
+                     asv_reads_controlled,
+                     control_th_source))) %>%
+  summarize(total_asv_reads_raw = sum(asv_reads_raw),
+            total_asv_reads_controlled = sum(asv_reads_controlled),
+            .groups = "drop")
+```
+
+## Amphibian species ASVs
+```{r}
+amphibian_asvs = asv_agg %>%
+  filter(total_asv_reads_controlled > 0,
+         class %in% "Amphibia") %>%
+  arrange(taxonomic_rank,
+          desc(total_asv_reads_controlled))
+```
+
+## GBIF checks
+```{r}
+check_gbif = asv_agg %>%
+  filter(total_asv_reads_controlled > 0,
+         (taxonomic_rank == "species" & gbif_count_species_local) |
+           (taxonomic_rank == "genus" & gbif_count_genus_local) |
+           (taxonomic_rank == "family" & gbif_count_family_local)) %>%
+  arrange(taxonomic_rank,
+          desc(total_asv_reads_controlled))
+```
+
+## accept methods discrepancies
+```{r}
+tax_cols = c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")
+
+check_accept_discr = res_06_class %>%
+  filter(is.na(percent_identical)) %>%
+  group_by(asv_id) %>%
+  filter(if_any(all_of(tax_cols), ~ n_distinct(.x, na.rm = TRUE) > 1)) %>%
+  ungroup()
+
+n_accept_discr = check_accept_discr %>%
+  pull(n_distinct(asv_id)) %>%
+  length()
+
+# double check that this works...
+check_unclassified = res_06_class %>%
+  filter(is.na(accept_method) & is.na(percent_identical))
 ```
