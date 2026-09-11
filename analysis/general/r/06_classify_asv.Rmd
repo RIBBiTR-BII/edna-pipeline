@@ -15,7 +15,7 @@ See the algorithm below for details on each `accept_method` and to adjust parame
 librarian::shelf(tidyverse, yaml, here, phylotools)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
+run_dir = here("16S_sequence_processing", "runs", "lab_controls_2026-09-03")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -24,7 +24,7 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 sequence_overlap_cutoff = 0
 
 # Did you run a gbif query (script 05) for local taxa, which you want incorporated in classification?
-gbif_query = TRUE
+gbif_query = FALSE
 
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
@@ -253,6 +253,76 @@ hits_group_calc = function(hits_df, group_cols, agg_cols = c()) {
            drop_to_next_pimax,
            everything())
 }
+
+# taxonomic ranks, ordered broadest to most specific
+tax_ranks = c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")
+
+## merge two full-taxonomy hit-groups (already sorted into a fixed row order by the caller)
+## into a single row, combining each rank as "value_1/value_2" wherever the pair disagrees,
+## so e.g. genus_1/genus_2 always correspond to the same underlying hit-group as species_1/species_2
+merge_taxon_pair = function(row1, row2) {
+  merged_ranks = map(tax_ranks, function(rank) {
+    v1 = row1[[rank]]
+    v2 = row2[[rank]]
+    case_when(
+      is.na(v1) & is.na(v2) ~ NA_character_,
+      !is.na(v1) & !is.na(v2) & v1 == v2 ~ v1,
+      .default = paste0(coalesce(v1, "NA"), "/", coalesce(v2, "NA"))
+    )
+  })
+  names(merged_ranks) = tax_ranks
+
+  # taxonomic_rank = most specific rank at which both hit-groups actually have a value
+  taxonomic_rank = NA_character_
+  for (rank in rev(tax_ranks)) {
+    if (!is.na(row1[[rank]]) && !is.na(row2[[rank]])) {
+      taxonomic_rank = rank
+      break
+    }
+  }
+
+  bind_cols(as_tibble(merged_ranks), tibble(taxonomic_rank = taxonomic_rank))
+}
+
+## from a table of candidate hits (already filtered to p_identical == 1 & species-level
+## candidates), find (asv_id, method) pairs with exactly 2 distinct full-taxonomy hit-groups,
+## and merge each pair via merge_taxon_pair() into one row reporting "value_1/value_2" at
+## every disagreeing rank
+build_tie2_accept = function(candidate_hits, accept_method_label) {
+  taxon_groups = candidate_hits %>%
+    distinct(asv_id, method, asv_total_count, sample_count, samples, sequence,
+             domain, kingdom, phylum, class, order, family, genus, species)
+
+  tie2_keys = taxon_groups %>%
+    count(asv_id, method, name = "n_taxa") %>%
+    filter(n_taxa == 2) %>%
+    select(asv_id, method)
+
+  if (nrow(tie2_keys) == 0) {
+    return(tibble())
+  }
+
+  taxon_groups %>%
+    inner_join(tie2_keys, by = c("asv_id", "method")) %>%
+    arrange(asv_id, method, domain, kingdom, phylum, class, order, family, genus, species) %>%
+    group_by(asv_id, method, asv_total_count, sample_count, samples, sequence) %>%
+    group_modify(~ merge_taxon_pair(.x[1, ], .x[2, ])) %>%
+    ungroup() %>%
+    left_join(candidate_hits %>%
+                group_by(asv_id, method) %>%
+                summarise(n_hits = n(),
+                          p_identical_mean = mean(percent_identical) / 100,
+                          p_identical_max = max(percent_identical) / 100,
+                          p_identical_min = min(percent_identical) / 100,
+                          seq_overlap_max = max(seq_overlap),
+                          gbif_count_family_local = first(gbif_count_family_local),
+                          gbif_count_genus_local = first(gbif_count_genus_local),
+                          gbif_count_species_local = first(gbif_count_species_local),
+                          local_species = any(local_species, na.rm = TRUE),
+                          .groups = "drop"),
+              by = c("asv_id", "method")) %>%
+    mutate(accept_method = accept_method_label)
+}
 ```
 
 # Group hits by taxonomy
@@ -423,7 +493,7 @@ accept_species_100_unanimous_local = hits_geography %>%
             .groups = "drop") %>%
   mutate(accept_method = "0_species_100p_unanimous_local",
          taxonomic_rank = "species") %>%
-  group_by(asv_id) %>%
+  group_by(asv_id, method) %>%
   mutate(tie = n() > 1) %>%
   ungroup() %>%
   filter(!tie)
@@ -459,10 +529,31 @@ accept_species_100_unanimous = hits_geography %>%
             .groups = "drop") %>%
   mutate(accept_method = "0_species_100p_unanimous",
          taxonomic_rank = "species") %>%
-  group_by(asv_id) %>%
+  group_by(asv_id, method) %>%
   mutate(tie = n() > 1) %>%
   ungroup() %>%
   filter(!tie)
+
+# local 2-way tie @ p_identical = 1: exactly 2 equally-good candidate taxa from one search
+# method; reported as "value_1/value_2" at every disagreeing rank, with taxonomic_rank set
+# to the most specific rank both candidates actually resolve
+accept_species_100_tie2_local = build_tie2_accept(
+  hits_geography %>%
+    filter(p_identical == 1,
+           !is.na(specificEpithet),
+           local_species) %>%
+    mutate(species = specificEpithet),
+  "0_species_100p_tie2_local"
+)
+
+# 2-way tie @ p_identical = 1 (see accept_species_100_tie2_local)
+accept_species_100_tie2 = build_tie2_accept(
+  hits_geography %>%
+    filter(p_identical == 1,
+           !is.na(specificEpithet)) %>%
+    mutate(species = specificEpithet),
+  "0_species_100p_tie2"
+)
 
 # local species consensus >=75% @ p_identity = 1
 accept_species_100_consensus_75_local = find_consensus(hits_geography %>%
@@ -684,6 +775,8 @@ Join accepted classifications from all `accept_method`s
 ```{r}
 accept_all = bind_rows(accept_species_100_unanimous,
                        accept_species_100_unanimous_local,
+                       accept_species_100_tie2,
+                       accept_species_100_tie2_local,
                        accept_species_100_consensus_75,
                        accept_species_100_consensus_75_local,
                        accept_species_unambiguous,
@@ -720,20 +813,22 @@ hits_accept = hits_geography %>%
          accept_method_priority = recode_values(accept_method,
                                                 "0_species_100p_unanimous_local" ~ 1,
                                                 "0_species_100p_unanimous" ~ 2,
-                                                "1_species_100p_consensus_75_local" ~ 3, 
-                                                "1_species_100p_consensus_75" ~ 4,
-                                                "2_species_95p_pdrop_03_local" ~ 5, 
-                                                "2_species_95p_pdrop_03" ~ 6,
-                                                "3_genus_90p_pdrop_03_local" ~ 7,
-                                                "3_genus_90p_pdrop_03" ~ 8, 
-                                                "4_family_80p_pdrop_05_local" ~ 9,
-                                                "4_family_80p_pdrop_05" ~ 10,
-                                                "5_order_70p_pdrop_05" ~ 11, 
-                                                "6_order_50p_consensus_75" ~ 12,
-                                                "7_class_50p_consensus_75" ~ 13,
-                                                "8_phylum_50p_consensus_75" ~ 14,
-                                                "9_kingdom_50p_consensus_75" ~ 15,
-                                                "9_domain_50p_consensus_75" ~ 16,
+                                                "0_species_100p_tie2_local" ~ 3,
+                                                "0_species_100p_tie2" ~ 4,
+                                                "1_species_100p_consensus_75_local" ~ 5,
+                                                "1_species_100p_consensus_75" ~ 6,
+                                                "2_species_95p_pdrop_03_local" ~ 7,
+                                                "2_species_95p_pdrop_03" ~ 8,
+                                                "3_genus_90p_pdrop_03_local" ~ 9,
+                                                "3_genus_90p_pdrop_03" ~ 10,
+                                                "4_family_80p_pdrop_05_local" ~ 11,
+                                                "4_family_80p_pdrop_05" ~ 12,
+                                                "5_order_70p_pdrop_05" ~ 13,
+                                                "6_order_50p_consensus_75" ~ 14,
+                                                "7_class_50p_consensus_75" ~ 15,
+                                                "8_phylum_50p_consensus_75" ~ 16,
+                                                "9_kingdom_50p_consensus_75" ~ 17,
+                                                "9_domain_50p_consensus_75" ~ 18,
                                                 default = NA),
          search_method_priority = recode_values(method,
                                                 "blast_web" ~ 1,
