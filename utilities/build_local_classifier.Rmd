@@ -1,0 +1,156 @@
+---
+title: "build_local_classifier"
+author: "Cob Staines"
+output: html_document
+---
+
+# Description
+
+This is a utility script which converts the ASV representative sequences and accepted taxonomic classifications from a completed sequence processing + analysis run into the same file/directory structure used by the local reference classifiers (e.g. `amphibia16s_classifier`, `vertebrata16s_classifier`, `vertebrata12s_classifier`), so the run's ASVs can be referenced as a local BLAST/vsearch classifier in future runs (`taxonomy.classifierDir` in `config.yml`).
+
+All ASVs present in the run's representative sequences are included, whether or not they received an accepted classification in `06_classify_asv.Rmd` (unclassified ASVs are carried through as `Unassigned`, matching QIIME2 convention).
+
+*Note* - this script builds real QIIME2 `.qza` artifacts (`FeatureData[Sequence]`, `FeatureData[Taxonomy]`), extracted the same way `fetch-ncbi-seq-classifier-*.sh` does. It therefore requires the `qiime` CLI to be on `PATH` -- run this from inside the pipeline's Podman/Docker container (see `16S_sequence_processing/README.md`), e.g.:
+
+```bash
+podman run -it --rm -v $(pwd):/data:z edna-pipeline bash
+```
+
+then work through the chunks below from an R session started in that shell (or `Rscript -e "rmarkdown::render('utilities/build_local_classifier.Rmd')"`, noting `rmarkdown` is not installed in the container image by default).
+
+# Config
+```{r}
+library(tidyverse)
+library(yaml)
+library(here)
+library(phylotools)
+
+# run to build the classifier from
+run_dir = here("16S_sequence_processing", "runs", "lab_controls_2026-09-03")
+
+# read in run config file (for gene & run name)
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+# name of the new classifier directory, created as a subfolder of 16S_sequence_processing/
+# (this is the value you would later set as `taxonomy.classifierDir` in config.yml)
+classifier_name = "lab_contaminants_classifier"
+
+# taxon string assigned to ASVs with no accepted classification from 06_classify_asv.Rmd
+unassigned_taxon = "Unassigned"
+```
+
+# Function: build_local_classifier
+
+Converts a run's representative ASV sequences + accepted taxonomy into a local classifier directory matching the structure of e.g. `vertebrata16s_classifier`:
+
+- `<classifier_dir>/derep1_seqs_extracted.qza`
+- `<classifier_dir>/derep1_seqs_extracted/.../data/dna-sequences.fasta`
+- `<classifier_dir>/derep1_taxa_extracted.qza`
+- `<classifier_dir>/derep1_taxa_extracted/.../data/taxonomy.tsv`
+- `<classifier_dir>/classifier_metadata.yml`
+
+```{r}
+build_local_classifier = function(run_dir, config, classifier_name, unassigned_taxon = "Unassigned") {
+
+  if (Sys.which("qiime") == "") {
+    stop("qiime CLI not found on PATH. Run this script inside the pipeline's QIIME2 container -- see 16S_sequence_processing/README.md for setup.")
+  }
+
+  classifier_dir = here("16S_sequence_processing", classifier_name)
+
+  if (dir.exists(classifier_dir)) {
+    stop(paste0("Classifier directory already exists: ", classifier_dir, "\n\tRemove or rename it before rebuilding."))
+  }
+
+  dir.create(classifier_dir, recursive = TRUE)
+  temp_dir = file.path(classifier_dir, "temp")
+  dir.create(temp_dir)
+
+  # representative sequences (all ASVs from denoising -- unfiltered)
+  sequence_table =
+    read.fasta(file = here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "representative_sequences",
+                           list.files(here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "representative_sequences")),
+                           "data", "dna-sequences.fasta")) %>%
+    rename(asv_id = seq.name,
+           sequence = seq.text) %>%
+    arrange(asv_id)
+
+  # accepted classification per ASV, if present (06_classify_asv.Rmd output)
+  classification_file = here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv"))
+
+  if (file.exists(classification_file)) {
+    asv_classification = read_csv(classification_file, show_col_types = FALSE) %>%
+      select(asv_id, domain, kingdom, phylum, class, order, family, genus, species)
+  } else {
+    cat("No accepted classification table found, all ASVs will be written as", unassigned_taxon, "\n")
+    asv_classification = tibble(asv_id = character())
+  }
+
+  # build taxon strings; every ASV in sequence_table is retained, classified or not
+  taxonomy_table = sequence_table %>%
+    select(asv_id) %>%
+    left_join(asv_classification, by = "asv_id") %>%
+    mutate(taxon = if_else(
+      is.na(kingdom),
+      unassigned_taxon,
+      paste0("k__", replace_na(kingdom, ""),
+             ";p__", replace_na(phylum, ""),
+             ";c__", replace_na(class, ""),
+             ";o__", replace_na(order, ""),
+             ";f__", replace_na(family, ""),
+             ";g__", replace_na(genus, ""),
+             ";s__", replace_na(species, ""))
+    )) %>%
+    select(`Feature ID` = asv_id, Taxon = taxon)
+
+  # write intermediate fasta + taxonomy tsv
+  fasta_path = file.path(temp_dir, "sequences.fasta")
+  taxonomy_path = file.path(temp_dir, "taxonomy.tsv")
+
+  writeLines(paste0(">", sequence_table$asv_id, "\n", sequence_table$sequence), fasta_path)
+  write_tsv(taxonomy_table, taxonomy_path)
+
+  # import as QIIME2 artifacts
+  seqs_qza = file.path(classifier_dir, "derep1_seqs_extracted.qza")
+  taxa_qza = file.path(classifier_dir, "derep1_taxa_extracted.qza")
+
+  cat("Importing sequences as FeatureData[Sequence]\n")
+  system2("qiime", c("tools", "import",
+                     "--type", "FeatureData[Sequence]",
+                     "--input-path", fasta_path,
+                     "--output-path", seqs_qza))
+
+  cat("Importing taxonomy as FeatureData[Taxonomy]\n")
+  system2("qiime", c("tools", "import",
+                     "--type", "FeatureData[Taxonomy]",
+                     "--input-path", taxonomy_path,
+                     "--output-path", taxa_qza))
+
+  # extract, matching the layout referenced by qiime-seq-process_*.sh
+  cat("Extracting artifacts\n")
+  system2("qiime", c("tools", "extract", "--input-path", seqs_qza, "--output-path", file.path(classifier_dir, "derep1_seqs_extracted")))
+  system2("qiime", c("tools", "extract", "--input-path", taxa_qza, "--output-path", file.path(classifier_dir, "derep1_taxa_extracted")))
+
+  unlink(temp_dir, recursive = TRUE)
+
+  # write classifier metadata
+  metadata = list(
+    classifier = list(
+      name = classifier_name,
+      buildScript = "utilities/build_local_classifier.Rmd",
+      sourceRunName = config$run$name,
+      sourceRunDir = config$run$runDir,
+      buildEndTimestamp = format(Sys.time(), '%Y-%m-%d %H:%M:%S %z')
+    )
+  )
+  write_yaml(metadata, file.path(classifier_dir, "classifier_metadata.yml"))
+
+  cat("Done. Classifier written to", classifier_dir, "\n")
+  invisible(classifier_dir)
+}
+```
+
+# Run
+```{r}
+build_local_classifier(run_dir, config, classifier_name, unassigned_taxon)
+```
