@@ -22,6 +22,7 @@ metadata$post$runtime$duration = paste0(as.character(round(difftime(end_time, st
 metadata$post$exitStatus = dplyr::case_when(
   file.exists(paste0(config$run$runDir, "/output/", config$run$name, "_eDNA_result_tables.xlsx")) ~ "complete",
   dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsearch/search_results/")) ~ "incomplete-s07-b",
+  dir.exists(paste0(config$run$runDir, "/analysis/s07_contaminant_vsearch/search_results/")) ~ "incomplete-s07-c",
   dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_cblast/classification/")) ~ "incomplete-s07-a",
   dir.exists(paste0(config$run$runDir, "/analysis/s06_denoised_", config$taxonomy$gene, "_eDNA/representative_sequences")) ~ "incomplete-s06",
   file.exists(paste0(config$run$runDir, "/analysis/s05_primertrimmed_", config$taxonomy$gene, "_eDNA_Demux.qzv ")) ~ "incomplete-s05",

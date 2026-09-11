@@ -23,3 +23,9 @@ classification:
     maxaccepts: 20         # maximum number of hits to accept
     percIdentity: 0.5      # minimum identity for hit acceptance
     queryCov: 0.5          # minimum query coverage hit acceptance
+  contaminantLibDir: null       # subfolder containing a local contaminant reference library (e.g. `lab_contaminants_classifier`): `null` skips contaminant screening
+  contaminantVsearchBool: false # do you want to screen ASVs against the contaminant library with vsearch?
+  contaminantVsearch:
+    maxaccepts: 20         # maximum number of hits to accept (loose prefilter -- final contaminant threshold is applied downstream)
+    percIdentity: 0.5      # minimum identity for hit acceptance (loose prefilter)
+    queryCov: 0.5          # minimum query coverage hit acceptance (loose prefilter)

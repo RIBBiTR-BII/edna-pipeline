@@ -121,6 +121,36 @@ if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsea
                              method = NA)
 }
 
+## Read in contaminant library screening (Vsearch) results if existing
+if (dir.exists(paste0(config$run$runDir, "/analysis/s07_contaminant_vsearch"))) {
+  hit_table_contaminant =
+    read.table(paste0(config$run$runDir, "/analysis/s07_contaminant_vsearch/search_results/",
+                      list.files(paste0(config$run$runDir, '/analysis/s07_contaminant_vsearch/search_results')),
+                      "/data/blast6.tsv"),
+               header = FALSE,
+               sep = '\t') %>%
+    rename(asv_id = V1,
+           contaminant_asv_id = V2,
+           percent_identical = V3,
+           seq_overlap = V4,
+           seq_mismatch = V5,
+           gapopen_count = V6,
+           q_start = V7,
+           q_end = V8,
+           s_start = V9,
+           s_end = V10,
+           e_value = V11,
+           bitscore = V12) %>%
+    arrange(asv_id) %>%
+    mutate(method = "contaminant_vsearch")
+} else {
+  hit_table_contaminant = tibble(asv_id = NA,
+                                 contaminant_asv_id = NA,
+                                 method = NA)
+}
+
+write.csv(hit_table_contaminant, paste0(config$run$runDir, "/output/", config$run$name, "_02_contaminant_hits.csv"), row.names = FALSE)
+
 if (!is.null(config$taxonomy$classifierDir)) {
   # Read in taxonomies and filter to flagged taxa
   taxonomy_table =
@@ -185,7 +215,8 @@ list_of_datasets <- list("Feature Table" = feature_table,
                          "Sequence Table" = sequence_table,
                          "Hits vsearch" = hit_table_vsearch,
                          "Hits BLAST" = hit_table_blast,
-                         "Consensus BLAST" = consensus_table_blast
+                         "Consensus BLAST" = consensus_table_blast,
+                         "Hits Contaminant" = hit_table_contaminant
                          )
 
 write.xlsx(list_of_datasets, file = paste0(config$run$runDir, "/output/", config$run$name, "_02_eDNA_result_tables.xlsx"))

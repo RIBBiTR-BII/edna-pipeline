@@ -15,6 +15,11 @@ c_v_bool=$(yq e '.classification.localVsearchBool' "$env_config_path")
 c_v_maxaccepts=$(yq e '.classification.localVsearch.maxaccepts' "$env_config_path")
 c_v_perc_identity=$(yq e '.classification.localVsearch.percIdentity' "$env_config_path")
 c_v_query_cov=$(yq e '.classification.localVsearch.queryCov' "$env_config_path")
+c_contam_dir=$(yq e '.classification.contaminantLibDir' "$env_config_path")
+c_cv_bool=$(yq e '.classification.contaminantVsearchBool' "$env_config_path")
+c_cv_maxaccepts=$(yq e '.classification.contaminantVsearch.maxaccepts' "$env_config_path")
+c_cv_perc_identity=$(yq e '.classification.contaminantVsearch.percIdentity' "$env_config_path")
+c_cv_query_cov=$(yq e '.classification.contaminantVsearch.queryCov' "$env_config_path")
 
 # bookmark project folder for later reference
 project_dir=$(pwd)\
@@ -81,9 +86,21 @@ if [ -n "$c_taxa_dir" ] && [[ "$c_taxa_dir" != "null" ]]; then
 		# s07-b
 		# Classify Sequences vsearch global
 		qiime feature-classifier vsearch-global --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_taxa_dir/derep1_seqs_extracted.qza" --p-maxaccepts $c_v_maxaccepts --p-perc-identity $c_v_perc_identity --p-query-cov $c_v_query_cov --output-dir analysis/s07_classified_taxonomy_vsearch
-		# Extract out classifications. 
+		# Extract out classifications.
 		qiime tools extract  --input-path analysis/s07_classified_taxonomy_vsearch/search_results.qza --output-path analysis/s07_classified_taxonomy_vsearch/search_results
     fi
+fi
+
+# if a contaminant library is provided and contaminant vsearch screening is enabled
+if [ -n "$c_contam_dir" ] && [[ "$c_contam_dir" != "null" ]] && [[ "$c_cv_bool" == "true" ]]; then
+
+	echo "Screening sequences locally against contaminant library with Vsearch"
+
+	# s07-c
+	# Screen sequences against the contaminant library via vsearch global
+	qiime feature-classifier vsearch-global --i-query analysis/s06_denoised_16S_eDNA/representative_sequences.qza --i-reference-reads "$project_dir/$c_contam_dir/derep1_seqs_extracted.qza" --p-maxaccepts $c_cv_maxaccepts --p-perc-identity $c_cv_perc_identity --p-query-cov $c_cv_query_cov --output-dir analysis/s07_contaminant_vsearch
+	# Extract out hits.
+	qiime tools extract  --input-path analysis/s07_contaminant_vsearch/search_results.qza --output-path analysis/s07_contaminant_vsearch/search_results
 fi
 
 # return to project folder
