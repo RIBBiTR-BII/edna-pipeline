@@ -1,9 +1,9 @@
 ---
 run:
-  name: test_run_01                           # a unique run name
-  runDir: runs/test_run_01                    # the run folder of interest. This folder should have a subfolder `sequences/` which contains all sequence files 
-  description: A test run with provided data  # run description
-  technician: your-name-here                 # who is processing these data, for communication
+  name: sierra_nevada_16s_2026-09-11                          # a unique run name
+  runDir: runs/sierra_nevada_16s_2026-09-11                    # the run folder of interest. This folder should have a subfolder `sequences/` which contains all sequence files 
+  description: Rerun of sierra samples with contamination search, GBIF polygon, and classification ties  # run description
+  technician: Cob                 # who is processing these data, for communication
 taxonomy:
   gene: 16S                # 12S or 16S
   classifierDir: null      # subfolder containing the taxonomic classifier: `null` skips classification, `amphibia16s_classifier`, etc.
@@ -23,8 +23,8 @@ classification:
     maxaccepts: 20         # maximum number of hits to accept
     percIdentity: 0.5      # minimum identity for hit acceptance
     queryCov: 0.5          # minimum query coverage hit acceptance
-  contaminantLibDir: null       # subfolder containing a local contaminant reference library (e.g. `lab_contaminants_classifier`): `null` skips contaminant screening
-  contaminantVsearchBool: false # do you want to screen ASVs against the contaminant library with vsearch?
+  contaminantLibDir: lab_contaminants_classifier       # subfolder containing a local contaminant reference library (e.g. `lab_contaminants_classifier`): `null` skips contaminant screening
+  contaminantVsearchBool: true # do you want to screen ASVs against the contaminant library with vsearch?
   contaminantVsearch:
     maxaccepts: 20         # maximum number of hits to accept (loose prefilter -- final contaminant threshold is applied downstream)
     percIdentity: 0.5      # minimum identity for hit acceptance (loose prefilter)

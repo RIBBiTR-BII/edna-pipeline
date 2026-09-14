@@ -122,6 +122,9 @@ if (dir.exists(paste0(config$run$runDir, "/analysis/s07_classified_taxonomy_vsea
 }
 
 ## Read in contaminant library screening (Vsearch) results if existing
+contaminant_requested = !is.null(config$classification$contaminantLibDir) &&
+  isTRUE(config$classification$contaminantVsearchBool)
+
 if (dir.exists(paste0(config$run$runDir, "/analysis/s07_contaminant_vsearch"))) {
   hit_table_contaminant =
     read.table(paste0(config$run$runDir, "/analysis/s07_contaminant_vsearch/search_results/",
@@ -147,6 +150,17 @@ if (dir.exists(paste0(config$run$runDir, "/analysis/s07_contaminant_vsearch"))) 
   hit_table_contaminant = tibble(asv_id = NA,
                                  contaminant_asv_id = NA,
                                  method = NA)
+}
+
+# warn if screening was requested (config$classification$contaminantVsearchBool: true) but no
+# hits made it through -- this usually means the qiime s07-c vsearch-global step failed silently
+# (e.g. a bad contaminantLibDir path) rather than that no contaminants were found
+if (contaminant_requested && (nrow(hit_table_contaminant) == 0 || all(is.na(hit_table_contaminant$asv_id)))) {
+  warning(paste0("Contaminant screening was requested (contaminantVsearchBool: true, contaminantLibDir: '",
+                 config$classification$contaminantLibDir, "') but '_02_contaminant_hits.csv' came back empty. ",
+                 "Check that '", config$classification$contaminantLibDir, "' is a valid subfolder and that ",
+                 "the qiime s07-c vsearch-global step (analysis/s07_contaminant_vsearch) actually ran -- ",
+                 "it fails silently on a bad reference path."))
 }
 
 write.csv(hit_table_contaminant, paste0(config$run$runDir, "/output/", config$run$name, "_02_contaminant_hits.csv"), row.names = FALSE)

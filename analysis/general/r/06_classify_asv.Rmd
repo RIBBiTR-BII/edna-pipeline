@@ -15,7 +15,7 @@ See the algorithm below for details on each `accept_method` and to adjust parame
 librarian::shelf(tidyverse, yaml, here, phylotools)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "lab_controls_2026-09-03")
+run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -25,6 +25,10 @@ sequence_overlap_cutoff = 0
 
 # Did you run a gbif query (script 05) for local taxa, which you want incorporated in classification?
 gbif_query = FALSE
+
+# minimum p_identical (against the local contaminant library, script 02 / s07-c) for a hit to
+# flag an ASV as a likely contaminant
+contaminant_identity_cutoff = 0.97
 
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
@@ -323,6 +327,58 @@ build_tie2_accept = function(candidate_hits, accept_method_label) {
               by = c("asv_id", "method")) %>%
     mutate(accept_method = accept_method_label)
 }
+```
+
+# Contaminant screening
+
+Independently flag ASVs matching a local contaminant reference library (script 02 / s07-c, optional). This is orthogonal to the taxonomy `accept_method` hierarchy above: a contaminant match does not affect taxonomic classification, it's carried alongside it as its own flag.
+```{r}
+# read in local contaminant library screen, if run
+if (file.exists(here(run_dir, "output", paste0(config$run$name, "_02_contaminant_hits.csv")))) {
+  contaminant_hits_raw = read_csv(here(run_dir, "output", paste0(config$run$name, "_02_contaminant_hits.csv")))
+} else {
+  cat("No contaminant hits table found, skipping.\n")
+  contaminant_hits_raw = tibble(asv_id = NA)
+}
+
+# hits meeting the contaminant identity cutoff
+contaminant_hits = contaminant_hits_raw %>%
+  filter(!is.na(asv_id)) %>%
+  mutate(p_identical = percent_identical / 100) %>%
+  filter(p_identical >= contaminant_identity_cutoff)
+
+# best (max p_identical) contaminant match(es) per ASV
+contaminant_top_hits = contaminant_hits %>%
+  group_by(asv_id) %>%
+  filter(p_identical == max(p_identical)) %>%
+  ungroup() %>%
+  distinct(asv_id, contaminant_asv_id, p_identical)
+
+# accept method 1: unambiguous max p_identity (single best-matching contaminant reference)
+accept_contaminant_max = contaminant_top_hits %>%
+  group_by(asv_id) %>%
+  filter(n() == 1) %>%
+  ungroup() %>%
+  transmute(asv_id,
+            contaminant_id = contaminant_asv_id,
+            contaminant_p_identity = p_identical,
+            contaminant_accept_method = "max_p_identity")
+
+# accept method 2: tie (>=2 distinct contaminant references tied at the max p_identical),
+# reported as "id_1/id_2/..."
+accept_contaminant_tie = contaminant_top_hits %>%
+  group_by(asv_id) %>%
+  filter(n() > 1) %>%
+  summarise(contaminant_id = paste(sort(unique(contaminant_asv_id)), collapse = "/"),
+            contaminant_p_identity = first(p_identical),
+            .groups = "drop") %>%
+  mutate(contaminant_accept_method = "tie")
+
+# combine, then fill in every ASV so unflagged ASVs report contaminant_flag = FALSE
+contaminant_summary = backbone %>%
+  select(asv_id) %>%
+  left_join(bind_rows(accept_contaminant_max, accept_contaminant_tie), by = "asv_id") %>%
+  mutate(contaminant_flag = !is.na(contaminant_id))
 ```
 
 # Group hits by taxonomy
@@ -809,6 +865,7 @@ remainder = hits_geography %>%
 # collect hits and accepted classifications
 hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
+  left_join(contaminant_summary, by = "asv_id") %>%
   mutate(species = if_else(!is.na(intraspecificEpithet), paste0(specificEpithet, " ", intraspecificEpithet), species),
          accept_method_priority = recode_values(accept_method,
                                                 "0_species_100p_unanimous_local" ~ 1,
@@ -844,10 +901,11 @@ hits_accept = hits_geography %>%
          "seq_mismatch", "gapopen_count", "q_start", "q_end", "s_start", 
          "s_end", "p_identical", "p_overlap",  
          "gbif_count_family_local", "gbif_count_genus_local", "gbif_count_species_local", 
-         "local_species", "n_hits", "p_identical_mean", "p_identical_max", 
-         "p_identical_min", "seq_overlap_max", "tie", 
-         "consensus_value", "n_hits_consensus", "identity_th", "consensus_th", 
-         "min_consensus_hits")
+         "local_species", "n_hits", "p_identical_mean", "p_identical_max",
+         "p_identical_min", "seq_overlap_max", "tie",
+         "consensus_value", "n_hits_consensus", "identity_th", "consensus_th",
+         "min_consensus_hits",
+         "contaminant_flag", "contaminant_id", "contaminant_p_identity")
 
 # write to file
 write.csv(hits_accept, hybrid_classification_out, row.names = FALSE)
@@ -988,7 +1046,10 @@ accept_out = hits_accept_qc %>%
          consensus_value,
          gbif_count_family_local,
          gbif_count_genus_local,
-         gbif_count_species_local)
+         gbif_count_species_local,
+         contaminant_flag,
+         contaminant_id,
+         contaminant_p_identity)
 
 # export classifications
 write.csv(accept_out, classification_out, row.names = FALSE)

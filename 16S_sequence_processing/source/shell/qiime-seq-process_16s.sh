@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 echo "Reading config file"
 # read in config.yml (from $env_config_path) for configuration parameters
