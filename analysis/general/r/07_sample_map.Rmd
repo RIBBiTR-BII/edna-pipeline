@@ -15,7 +15,7 @@ librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janit
 # sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-23.xlsx")
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
+run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -112,13 +112,13 @@ env_obs = db_env %>%
          p_h,
          tds_ppm,
          conductivity_us_cm) %>%
-  collect()
-
-check_env_visit_dupes = get_dupes(env_obs, visit_id)
-
-if (nrow(check_env_visit_dupes) > 0) {
-  stop("Some visits had more than one environmental surveys, and the current code doesn't accomodate this!\n\tCan you help fix it?\n\tMany thanks,\n\tCob")
-}
+  collect() %>%
+  arrange(visit_id,
+          water_time,
+          air_time) %>%
+  group_by(visit_id) %>%
+  slice_head(n = 1) %>%
+  ungroup()
 
 sample_map_env = sample_map %>%
   left_join(env_obs, by = "visit_id")
