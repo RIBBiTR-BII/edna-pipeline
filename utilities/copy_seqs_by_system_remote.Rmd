@@ -18,10 +18,13 @@ Fill out the parameters below to point to the corresponding local directories an
 librarian::shelf(tidyverse, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, here, janitor, aws.s3)
 
 # directory to copy files to
-destination_dir = here("16S_sequence_processing", "runs", "lab_negatives_2026-09-03", "sequences")
+destination_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11", "sequences")
 
 # system(s) of interest, any of: brazil, panama, pennsylvania, sierra_nevada, lab_controls (case sensitive)
-soi = c("lab_controls")
+soi = c("sierra_nevada")
+
+# gene(s) of interest, any of: 12S, 16S
+gene = c("16S")
 
 # Boolean: if true, drops duplicate sequences with later sequencing dates
 most_recent_seqs_only = TRUE
@@ -141,13 +144,23 @@ if ("lab_controls" %in% soi) {
   lab_controls_query = quo(FALSE)
 }
 
+gene_criteria = list(
+  "12S" = quo(pcr_primer == "Batra_12S"),
+  "16S" = quo(pcr_primer == "Amph_16S")
+  )
+
+
+selected_gene_criteria = gene_criteria[gene]
+gene_query = reduce(selected_gene_criteria, ~ expr(!!.x | !!.y))
+
 all_seqs_data = db_edna_seq %>%
   left_join(db_edna_ext, by = "edna_extraction_id") %>%
   left_join(db_edna_samp, by = "edna_sample_id") %>%
   left_join(surveys_of_interest, by = "survey_id") %>%
   filter(edna_sequencing_id %in% sequences_ids |
            edna_extraction_name %in% include_extractions |
-           lab_controls_query) %>%
+           lab_controls_query,
+         gene_query) %>%
   select(all_of(colnames(db_edna_seq)),
          all_of(colnames(db_edna_ext)),
          all_of(colnames(db_edna_samp)),
