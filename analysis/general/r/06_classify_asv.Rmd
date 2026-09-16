@@ -30,6 +30,11 @@ gbif_query = FALSE
 # flag an ASV as a likely contaminant
 contaminant_identity_cutoff = 0.98
 
+# ASVs shorter than this are flagged as likely primer-dimer/adapter artifacts rather than real
+# amplicon sequence, regardless of what they happen to match (16S amplicons here are typically
+# >100bp)
+short_sequence_length_cutoff = 50
+
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
 
@@ -329,6 +334,15 @@ build_tie2_accept = function(candidate_hits, accept_method_label) {
 }
 ```
 
+# Sequence length QC
+
+Independently flag ASVs whose representative sequence is suspiciously short (likely a primer-dimer or adapter-readthrough artifact) regardless of what they happen to match, taxonomically or against the contaminant library -- length alone is diagnostic. Like the contaminant flag below, this is orthogonal to the taxonomy `accept_method` hierarchy.
+```{r}
+short_sequence_summary = backbone %>%
+  transmute(asv_id,
+            short_sequence_flag = nchar(sequence) < short_sequence_length_cutoff)
+```
+
 # Contaminant screening
 
 Independently flag ASVs matching a local contaminant reference library (script 02 / s07-c, optional). This is orthogonal to the taxonomy `accept_method` hierarchy above: a contaminant match does not affect taxonomic classification, it's carried alongside it as its own flag.
@@ -382,12 +396,16 @@ contaminant_summary = backbone %>%
 
 # ASVs with zero taxonomic hits from any method (e.g. a fragment too short/degenerate to match
 # any reference) never enter hits_geography, since hits_clean drops rows with no accession --
-# so without this, a contaminant match on one of them would be silently lost downstream. Give
-# just that subset (backbone ASVs missing from hits_geography but contaminant-flagged) a
-# minimal placeholder row so they still surface in the combined outputs below.
-hits_orphan_contaminant = backbone %>%
+# so without this, a contaminant match or short-sequence flag on one of them would be silently
+# lost downstream. Give just that subset (backbone ASVs missing from hits_geography but flagged
+# by either check above) a minimal placeholder row so they still surface in the combined outputs
+# below.
+hits_orphan_flagged = backbone %>%
   anti_join(hits_geography, by = "asv_id") %>%
-  semi_join(contaminant_summary %>% filter(contaminant_flag), by = "asv_id") %>%
+  semi_join(bind_rows(contaminant_summary %>% filter(contaminant_flag) %>% select(asv_id),
+                      short_sequence_summary %>% filter(short_sequence_flag) %>% select(asv_id)) %>%
+              distinct(),
+            by = "asv_id") %>%
   select(asv_id, asv_total_count, sample_count, samples, sequence)
 ```
 
@@ -900,8 +918,9 @@ remainder = hits_geography %>%
 # collect hits and accepted classifications
 hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
-  bind_rows(hits_orphan_contaminant) %>%
+  bind_rows(hits_orphan_flagged) %>%
   left_join(contaminant_summary, by = "asv_id") %>%
+  left_join(short_sequence_summary, by = "asv_id") %>%
   mutate(species = if_else(!is.na(intraspecificEpithet), paste0(specificEpithet, " ", intraspecificEpithet), species),
          accept_method_priority = recode_values(accept_method,
                                                 "0_species_100p_unanimous_local" ~ 1,
@@ -942,7 +961,8 @@ hits_accept = hits_geography %>%
          "p_identical_min", "seq_overlap_max", "tie",
          "consensus_value", "n_hits_consensus", "identity_th", "consensus_th",
          "min_consensus_hits",
-         "contaminant_flag", "contaminant_id", "contaminant_p_identity")
+         "contaminant_flag", "contaminant_id", "contaminant_p_identity",
+         "short_sequence_flag")
 
 # write to file
 write.csv(hits_accept, hybrid_classification_out, row.names = FALSE)
@@ -1061,9 +1081,10 @@ max_search_method_priority = max(hits_accept_qc$search_method_priority, na.rm = 
 
 accept_out = hits_accept_qc %>%
   mutate(priority = accept_method_priority + search_method_priority / max_search_method_priority) %>%
-  # keep rows with an accepted taxonomy, plus taxonomically-unhit ASVs that are still
-  # contaminant-flagged (see hits_orphan_contaminant above) so they aren't dropped entirely
-  filter(!is.na(accept_method) | contaminant_flag) %>%
+  # keep rows with an accepted taxonomy, plus taxonomically-unhit ASVs that are still flagged
+  # as a contaminant or a short-sequence artifact (see hits_orphan_flagged above) so they
+  # aren't dropped entirely
+  filter(!is.na(accept_method) | contaminant_flag | short_sequence_flag) %>%
   group_by(asv_id) %>%
   slice_min(priority, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
@@ -1088,7 +1109,8 @@ accept_out = hits_accept_qc %>%
          gbif_count_species_local,
          contaminant_flag,
          contaminant_id,
-         contaminant_p_identity)
+         contaminant_p_identity,
+         short_sequence_flag)
 
 # export classifications
 write.csv(accept_out, classification_out, row.names = FALSE)
