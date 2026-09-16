@@ -28,7 +28,7 @@ gbif_query = FALSE
 
 # minimum p_identical (against the local contaminant library, script 02 / s07-c) for a hit to
 # flag an ASV as a likely contaminant
-contaminant_identity_cutoff = 0.97
+contaminant_identity_cutoff = 0.98
 
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
@@ -379,6 +379,16 @@ contaminant_summary = backbone %>%
   select(asv_id) %>%
   left_join(bind_rows(accept_contaminant_max, accept_contaminant_tie), by = "asv_id") %>%
   mutate(contaminant_flag = !is.na(contaminant_id))
+
+# ASVs with zero taxonomic hits from any method (e.g. a fragment too short/degenerate to match
+# any reference) never enter hits_geography, since hits_clean drops rows with no accession --
+# so without this, a contaminant match on one of them would be silently lost downstream. Give
+# just that subset (backbone ASVs missing from hits_geography but contaminant-flagged) a
+# minimal placeholder row so they still surface in the combined outputs below.
+hits_orphan_contaminant = backbone %>%
+  anti_join(hits_geography, by = "asv_id") %>%
+  semi_join(contaminant_summary %>% filter(contaminant_flag), by = "asv_id") %>%
+  select(asv_id, asv_total_count, sample_count, samples, sequence)
 ```
 
 # Group hits by taxonomy
@@ -685,6 +695,30 @@ accept_species_unambiguous = hits_species %>%
          species = specificEpithet,
          taxonomic_rank = "species")
 
+# local 2-way tie among the top (>= 0.95) species candidates: exactly 2 equally-good species
+# tied at the max p_identical_max for an (asv_id, method) -- rather than being dropped by the
+# drop_to_next_pimax check above, they're merged into one row reporting "value_1/value_2" at
+# every disagreeing rank (see accept_species_100_tie2_local for the analogous p_identical = 1 case)
+tie2_species_unambiguous_local_keys = hits_species_local %>%
+  group_by(asv_id, method) %>%
+  filter(p_identical_max >= 0.95,
+         p_identical_max == max(p_identical_max)) %>%
+  ungroup() %>%
+  mutate(species = specificEpithet) %>%
+  add_count(asv_id, method, name = "n_tied") %>%
+  filter(n_tied == 2)
+
+accept_species_unambiguous_tie2_local = build_tie2_accept(
+  hits_geography %>%
+    filter(!(local_species %in% FALSE),
+           !is.na(specificEpithet)) %>%
+    mutate(species = specificEpithet) %>%
+    semi_join(tie2_species_unambiguous_local_keys,
+              by = c("asv_id", "method", "domain", "kingdom", "phylum", "class",
+                     "order", "family", "genus", "species")),
+  "2_species_95p_pdrop_03_tie2_local"
+)
+
 # local genus unanimous @ p_identity >= .90, pmax_drop >= 0.03
 accept_genus_unambiguous_local = hits_genus_local %>%
   filter(pimax_rank == 1,
@@ -837,6 +871,7 @@ accept_all = bind_rows(accept_species_100_unanimous,
                        accept_species_100_consensus_75_local,
                        accept_species_unambiguous,
                        accept_species_unambiguous_local,
+                       accept_species_unambiguous_tie2_local,
                        accept_genus_unambiguous,
                        accept_genus_unambiguous_local,
                        accept_family_unambiguous,
@@ -865,6 +900,7 @@ remainder = hits_geography %>%
 # collect hits and accepted classifications
 hits_accept = hits_geography %>%
   bind_rows(accept_all) %>%
+  bind_rows(hits_orphan_contaminant) %>%
   left_join(contaminant_summary, by = "asv_id") %>%
   mutate(species = if_else(!is.na(intraspecificEpithet), paste0(specificEpithet, " ", intraspecificEpithet), species),
          accept_method_priority = recode_values(accept_method,
@@ -876,16 +912,17 @@ hits_accept = hits_geography %>%
                                                 "1_species_100p_consensus_75" ~ 6,
                                                 "2_species_95p_pdrop_03_local" ~ 7,
                                                 "2_species_95p_pdrop_03" ~ 8,
-                                                "3_genus_90p_pdrop_03_local" ~ 9,
-                                                "3_genus_90p_pdrop_03" ~ 10,
-                                                "4_family_80p_pdrop_05_local" ~ 11,
-                                                "4_family_80p_pdrop_05" ~ 12,
-                                                "5_order_70p_pdrop_05" ~ 13,
-                                                "6_order_50p_consensus_75" ~ 14,
-                                                "7_class_50p_consensus_75" ~ 15,
-                                                "8_phylum_50p_consensus_75" ~ 16,
-                                                "9_kingdom_50p_consensus_75" ~ 17,
-                                                "9_domain_50p_consensus_75" ~ 18,
+                                                "2_species_95p_pdrop_03_tie2_local" ~ 9,
+                                                "3_genus_90p_pdrop_03_local" ~ 10,
+                                                "3_genus_90p_pdrop_03" ~ 11,
+                                                "4_family_80p_pdrop_05_local" ~ 12,
+                                                "4_family_80p_pdrop_05" ~ 13,
+                                                "5_order_70p_pdrop_05" ~ 14,
+                                                "6_order_50p_consensus_75" ~ 15,
+                                                "7_class_50p_consensus_75" ~ 16,
+                                                "8_phylum_50p_consensus_75" ~ 17,
+                                                "9_kingdom_50p_consensus_75" ~ 18,
+                                                "9_domain_50p_consensus_75" ~ 19,
                                                 default = NA),
          search_method_priority = recode_values(method,
                                                 "blast_web" ~ 1,
@@ -1020,11 +1057,13 @@ accepts_genus_first_wb = accepts_genus %>%
 ```{r}
 # filter to method of choice
 # select the best classification according to hierarchy of `accept_method`s
-max_search_method_priority = max(hits_accept_qc$search_method_priority)
+max_search_method_priority = max(hits_accept_qc$search_method_priority, na.rm = TRUE)
 
 accept_out = hits_accept_qc %>%
   mutate(priority = accept_method_priority + search_method_priority / max_search_method_priority) %>%
-  filter(!is.na(accept_method)) %>%
+  # keep rows with an accepted taxonomy, plus taxonomically-unhit ASVs that are still
+  # contaminant-flagged (see hits_orphan_contaminant above) so they aren't dropped entirely
+  filter(!is.na(accept_method) | contaminant_flag) %>%
   group_by(asv_id) %>%
   slice_min(priority, n = 1, with_ties = FALSE) %>%
   ungroup() %>%
