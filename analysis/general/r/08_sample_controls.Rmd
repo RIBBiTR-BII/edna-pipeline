@@ -13,12 +13,12 @@ This script calculates controlled ASV reads for each sample by subtracting any r
 librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor, phylotools)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
+run_dir = here("16S_sequence_processing", "runs", "brazil_16s_2026-09-16")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
-# asv control threshold factor
+# asv control threshold factor for field contaminants
 asv_control_th_factor = 100
 
 # control output file
@@ -28,6 +28,14 @@ control_out = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlle
 
 # Load data
 ```{r}
+asv_classification = read_csv(here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv")))
+
+asv_contaminants = asv_classification %>%
+  select(asv_id,
+         contaminant_flag,
+         contaminant_id,
+         contaminant_p_identity,
+         short_sequence_flag)
 
 sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv")))
   # rename(field_negative_control = negative_control,
@@ -117,13 +125,22 @@ control_asv = bind_rows(control_asv_pcr_pos,
 
 sample_asv_control = sample_asv %>%
   left_join(control_asv, by = c("asv_id", "field_negative_control_group")) %>%
+  left_join(asv_contaminants, by = "asv_id") %>%
   mutate(max_control_asv_count = replace_na(max_control_asv_count, 0),
          asv_control_th = asv_control_th_factor * max_control_asv_count,
          asv_count_controlled = asv_count - asv_control_th,
          asv_count_controlled = if_else(asv_count_controlled < 0, 0, asv_count_controlled),
          control_th_below = (asv_count <= asv_control_th),
          detected = (asv_count > 0),
-         detected_controlled = (detected & !(control_th_below %in% c(TRUE)))) %>%
+         detected_controlled = (detected & !(control_th_below %in% c(TRUE))),
+         asv_count_controlled = if_else(contaminant_flag | short_sequence_flag,
+                                        NA,
+                                        asv_count_controlled),
+         control_th_source = case_when(
+           contaminant_flag ~ "contaminant",
+           short_sequence_flag ~ "short_sequence",
+           .default = control_th_source
+         )) %>%
   rename(asv_count_raw = asv_count) %>%
   arrange(asv_id, desc(asv_count_raw)) %>%
   select(-any_of(c("extraction_negative_control",
