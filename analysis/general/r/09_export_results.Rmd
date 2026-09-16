@@ -8,7 +8,7 @@ output: html_document
 librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "brazil_2026-08-11")
+run_dir = here("16S_sequence_processing", "runs", "brazil_16s_2026-09-16")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -77,8 +77,7 @@ asv_out = asv_controlled %>%
          p_identical_max,
          gbif_count_family_local,
          gbif_count_genus_local,
-         gbif_count_species_local,
-         any_of(colnames(sample_map))) %>%
+         gbif_count_species_local) %>%
   arrange(feature_id,
           desc(asv_reads_controlled))
 
