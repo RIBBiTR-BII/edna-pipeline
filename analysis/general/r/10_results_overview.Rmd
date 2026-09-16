@@ -9,10 +9,10 @@ This script provides a first look at the processed and analyzed results, includi
 
 # Config
 ```{r}
-librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr)
+librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr, vegan)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "sierra_2026-08-13")
+run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -33,6 +33,13 @@ res_07_sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_0
 # exported file
 res_09_export = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_prelim_results.csv")))
 
+peace = res_09_export %>%
+  select(-edna_sequencing_id,
+         -feature_id,
+         -sample_type,
+         ) %>%
+  distinct()
+
 # metadata_in = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_prelim_results_metadata.csv")))
 
 # res_09_positive = res_09_export %>%
@@ -46,7 +53,7 @@ res_09_export = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_pr
 # summary stats for samples (including controls)
 sample_read_count = res_09_export %>%
   # drop all controls
-  filter(sample_type == "sample") %>%
+  # filter(sample_type == "sample") %>%
   group_by(edna_sequencing_id) %>%
   mutate(detected_raw = asv_reads_raw > 0,
          detected_controlled = asv_reads_controlled > 0) %>%
@@ -154,12 +161,12 @@ replicate_props_co = sample_taxa_group |>
   group_by(edna_sequencing_id, taxa_group) |>
   summarize(
     taxa_reads      = sum(asv_reads_raw),
-    taxa_reads_ctrl = sum(asv_reads_controlled),
+    taxa_reads_ctrl = sum(asv_reads_controlled, na.rm = TRUE),
     .groups = "drop_last"  # drops taxa_group, keeping replicate groups for total
   ) |>
   mutate(
     replicate_reads      = sum(taxa_reads),
-    replicate_reads_ctrl = sum(taxa_reads_ctrl),
+    replicate_reads_ctrl = sum(taxa_reads_ctrl, na.rm = TRUE),
     prop      = taxa_reads      / replicate_reads,
     prop_ctrl = taxa_reads_ctrl / replicate_reads_ctrl
   ) |>
@@ -233,6 +240,185 @@ p_taxa_prop_co = ggplot(sample_taxa_group_agg_long_co,
 p_taxa_prop_co
 
 ```
+
+# Sample-level variation
+
+This section looks at how different samples are from one another, using
+`res_07_sample_map` (site, region, coordinates, environmental readings) to
+give the read-based comparisons spatial and environmental context, and to
+check how well replicates from the same site/date agree.
+
+## Community ordination (Bray-Curtis PCoA)
+```{r}
+sample_type_lookup = res_09_export %>%
+  distinct(edna_sequencing_id, sample_type)
+
+sample_genus_reads = res_09_export %>%
+  filter(sample_type == "sample") %>%
+  mutate(genus_grp = if_else(is.na(genus), "Unclassified", genus)) %>%
+  group_by(edna_sequencing_id, genus_grp) %>%
+  summarize(reads = sum(asv_reads_controlled, na.rm = TRUE), .groups = "drop")
+
+sample_totals = sample_genus_reads %>%
+  group_by(edna_sequencing_id) %>%
+  summarize(total_reads = sum(reads), .groups = "drop") %>%
+  filter(total_reads > 0)
+
+comm_matrix = sample_genus_reads %>%
+  inner_join(sample_totals, by = "edna_sequencing_id") %>%
+  mutate(prop = reads / total_reads) %>%
+  select(edna_sequencing_id, genus_grp, prop) %>%
+  pivot_wider(names_from = genus_grp, values_from = prop, values_fill = 0) %>%
+  column_to_rownames("edna_sequencing_id") %>%
+  as.matrix()
+
+bray_dist = vegan::vegdist(comm_matrix, method = "bray")
+
+pcoa = cmdscale(bray_dist, k = 2, eig = TRUE)
+colnames(pcoa$points) = c("pcoa1", "pcoa2")
+pct_var = round(100 * pcoa$eig[1:2] / sum(pcoa$eig[pcoa$eig > 0]), 1)
+
+sample_meta = res_07_sample_map %>%
+  distinct(edna_sequencing_id, site, region, date, transect)
+
+pcoa_scores = as_tibble(pcoa$points, rownames = "edna_sequencing_id") %>%
+  left_join(sample_meta, by = "edna_sequencing_id")
+
+ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = site)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(x = paste0("PCoA1 (", pct_var[1], "%)"),
+       y = paste0("PCoA2 (", pct_var[2], "%)"),
+       color = "Site",
+       title = "Sample community composition (Bray-Curtis PCoA)") +
+  theme_bw()
+
+ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = region)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(x = paste0("PCoA1 (", pct_var[1], "%)"),
+       y = paste0("PCoA2 (", pct_var[2], "%)"),
+       color = "Region",
+       title = "Sample community composition (Bray-Curtis PCoA)") +
+  theme_bw()
+
+```
+
+## Replicate concordance
+```{r}
+# pairwise Bray-Curtis distance between every pair of samples, long format
+bray_mat = as.matrix(bray_dist)
+
+bray_pairs = as.data.frame(as.table(bray_mat)) %>%
+  rename(seq_a = Var1, seq_b = Var2, bray_dist = Freq) %>%
+  mutate(seq_a = as.character(seq_a), seq_b = as.character(seq_b)) %>%
+  filter(seq_a < seq_b)
+
+pair_meta = sample_meta %>%
+  select(edna_sequencing_id, site, date)
+
+bray_pairs = bray_pairs %>%
+  left_join(pair_meta, by = c("seq_a" = "edna_sequencing_id")) %>%
+  rename(site_a = site, date_a = date) %>%
+  left_join(pair_meta, by = c("seq_b" = "edna_sequencing_id")) %>%
+  rename(site_b = site, date_b = date) %>%
+  mutate(pair_type = if_else(site_a == site_b & date_a == date_b,
+                              "Same site & date (replicate)",
+                              "Different site/date"))
+
+# overall: are same site/date pairs more similar than everything else?
+ggplot(bray_pairs, aes(x = pair_type, y = bray_dist)) +
+  geom_boxplot() +
+  labs(x = NULL,
+       y = "Bray-Curtis dissimilarity",
+       title = "Replicate concordance: within site/date vs. across") +
+  theme_bw()
+
+# per site/date group: which replicate groups agree poorly?
+replicate_concordance = bray_pairs %>%
+  filter(pair_type == "Same site & date (replicate)") %>%
+  group_by(site_a, date_a) %>%
+  summarize(n_pairs = n(),
+            mean_bray = mean(bray_dist),
+            max_bray = max(bray_dist),
+            .groups = "drop") %>%
+  arrange(desc(mean_bray))
+
+replicate_concordance
+
+```
+
+## Environmental variable patterns
+```{r}
+env_vars = res_07_sample_map %>%
+  distinct(edna_sequencing_id, water_temp_c, p_h, conductivity_us_cm)
+
+# how complete is env data for this run?
+env_vars %>%
+  summarize(across(c(water_temp_c, p_h, conductivity_us_cm), ~ sum(!is.na(.))))
+
+env_join = pcoa_scores %>%
+  left_join(env_vars, by = "edna_sequencing_id") %>%
+  left_join(sample_read_count %>% select(edna_sequencing_id, ratio_amph),
+            by = "edna_sequencing_id")
+
+env_long = env_join %>%
+  pivot_longer(cols = c(water_temp_c, p_h, conductivity_us_cm),
+               names_to = "env_var",
+               values_to = "env_value") %>%
+  filter(!is.na(env_value))
+
+# amphibian detection vs environmental variables
+ggplot(env_long, aes(x = env_value, y = ratio_amph)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ env_var, scales = "free_x") +
+  labs(x = "Environmental value",
+       y = "Amphibian read proportion (controlled)",
+       title = "Amphibian detection vs. environmental variables") +
+  theme_bw()
+
+# community composition (PCoA1) vs environmental variables
+ggplot(env_long, aes(x = env_value, y = pcoa1)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~ env_var, scales = "free_x") +
+  labs(x = "Environmental value",
+       y = "PCoA1 (community composition)",
+       title = "Community composition (PCoA1) vs. environmental variables") +
+  theme_bw()
+
+```
+
+## Spatial detection map
+```{r}
+site_amph = sample_read_count %>%
+  left_join(sample_type_lookup, by = "edna_sequencing_id") %>%
+  filter(sample_type == "sample") %>%
+  left_join(res_07_sample_map %>%
+              distinct(edna_sequencing_id, site, site_latitude, site_longitude, region),
+            by = "edna_sequencing_id") %>%
+  filter(!is.na(site_latitude), !is.na(site_longitude)) %>%
+  group_by(site, site_latitude, site_longitude, region) %>%
+  summarize(
+    n_samples = n(),
+    detection_rate = mean(n_reads_class_chord_amph_ctrl > 0),
+    mean_ratio_amph = mean(ratio_amph, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(site_amph, aes(x = site_longitude, y = site_latitude,
+                       size = n_samples, color = detection_rate)) +
+  geom_point(alpha = 0.85) +
+  scale_color_viridis_c(labels = scales::percent, limits = c(0, 1)) +
+  coord_quickmap() +
+  labs(x = "Longitude",
+       y = "Latitude",
+       color = "Amphibian\ndetection rate",
+       size = "n samples",
+       title = "Amphibian detection rate by site") +
+  theme_bw()
+
+```
+
 # Classification
 ## aggregate by ASV
 ```{r}
@@ -241,6 +427,7 @@ asv_classification_vars = res_06_class %>%
          !is.na(accept_method_priority)) %>%
   group_by(asv_id) %>%
   slice_min(accept_method_priority, n = 1) %>%
+  ungroup() %>%
   select(asv_id,
          accept_method,
          accept_method_priority,
@@ -270,11 +457,20 @@ peace = get_dupes(asv_classification_vars, asv_id)
 
 ## Amphibian species ASVs
 ```{r}
-amphibian_asvs = asv_agg %>%
+amphibian_asvs_raw = asv_agg %>%
+  filter(total_asv_reads_raw > 0,
+         class %in% "Amphibia") %>%
+  arrange(taxonomic_rank,
+          desc(total_asv_reads_raw))
+
+amphibian_asvs_controlled = asv_agg %>%
   filter(total_asv_reads_controlled > 0,
          class %in% "Amphibia") %>%
   arrange(taxonomic_rank,
           desc(total_asv_reads_controlled))
+
+amphibian_asvs_controlled_hybrid = res_06_class %>%
+  filter(asv_id %in% amphibian_asvs_controlled$asv_id)
 ```
 
 ## pick out specific samples
