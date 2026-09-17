@@ -43,7 +43,13 @@ At this point you have successfully processed some sequences through the [Amphib
 4. **Create an RStudio project (optional):** Open RStudio, select `File -> New Project -> Existing Directory -> Browse` and browse to your local directory of this `edna-pipeline` repository. Thel select `Create Project`. This is not required, but will make it easier to navigate between the various analysis scripts.
 
 ## Analysis
-The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts which should be run in RStudio in succession. They have not been automated, as each script contains decisions for users to consider as the analysis progresses. To begin, navigate to the `analysis/general/r/` folder. Open each script in RStudio, review the header notes, set the parameters in the configuration ("config") sections at the top to meet your needs, and run each script.
+The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts which should be run in RStudio in succession. To begin, navigate to the `analysis/general/r/` folder.
+
+Before running the pipeline, open `pipeline_config.yml` and review/update its parameters (run directory, study system, thresholds, etc.) to match your run. All scripts 04-09 read this shared config file, so it only needs to be edited once per run.
+
+You then have two options for running the scripts:
+- **Step through manually:** Open each script in RStudio, review the header notes, and run it chunk by chunk. This is recommended the first time through, as each script contains decisions for users to consider as the analysis progresses.
+- **Run end to end:** Once you're comfortable with the decisions each script makes, source `00_run_pipeline.R` to render scripts 04-09 in sequence using the settings in `pipeline_config.yml`.
 
 4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions below to upload the representative sequences to [NCBI's Web Blast](https://blast.ncbi.nlm.nih.gov/Blast.cgi) service, and download the query results. This script parses the .json outputs from the Web BLAST query.
     - a. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service

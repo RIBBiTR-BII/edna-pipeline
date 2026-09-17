@@ -494,8 +494,8 @@ hits_genus_local = hits_group_calc(hits_geography %>%
                                      "class",
                                      "order",
                                      "family",
-                                     "genus",
-                                     "gbif_count_family_local",
+                                     "genus"),
+                                   c("gbif_count_family_local",
                                      "gbif_count_genus_local"))
 
 hits_genus = hits_group_calc(hits_geography %>%
@@ -512,8 +512,8 @@ hits_genus = hits_group_calc(hits_geography %>%
                                "class",
                                "order",
                                "family",
-                               "genus",
-                               "gbif_count_family_local",
+                               "genus"),
+                             c("gbif_count_family_local",
                                "gbif_count_genus_local"))
 
 hits_family_local = hits_group_calc(hits_geography %>%
@@ -530,8 +530,8 @@ hits_family_local = hits_group_calc(hits_geography %>%
                                       "phylum",
                                       "class",
                                       "order",
-                                      "family",
-                                      "gbif_count_family_local"))
+                                      "family"),
+                                    c("gbif_count_family_local"))
 
 hits_family = hits_group_calc(hits_geography %>%
                                 filter(!is.na(family)),
@@ -546,8 +546,8 @@ hits_family = hits_group_calc(hits_geography %>%
                                 "phylum",
                                 "class",
                                 "order",
-                                "family",
-                                "gbif_count_family_local"))
+                                "family"),
+                              c("gbif_count_family_local"))
 
 hits_order = hits_group_calc(hits_geography %>%
                                filter(!is.na(order)),
