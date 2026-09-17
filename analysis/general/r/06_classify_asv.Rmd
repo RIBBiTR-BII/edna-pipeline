@@ -14,26 +14,45 @@ See the algorithm below for details on each `accept_method` and to adjust parame
 ```{r}
 librarian::shelf(tidyverse, yaml, here, phylotools)
 
+# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# directly so the same values apply whether this script is run manually or via the driver
+pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
+run_dir = here(pipeline_config$run_dir)
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # minimum sequence overlap (0 -> no filtering) [units of Bp]
-sequence_overlap_cutoff = 0
+sequence_overlap_cutoff = pipeline_config$sequence_overlap_cutoff
 
 # Did you run a gbif query (script 05) for local taxa, which you want incorporated in classification?
-gbif_query = FALSE
+gbif_query = pipeline_config$gbif_query
 
 # minimum p_identical (against the local contaminant library, script 02 / s07-c) for a hit to
 # flag an ASV as a likely contaminant
-contaminant_identity_cutoff = 0.98
+contaminant_identity_cutoff = pipeline_config$contaminant_identity_cutoff
 
 # ASVs shorter than this are flagged as likely primer-dimer/adapter artifacts rather than real
 # amplicon sequence, regardless of what they happen to match (16S amplicons here are typically
 # >100bp)
-short_sequence_length_cutoff = 50
+short_sequence_length_cutoff = pipeline_config$short_sequence_length_cutoff
+
+# synonymous species names: named list mapping a canonical label to the set of species-level
+# names (as they appear in the "species"/specificEpithet fields, i.e. without genus) that
+# should be pooled under it -- e.g. taxa split/lumped across revisions, or a cryptic species
+# complex you want reported jointly. Defined in pipeline_config.yml; add one entry per group.
+species_synonyms = pipeline_config$species_synonyms
+
+# recode any species name found in a synonym group (see species_synonyms above) to that
+# group's canonical label; values not present in any group are left unchanged
+apply_species_synonyms = function(x, synonym_list) {
+  for (canonical in names(synonym_list)) {
+    x[x %in% synonym_list[[canonical]]] = canonical
+  }
+  x
+}
 
 # output files
 hybrid_classification_out = here(run_dir, "output", paste0(config$run$name, "_06_hybrid_classification.csv"))
@@ -147,6 +166,10 @@ if (gbif_query) {
            gbif_count_species_local = NA,
            local_species = NA)
 }
+
+# collapse synonymous species names (see species_synonyms in Config) into their canonical label
+hits_geography = hits_geography %>%
+  mutate(specificEpithet = apply_species_synonyms(specificEpithet, species_synonyms))
 
 
 # define classification functions

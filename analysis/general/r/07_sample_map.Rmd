@@ -14,8 +14,12 @@ librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janit
 # # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
 # sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-23.xlsx")
 
+# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# directly so the same values apply whether this script is run manually or via the driver
+pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
+run_dir = here(pipeline_config$run_dir)
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))

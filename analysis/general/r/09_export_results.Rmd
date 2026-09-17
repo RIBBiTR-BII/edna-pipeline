@@ -7,8 +7,12 @@ output: html_document
 ```{r}
 librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr)
 
+# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# directly so the same values apply whether this script is run manually or via the driver
+pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "brazil_16s_2026-09-16")
+run_dir = here(pipeline_config$run_dir)
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))

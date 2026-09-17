@@ -1,0 +1,38 @@
+# Config for the 04-09 classification/export pipeline (see 00_run_pipeline.R).
+# Edit this file per run, then source 00_run_pipeline.R.
+
+# path to the run directory, relative to the repo root
+run_dir: "16S_sequence_processing/runs/panama_16s_2026-09-16"
+
+# Genbank Web BLAST results file (single-file JSON), relative to run_dir/output (script 04)
+json_blast_results_file: "APBPVGJC016-Alignment.json"
+
+# geographic study system for the GBIF query (script 05)
+#   any of: brazil, panama, sierra_nevada, pennsylvania
+study_system: "panama"
+
+# run the GBIF local-taxa query (script 05) and use it in classification (script 06)?
+gbif_query: true
+
+# minimum p_identical (against the local contaminant library) for a hit to flag an ASV as a
+# likely contaminant (script 06)
+contaminant_identity_cutoff: 0.98
+
+# ASVs shorter than this are flagged as likely primer-dimer/adapter artifacts (script 06)
+short_sequence_length_cutoff: 50
+
+# minimum sequence overlap (0 -> no filtering) [units of Bp] (script 06)
+sequence_overlap_cutoff: 0
+
+# synonymous species names: canonical label -> species-level names to pool under it (script 06)
+species_synonyms:
+  crucifer:
+    - crucifer
+    - crucifer crucifer
+  regilla:
+    - regilla
+    - hypochondriaca
+    - sierra
+
+# ASV control threshold factor for field contaminants (script 08)
+asv_control_th_factor: 100

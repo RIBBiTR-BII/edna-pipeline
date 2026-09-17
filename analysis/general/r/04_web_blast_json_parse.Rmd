@@ -30,14 +30,18 @@ You will first need to manually submit a Genbank Web BLAST query, and download t
 ```{r}
 librarian::shelf(tidyverse, jsonlite, here, yaml, taxize)
 
+# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# directly so the same values apply whether this script is run manually or via the driver
+pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
+run_dir = here(pipeline_config$run_dir)
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # import json file
-json_blast_results = fromJSON(here(run_dir, "output", "A8X65C11016-Alignment.json"))
+json_blast_results = fromJSON(here(run_dir, "output", pipeline_config$json_blast_results_file))
 
 # specify output file
 output_file = here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))

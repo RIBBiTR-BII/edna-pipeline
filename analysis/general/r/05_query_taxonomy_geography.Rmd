@@ -19,8 +19,12 @@ librarian::shelf(tidyverse, yaml, here, rgbif)
 
 # requires GBIF token in .Renviron
 
+# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# directly so the same values apply whether this script is run manually or via the driver
+pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
+run_dir = here(pipeline_config$run_dir)
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -28,7 +32,7 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 # geographic systems
 #   any of: brazil, panama, sierra_nevada, pennsylvania
 # recommend running one system at a time, for cleaner geographic distinction
-study_system = "sierra_nevada"
+study_system = pipeline_config$study_system
 
 taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv"))
 
