@@ -113,7 +113,7 @@ gbif_query_species_sn = taxa_unique %>%
   distinct()
 
 # query IDs by scientific name
-gbif_backbone_species_sn = name_backbone_checklist(gbif_query_species_sn, bucket_size = 500, sleep = 10)
+gbif_backbone_species_sn = name_backbone_checklist(gbif_query_species_sn, bucket_size = 3500, sleep = 10)
 
 # parse IDs
 rownames(gbif_query_species_sn) = NULL
@@ -176,7 +176,7 @@ gbif_query_genus = taxa_unique %>%
   distinct()
 
 Sys.sleep(10)
-gbif_backbone_genus = name_backbone_checklist(gbif_query_genus, bucket_size = 100, sleep = 10)
+gbif_backbone_genus = name_backbone_checklist(gbif_query_genus, bucket_size = 1500, sleep = 10)
 
 rownames(gbif_query_genus) = NULL
 rownames(gbif_backbone_genus) = NULL
@@ -201,7 +201,7 @@ gbif_query_family = taxa_unique %>%
   distinct()
 
 Sys.sleep(10)
-gbif_backbone_family = name_backbone_checklist(gbif_query_family, bucket_size = 100, sleep = 10)
+gbif_backbone_family = name_backbone_checklist(gbif_query_family, bucket_size = 500, sleep = 10)
 
 rownames(gbif_query_family) = NULL
 rownames(gbif_backbone_family) = NULL
