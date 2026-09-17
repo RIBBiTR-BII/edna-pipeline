@@ -9,10 +9,10 @@ This script provides a first look at the processed and analyzed results, includi
 
 # Config
 ```{r}
-librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr, vegan)
+librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr, vegan, janitor)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11")
+run_dir = here("16S_sequence_processing", "runs", "panama_16s_2026-09-16")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -241,6 +241,100 @@ p_taxa_prop_co
 
 ```
 
+# Classification
+## aggregate by ASV
+```{r}
+asv_classification_vars = res_06_class %>%
+  filter(is.na(percent_identical),
+         !is.na(accept_method_priority)) %>%
+  group_by(asv_id) %>%
+  slice_min(accept_method_priority, n = 1) %>%
+  ungroup() %>%
+  select(asv_id,
+         accept_method,
+         accept_method_priority,
+         p_identical_mean,
+         p_identical_max,
+         p_identical_min,
+         seq_overlap_max) %>%
+  distinct()
+
+asv_agg = res_09_export %>%
+  select("asv_id", 
+         "asv_sequence", "asv_reads_raw", "asv_reads_controlled", "control_th_source", 
+         "taxonomic_rank", "domain", "kingdom", "phylum", "class", "order", 
+         "family", "genus", "species", "n_hits", "gbif_count_family_local", 
+         "gbif_count_genus_local", "gbif_count_species_local") %>%
+  left_join(asv_classification_vars, by = "asv_id") %>%
+  group_by(across(-c(asv_reads_raw,
+                     asv_reads_controlled,
+                     control_th_source))) %>%
+  summarize(total_asv_reads_raw = sum(asv_reads_raw),
+            total_asv_reads_controlled = sum(asv_reads_controlled),
+            .groups = "drop")
+
+peace = get_dupes(asv_classification_vars, asv_id)
+
+```
+
+## Amphibian species ASVs
+```{r}
+amphibian_asvs_raw = asv_agg %>%
+  filter(total_asv_reads_raw > 0,
+         class %in% "Amphibia") %>%
+  arrange(taxonomic_rank,
+          desc(total_asv_reads_raw))
+
+amphibian_asvs_controlled = asv_agg %>%
+  filter(total_asv_reads_controlled > 0,
+         class %in% "Amphibia") %>%
+  arrange(taxonomic_rank,
+          desc(total_asv_reads_controlled))
+
+amphibian_asvs_controlled_hybrid = res_06_class %>%
+  filter(asv_id %in% amphibian_asvs_controlled$asv_id)
+```
+
+## pick out specific samples
+```{r}
+samples_filtered = res_09_export %>%
+  filter(asv_id == "74ce083ac47674eb5740d03e521385c2",
+         asv_reads_raw > 0) %>%
+  left_join(res_07_sample_map, by = c("edna_sequencing_id",
+                                      "feature_id"))
+
+```
+
+## GBIF checks
+```{r}
+check_gbif = asv_agg %>%
+  filter(total_asv_reads_controlled > 0,
+         (taxonomic_rank == "species" & gbif_count_species_local == 0) |
+           (taxonomic_rank == "genus" & gbif_count_genus_local == 0) |
+           (taxonomic_rank == "family" & gbif_count_family_local == 0)) %>%
+  arrange(taxonomic_rank,
+          desc(total_asv_reads_controlled))
+```
+
+## accept methods discrepancies
+```{r}
+tax_cols = c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")
+
+check_accept_discr = res_06_class %>%
+  filter(is.na(percent_identical)) %>%
+  group_by(asv_id) %>%
+  filter(if_any(all_of(tax_cols), ~ n_distinct(.x, na.rm = TRUE) > 1)) %>%
+  ungroup()
+
+n_accept_discr = check_accept_discr %>%
+  pull(n_distinct(asv_id)) %>%
+  length()
+
+# double check that this works...
+check_unclassified = res_06_class %>%
+  filter(is.na(accept_method) & is.na(percent_identical))
+```
+
 # Sample-level variation
 
 This section looks at how different samples are from one another, using
@@ -250,25 +344,34 @@ check how well replicates from the same site/date agree.
 
 ## Community ordination (Bray-Curtis PCoA)
 ```{r}
-sample_type_lookup = res_09_export %>%
+
+res_09_prefilter = res_09_export %>%
+  filter(class %in% "Amphibia")
+
+sample_type_lookup = res_09_prefilter  %>%
   distinct(edna_sequencing_id, sample_type)
 
-sample_genus_reads = res_09_export %>%
+sample_sciname_reads = res_09_prefilter %>%
   filter(sample_type == "sample") %>%
-  mutate(genus_grp = if_else(is.na(genus), "Unclassified", genus)) %>%
-  group_by(edna_sequencing_id, genus_grp) %>%
+  mutate(sciname = if_else(is.na(species),
+                           genus,
+                           paste(genus, species)),
+         # genus_grp = if_else(is.na(genus), "Unclassified", genus)
+         ) %>%
+  group_by(edna_sequencing_id, sciname) %>%
   summarize(reads = sum(asv_reads_controlled, na.rm = TRUE), .groups = "drop")
 
-sample_totals = sample_genus_reads %>%
+sample_totals = sample_sciname_reads %>%
   group_by(edna_sequencing_id) %>%
   summarize(total_reads = sum(reads), .groups = "drop") %>%
   filter(total_reads > 0)
 
-comm_matrix = sample_genus_reads %>%
+# community matrix
+comm_matrix = sample_sciname_reads %>%
   inner_join(sample_totals, by = "edna_sequencing_id") %>%
   mutate(prop = reads / total_reads) %>%
-  select(edna_sequencing_id, genus_grp, prop) %>%
-  pivot_wider(names_from = genus_grp, values_from = prop, values_fill = 0) %>%
+  select(edna_sequencing_id, sciname, prop) %>%
+  pivot_wider(names_from = sciname, values_from = prop, values_fill = 0) %>%
   column_to_rownames("edna_sequencing_id") %>%
   as.matrix()
 
@@ -284,20 +387,28 @@ sample_meta = res_07_sample_map %>%
 pcoa_scores = as_tibble(pcoa$points, rownames = "edna_sequencing_id") %>%
   left_join(sample_meta, by = "edna_sequencing_id")
 
-ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = site)) +
+ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = as.factor(site))) +
   geom_point(size = 2, alpha = 0.8) +
   labs(x = paste0("PCoA1 (", pct_var[1], "%)"),
        y = paste0("PCoA2 (", pct_var[2], "%)"),
        color = "Site",
-       title = "Sample community composition (Bray-Curtis PCoA)") +
+       title = "Sample community composition (Bray-Curtis PCA)") +
   theme_bw()
 
 ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = region)) +
   geom_point(size = 2, alpha = 0.8) +
-  labs(x = paste0("PCoA1 (", pct_var[1], "%)"),
-       y = paste0("PCoA2 (", pct_var[2], "%)"),
+  labs(x = paste0("PCA1 (", pct_var[1], "%)"),
+       y = paste0("PCA2 (", pct_var[2], "%)"),
        color = "Region",
-       title = "Sample community composition (Bray-Curtis PCoA)") +
+       title = "Sample community composition (Bray-Curtis PCA)") +
+  theme_bw()
+
+ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = date)) +
+  geom_point(size = 2, alpha = 0.8) +
+  labs(x = paste0("PCA1 (", pct_var[1], "%)"),
+       y = paste0("PCA2 (", pct_var[2], "%)"),
+       color = "Date",
+       title = "Sample community composition (Bray-Curtis PCA)") +
   theme_bw()
 
 ```
@@ -321,8 +432,8 @@ bray_pairs = bray_pairs %>%
   left_join(pair_meta, by = c("seq_b" = "edna_sequencing_id")) %>%
   rename(site_b = site, date_b = date) %>%
   mutate(pair_type = if_else(site_a == site_b & date_a == date_b,
-                              "Same site & date (replicate)",
-                              "Different site/date"))
+                              "Site / date replicates",
+                              "Distinct site / date"))
 
 # overall: are same site/date pairs more similar than everything else?
 ggplot(bray_pairs, aes(x = pair_type, y = bray_dist)) +
@@ -417,98 +528,4 @@ ggplot(site_amph, aes(x = site_longitude, y = site_latitude,
        title = "Amphibian detection rate by site") +
   theme_bw()
 
-```
-
-# Classification
-## aggregate by ASV
-```{r}
-asv_classification_vars = res_06_class %>%
-  filter(is.na(percent_identical),
-         !is.na(accept_method_priority)) %>%
-  group_by(asv_id) %>%
-  slice_min(accept_method_priority, n = 1) %>%
-  ungroup() %>%
-  select(asv_id,
-         accept_method,
-         accept_method_priority,
-         p_identical_mean,
-         p_identical_max,
-         p_identical_min,
-         seq_overlap_max) %>%
-  distinct()
-
-asv_agg = res_09_export %>%
-  select("asv_id", 
-         "asv_sequence", "asv_reads_raw", "asv_reads_controlled", "control_th_source", 
-         "taxonomic_rank", "domain", "kingdom", "phylum", "class", "order", 
-         "family", "genus", "species", "n_hits", "p_identical_max", "gbif_count_family_local", 
-         "gbif_count_genus_local", "gbif_count_species_local") %>%
-  left_join(asv_classification_vars, by = "asv_id") %>%
-  group_by(across(-c(asv_reads_raw,
-                     asv_reads_controlled,
-                     control_th_source))) %>%
-  summarize(total_asv_reads_raw = sum(asv_reads_raw),
-            total_asv_reads_controlled = sum(asv_reads_controlled),
-            .groups = "drop")
-
-peace = get_dupes(asv_classification_vars, asv_id)
-
-```
-
-## Amphibian species ASVs
-```{r}
-amphibian_asvs_raw = asv_agg %>%
-  filter(total_asv_reads_raw > 0,
-         class %in% "Amphibia") %>%
-  arrange(taxonomic_rank,
-          desc(total_asv_reads_raw))
-
-amphibian_asvs_controlled = asv_agg %>%
-  filter(total_asv_reads_controlled > 0,
-         class %in% "Amphibia") %>%
-  arrange(taxonomic_rank,
-          desc(total_asv_reads_controlled))
-
-amphibian_asvs_controlled_hybrid = res_06_class %>%
-  filter(asv_id %in% amphibian_asvs_controlled$asv_id)
-```
-
-## pick out specific samples
-```{r}
-samples_filtered = res_09_export %>%
-  filter(asv_id == "74ce083ac47674eb5740d03e521385c2",
-         asv_reads_raw > 0) %>%
-  left_join(res_07_sample_map, by = c("edna_sequencing_id",
-                                      "feature_id"))
-
-```
-
-## GBIF checks
-```{r}
-check_gbif = asv_agg %>%
-  filter(total_asv_reads_controlled > 0,
-         (taxonomic_rank == "species" & gbif_count_species_local == 0) |
-           (taxonomic_rank == "genus" & gbif_count_genus_local == 0) |
-           (taxonomic_rank == "family" & gbif_count_family_local == 0)) %>%
-  arrange(taxonomic_rank,
-          desc(total_asv_reads_controlled))
-```
-
-## accept methods discrepancies
-```{r}
-tax_cols = c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")
-
-check_accept_discr = res_06_class %>%
-  filter(is.na(percent_identical)) %>%
-  group_by(asv_id) %>%
-  filter(if_any(all_of(tax_cols), ~ n_distinct(.x, na.rm = TRUE) > 1)) %>%
-  ungroup()
-
-n_accept_discr = check_accept_discr %>%
-  pull(n_distinct(asv_id)) %>%
-  length()
-
-# double check that this works...
-check_unclassified = res_06_class %>%
-  filter(is.na(accept_method) & is.na(percent_identical))
 ```
