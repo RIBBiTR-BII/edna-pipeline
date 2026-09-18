@@ -1,17 +1,17 @@
-# Config for the 04-09 classification/export pipeline (see 00_run_pipeline.R).
+# Config for the 03-09 classification/export pipeline (see 00_run_pipeline.R).
 # Edit this file per run, then source 00_run_pipeline.R.
 
 # path to the run directory, relative to the repo root
-run_dir: "16S_sequence_processing/runs/panama_16s_2026-09-16"
+run_dir: "16S_sequence_processing/runs/all_systems_16s_2026-09-17"
 
-# Genbank Web BLAST results file (single-file JSON), relative to run_dir/output (script 04)
-json_blast_results_file: "APBPVGJC016-Alignment.json"
-
-# geographic study system for the GBIF query (script 05)
-#   any of: brazil, panama, sierra_nevada, pennsylvania
-study_system: "panama"
+# Genbank Web BLAST results file (single-file JSON), relative to run_dir/output (script 04) or a dedicated folder in run_dir/output containing several single-file JSON Web BLAST results to be combined
+json_blast_results_file: "web_blast_results"
 
 # run the GBIF local-taxa query (script 05) and use it in classification (script 06)?
+# study system(s) present in the run are no longer configured here -- script 05 derives them
+# from the study_system column in script 03's sample map output, so a run can freely mix
+# systems (any of: brazil, panama, sierra_nevada, pennsylvania -- see study_system_lookup in
+# 03_sample_map.Rmd and 05_query_taxonomy_geography.Rmd)
 gbif_query: true
 
 # minimum p_identical (against the local contaminant library) for a hit to flag an ASV as a

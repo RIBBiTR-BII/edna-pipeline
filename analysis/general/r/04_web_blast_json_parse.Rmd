@@ -30,9 +30,9 @@ You will first need to manually submit a Genbank Web BLAST query, and download t
 ```{r}
 librarian::shelf(tidyverse, jsonlite, here, yaml, taxize)
 
-# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R); this is read
 # directly so the same values apply whether this script is run manually or via the driver
-pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
 
 # import run config file
 run_dir = here(pipeline_config$run_dir)
@@ -41,7 +41,7 @@ run_dir = here(pipeline_config$run_dir)
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # import json file
-json_blast_results = fromJSON(here(run_dir, "output", pipeline_config$json_blast_results_file))
+json_blast_results_file = here(run_dir, "output", pipeline_config$json_blast_results_file)
 
 # specify output file
 output_file = here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blast_hits.csv"))
@@ -49,8 +49,22 @@ output_file = here(run_dir, "output", paste0(config$run$name, "_04_ncbi_web_blas
 
 # Parse web BLAST results
 ```{r}
+
+if (file_test("-d", json_blast_results_file)) {
+  json_blast_results_files = list.files(path = json_blast_results_file,
+                                        pattern = ".json$",
+                                        full.names = TRUE)
+} else {
+  json_blast_results_files = c(json_blast_results_file)
+}
+
+extract_json_results = function(file_in) {
+  json_blast_result = fromJSON(file_in)
+  search_result = json_blast_results$BlastOutput2$report$results$search
+}
+
 # strip hit taxa
-search_results = json_blast_results$BlastOutput2$report$results$search
+search_results = map_df(json_blast_results_files, ~ extract_json_results(.x))
 
 # preallocate hits table
 all_hits = tibble(asv_id = c())

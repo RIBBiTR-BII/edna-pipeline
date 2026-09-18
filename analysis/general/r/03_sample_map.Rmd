@@ -7,6 +7,8 @@ output: html_document
 
 This script aligns sequence filed with sample metadata in the RIBBiTR database, for easy lookups and referencing of eDNA collection downstream. To establish a connection with the RIBBiTR database (for the first time) check out this [Connection Tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html)
 
+This script also assigns each sample a `study_system` (see `study_system_lookup` below), derived from its RIBBiTR `region`. This runs early (script 03) specifically so that downstream scripts -- notably `05_query_taxonomy_geography.Rmd`, which needs to know which study system(s) are present in a run before it can query GBIF per system -- can rely on it.
+
 # Config
 ```{r}
 librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janitor, uuid)
@@ -14,9 +16,9 @@ librarian::shelf(tidyverse, here, yaml, dbplyr, RPostgres, DBI, ribbitrrr, janit
 # # Point to RIBBiTR eDNA Processing 22-25 lookup table for extraction_ids & study systems
 # sample_lookup_file = here(Sys.getenv("data_dir"), "edna_results", "RIBBiTR eDNA Processing 22-25_2026-08-23.xlsx")
 
-# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R); this is read
 # directly so the same values apply whether this script is run manually or via the driver
-pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
 
 # import run config file
 run_dir = here(pipeline_config$run_dir)
@@ -25,7 +27,7 @@ run_dir = here(pipeline_config$run_dir)
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # sample map out file
-map_out = here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv"))
+map_out = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
 
 # establish database connection
 dbcon = hopToDB("ribbitr")
@@ -127,6 +129,38 @@ env_obs = db_env %>%
 sample_map_env = sample_map %>%
   left_join(env_obs, by = "visit_id")
 
+```
+
+# Study system
+
+Assign each sample a canonical `study_system` label, derived from its RIBBiTR `region`. This is what downstream scripts (starting with `05_query_taxonomy_geography.Rmd`) use to know which study system(s) are present in a run -- so a run can freely mix samples from multiple systems.
+
+`study_system_lookup` below maps a normalized `region` value (lowercased, non-alphanumeric characters collapsed to `_`) to a canonical study_system label. If any regions in your run don't map (see the warning below), add them here.
+```{r}
+study_system_lookup = tibble(
+  region_key = c("brazil", "panama", "sierra_nevada", "pennsylvania"),
+  study_system = c("brazil", "panama", "sierra_nevada", "pennsylvania")
+)
+
+norm_region = function(x) tolower(gsub("[^a-z0-9]+", "_", tolower(x)))
+
+sample_map_env = sample_map_env %>%
+  mutate(region_key = norm_region(region)) %>%
+  left_join(study_system_lookup, by = "region_key") %>%
+  select(-region_key)
+
+unmapped_regions = sample_map_env %>%
+  filter(!is.na(region), is.na(study_system)) %>%
+  distinct(region)
+
+if (nrow(unmapped_regions) > 0) {
+  cat("WARNING: the following region values did not map to a known study_system.\n",
+      "Add them to study_system_lookup above:\n")
+  print(unmapped_regions)
+}
+
+cat("\nStudy systems present in this run:\n")
+print(sample_map_env %>% filter(!is.na(study_system)) %>% distinct(study_system))
 ```
 
 # export

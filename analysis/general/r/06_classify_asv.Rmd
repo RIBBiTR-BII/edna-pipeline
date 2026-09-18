@@ -14,12 +14,13 @@ See the algorithm below for details on each `accept_method` and to adjust parame
 ```{r}
 librarian::shelf(tidyverse, yaml, here, phylotools)
 
-# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R); this is read
 # directly so the same values apply whether this script is run manually or via the driver
-pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
 
 # import run config file
 run_dir = here(pipeline_config$run_dir)
+cat(paste0("Run_dir: ", run_dir))
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -42,7 +43,7 @@ short_sequence_length_cutoff = pipeline_config$short_sequence_length_cutoff
 # synonymous species names: named list mapping a canonical label to the set of species-level
 # names (as they appear in the "species"/specificEpithet fields, i.e. without genus) that
 # should be pooled under it -- e.g. taxa split/lumped across revisions, or a cryptic species
-# complex you want reported jointly. Defined in pipeline_config.yml; add one entry per group.
+# complex you want reported jointly. Defined in 00_pipeline_config.yml; add one entry per group.
 species_synonyms = pipeline_config$species_synonyms
 
 # recode any species name found in a synonym group (see species_synonyms above) to that

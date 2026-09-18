@@ -36,20 +36,24 @@ At this point you have successfully processed some sequences through the [Amphib
     - [Register with GBIF](https://www.gbif.org/) -> Login *(top right)* -> Register (If you have not already)
     - Follow [this tutorial](https://docs.ropensci.org/rgbif/articles/gbif_credentials.html) to save your GBIF login where it can be accessed by the package `rgbif`.
 
-3. **Establish a connection to RIBBiTR database:** This will allow you to link eDNA results with field collection metadata (used in `analysis/general/r/07_join_sample_collection.Rmd`):
+3. **Establish a connection to RIBBiTR database:** This will allow you to link eDNA results with field collection metadata (used in `analysis/general/r/03_sample_map.Rmd`):
 
     - Follow the [RIBBiTR DB connection tutorial](https://ribbitr-bii.github.io/ribbitr-data-access/tutorial_series/01_connection_setup.html) to connect in RStudio.
 
 4. **Create an RStudio project (optional):** Open RStudio, select `File -> New Project -> Existing Directory -> Browse` and browse to your local directory of this `edna-pipeline` repository. Thel select `Create Project`. This is not required, but will make it easier to navigate between the various analysis scripts.
 
 ## Analysis
-The numbered (4 - 9) analysis steps below correspond to numbered .Rmd scripts which should be run in RStudio in succession. To begin, navigate to the `analysis/general/r/` folder.
+The numbered (3 - 9) analysis steps below correspond to numbered .Rmd scripts which should be run in RStudio in succession. To begin, navigate to the `analysis/general/r/` folder. (Step 7 is reserved for an upcoming per-ASV home-system / contamination-detection script and doesn't exist yet -- the sequence currently skips from 6 to 8.)
 
-Before running the pipeline, open `pipeline_config.yml` and review/update its parameters (run directory, study system, thresholds, etc.) to match your run. All scripts 04-09 read this shared config file, so it only needs to be edited once per run.
+Before running the pipeline, open `00_pipeline_config.yml` and review/update its parameters (run directory, thresholds, etc.) to match your run. All scripts 03-06 and 08-09 read this shared config file, so it only needs to be edited once per run. A run may contain samples from multiple study systems -- which system(s) are present is derived automatically from the sample map (step 3), not configured by hand.
 
 You then have two options for running the scripts:
 - **Step through manually:** Open each script in RStudio, review the header notes, and run it chunk by chunk. This is recommended the first time through, as each script contains decisions for users to consider as the analysis progresses.
-- **Run end to end:** Once you're comfortable with the decisions each script makes, source `00_run_pipeline.R` to render scripts 04-09 in sequence using the settings in `pipeline_config.yml`.
+- **Run end to end:** Once you're comfortable with the decisions each script makes, source `00_run_pipeline.R` to render scripts 03-06 and 08-09 in sequence using the settings in `00_pipeline_config.yml`.
+
+3. **Map Samples** *(`03_sample_map.Rmd`)*: This script maps Illumina samples to RIBBiTR sample ids and assigns each sample a `study_system`, to support alignment of results with collection metadata downstream and let later steps (starting with step 5) know which study system(s) are present in the run.
+  - This requires a connection to the RIBBiTR database (see `Setup` above).
+  - Runs first, since step 5 depends on its `study_system` column.
 
 4. **Web Blast & Parse** *(`04_web_blast_json_parse.Rmd`)*: Follow script instructions below to upload the representative sequences to [NCBI's Web Blast](https://blast.ncbi.nlm.nih.gov/Blast.cgi) service, and download the query results. This script parses the .json outputs from the Web BLAST query.
     - a. Upload the ASV representative sequences .fasta file to NCBI's Web BLAST: Nucleotide BLAST service
@@ -64,22 +68,19 @@ You then have two options for running the scripts:
     - b. In the main Web BLAST results panel, to the right of `RID`, click `Download All` and select `Single-file JSON`. Save the JSON report file to `[your-run-directory]/outout/`
     - c. Once you have the results file, adjust the parameters in the `Config` section to match your needs. You can then run this script to parse and structure the results for downstream analysis.
 
-5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in the study system of interest, to prioritize classification of local species and provide context for interpretation. This pulls in hits from any of the following sources: BLAST, Vsearch, or Web BLAST.
+5. **GBIF Query** *(05_query_taxonomy_geography.Rmd)*: This script searches for occurrences of reference taxonomies in each study system present in the run (per step 3's sample map), to prioritize classification of local species and provide context for interpretation. This pulls in hits from any of the following sources: BLAST, Vsearch, or Web BLAST.
   - This script requires API keys for GBIF in .Renviron (see `Setup` above).
   - This step is optional. If you want to skip this step, proceed to the next script (`06_classify_asv.Rmd`) and set config the parameter `gbif_query` to `FALSE`.
-  
+  - Taxon resolution runs once per run; occurrence counts are queried and checkpointed separately per study system, so the script can be re-run to resume after a partial failure or once more systems' samples are added.
+
 6. **Classify ASVs** *(06_classify_asv.Rmd)*: This script uses a hierarchy of classification methods to assign taxonomic hits to each ASV, optionally pulling from the GBIF query and incorporating hits from any of the following sources: : BLAST, Vsearch, or Web BLAST.
   - A likely taxonomy is assigned to each ASV following the hierarchy `accept_method`s if the given `accept_method` criteria are met. All assigned taxonomy from all methods, along with all hits, are exported to the specified `hybrid_classification_out` path.
   - The single "best" classifications (i.e. `accept_method` with greatest priority in hierarchy) for each ASV are exported to the specified `classification_out` path.
 
-
-7. **Map Samples** *(07_sample_map.Rmd)*: This script Maps Illumina samples to RIBBiTR sample ids, to support alignment of results with collection metadata downstream.\
-  - This requires a connection to the RIBBiTR database (see `Setup` above).
-
 8. **Control for Contamination** *(08_sample_controls.Rmd)*: This script calculates controlled ASV reads for each sample by subtracting any read counts found in controls (multiplied by a scaling factor `asv_control_th_factor`), with minimum controlled reads of 0.
   - Lab positive and negative controls are applied to all samples globally, while field negative controls are applied to corresponding field samples only.
 
-9. **Export Results** *(09_export_results.Rmd)*: This script combines results from steps 6, 7, and 8, and as well as sample metadata from the RIBBiTR database, to create two cohesive outputs:
+9. **Export Results** *(09_export_results.Rmd)*: This script combines results from steps 3, 6, and 8, and as well as sample metadata from the RIBBiTR database, to create two cohesive outputs:
   a. for ASVs (reads, classifications, etc.)
   b. field samples (collection site, date, filter method, etc.)
   

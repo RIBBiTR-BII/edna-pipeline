@@ -12,12 +12,13 @@ This script calculates controlled ASV reads for each sample by subtracting any r
 ```{r}
 librarian::shelf(tidyverse, yaml, dbplyr, RPostgres, DBI, ribbitrrr, here, rio, janitor, phylotools)
 
-# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R); this is read
 # directly so the same values apply whether this script is run manually or via the driver
-pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
 
 # import run config file
 run_dir = here(pipeline_config$run_dir)
+cat(paste0("Run_dir: ", run_dir))
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -41,7 +42,7 @@ asv_contaminants = asv_classification %>%
          contaminant_p_identity,
          short_sequence_flag)
 
-sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv")))
+sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv")))
   # rename(field_negative_control = negative_control,
   #        field_negative_control_group_id = negative_control_group_id)
 

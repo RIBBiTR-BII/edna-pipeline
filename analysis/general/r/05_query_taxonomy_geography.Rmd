@@ -12,6 +12,19 @@ This script requires API keys for GBIF in .Renviron (see this [Tutorial](https:/
 
 If you want to skip this step you can, just set the parameter `gbif_query` to `FALSE` in the subsequent script (`06_classify_asv.Rmd`).
 
+## Multi-system runs & resumability
+
+A run may contain samples from several study systems (see `study_system` in `03_sample_map.Rmd`, which must be run first). GBIF occurrence counts are always queried separately per system -- combining systems into one query would defeat the point of a locally-informed check, and GBIF's own rate limits make a combined query impractical anyway.
+
+The query is split into two stages that behave differently under repeated runs:
+
+- **Taxon resolution ("backbone")** -- resolving each hit taxon to a GBIF `usageKey` -- is the same regardless of study system, so it only runs once for the whole run, not once per system. Each sub-query (by scientific name, by epithet, by genus, by family) is checkpointed to its own file; if you re-run this script, any sub-query whose checkpoint file already exists is skipped rather than re-queried. This is what used to require manually re-running individual code chunks by hand when GBIF's servers hiccupped -- now you can just re-run the whole script and only the parts that didn't finish will re-query.
+- **Occurrence counting** is per system, and is checkpointed the same way, one file per system (`..._05_gbif_occ_data_<system>.csv`). Re-running the script picks up any systems that haven't finished yet and skips ones that have. You can run this script as many times as you need across a session (or multiple sessions) until every system has a checkpoint file.
+
+Both stages also retry transient GBIF failures automatically (see `with_retry` below) before giving up.
+
+The final "Process GBIF data" step builds a composite table from whichever per-system occurrence files exist *at the time it's run* -- so it's safe to run before every system has finished; it'll just reflect however many systems are done so far, and you can re-run it again later once the rest complete.
+
 # Config
 ```{r}
 ## Load in Libraries (install as needed)
@@ -19,9 +32,9 @@ librarian::shelf(tidyverse, yaml, here, rgbif)
 
 # requires GBIF token in .Renviron
 
-# read shared pipeline config (see pipeline_config.yml / 00_run_pipeline.R); this is read
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R); this is read
 # directly so the same values apply whether this script is run manually or via the driver
-pipeline_config = read_yaml(here("analysis", "general", "r", "pipeline_config.yml"))
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
 
 # import run config file
 run_dir = here(pipeline_config$run_dir)
@@ -29,13 +42,44 @@ run_dir = here(pipeline_config$run_dir)
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
-# geographic systems
-#   any of: brazil, panama, sierra_nevada, pennsylvania
-# recommend running one system at a time, for cleaner geographic distinction
-study_system = pipeline_config$study_system
+# study systems present in this run, derived from the sample map (03_sample_map.Rmd, which
+# must be run first) rather than configured by hand -- a run may mix multiple systems
+sample_map_file = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
 
+if (!file.exists(sample_map_file)) {
+  stop("Sample map not found at: ", sample_map_file, "\nRun 03_sample_map.Rmd first.")
+}
+
+study_systems = read_csv(sample_map_file, show_col_types = FALSE) %>%
+  filter(!is.na(study_system)) %>%
+  distinct(study_system) %>%
+  arrange(study_system) %>%
+  pull(study_system)
+
+cat("Study systems found in run:", paste(study_systems, collapse = ", "), "\n")
+
+# checkpoint file paths (backbone sub-queries, run once for the whole run)
+backbone_file = function(label) here(run_dir, "output", paste0(config$run$name, "_05_gbif_backbone_", label, ".csv"))
+
+# checkpoint file path (occurrence counts, one per study system)
+occ_file = function(system) here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data_", system, ".csv"))
+
+# composite output file (built from whichever per-system occurrence files exist so far)
 taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv"))
 
+# retry a GBIF call up to `attempts` times, waiting `wait_sec` between failures -- GBIF's
+# servers intermittently error/timeout regardless of query validity, so this replaces manually
+# re-running a chunk until it happens to succeed
+with_retry = function(expr_fn, label, attempts = 5, wait_sec = 30) {
+  for (attempt in seq_len(attempts)) {
+    result = tryCatch(list(ok = TRUE, value = expr_fn()),
+                       error = function(e) list(ok = FALSE, error = e))
+    if (result$ok) return(result$value)
+    cat(sprintf("  [%s] attempt %d/%d failed: %s\n", label, attempt, attempts, conditionMessage(result$error)))
+    if (attempt < attempts) Sys.sleep(wait_sec)
+  }
+  stop(paste0(label, ": all ", attempts, " attempts failed"))
+}
 ```
 
 # Import taxa
@@ -94,133 +138,170 @@ taxa_unique = taxa_clean %>%
   arrange(domain, kingdom, phylum, class, order, family, genus, species)
 ```
 
-
-# Query GBIF
+# Resolve taxon backbone (run once, checkpointed per sub-query)
 ```{r}
+cat("\nResolving taxa to GBIF backbone (system-independent, runs once)...\n")
 
-cat("\nQuery GBIF for occurences in target countries (families, genuses & species)...\n")
+## species, by full scientific name
+if (file.exists(backbone_file("species_sn"))) {
+  cat("\tSpecies IDs (by scientificName) already resolved, reading checkpoint\n")
+  gbif_backbone_key_species_sn = read_csv(backbone_file("species_sn"), show_col_types = FALSE)
+} else {
+  cat("\tLooking up GBIF species IDs (by scientificName)\n")
 
-## species
-cat("\tLooking up GBIF species IDs\n")
+  gbif_query_species_sn = taxa_unique %>%
+    filter(!is.na(species)) %>%
+    select(class,
+           order,
+           family,
+           scientificName) %>%
+    distinct()
 
-# by full scientific name
-gbif_query_species_sn = taxa_unique %>%
-  filter(!is.na(species)) %>%
-  select(class,
-         order,
-         family,
-         scientificName) %>%
-  distinct()
+  gbif_backbone_species_sn = with_retry(
+    function() name_backbone_checklist(gbif_query_species_sn, bucket_size = 3500, sleep = 10),
+    label = "backbone species (scientificName)"
+  )
 
-# query IDs by scientific name
-gbif_backbone_species_sn = name_backbone_checklist(gbif_query_species_sn, bucket_size = 3500, sleep = 10)
+  rownames(gbif_query_species_sn) = NULL
+  rownames(gbif_backbone_species_sn) = NULL
+  gbif_backbone_key_species_sn = bind_cols(gbif_query_species_sn %>%
+                                             rename(class_q = class,
+                                                    order_q = order,
+                                                    family_q = family,
+                                                    scientific_name_q = scientificName),
+                                           gbif_backbone_species_sn) %>%
+    mutate(local_occ_count = NA) %>%
+    filter(rank %in% c("SPECIES", "SUBSPECIES"))
 
-# parse IDs
-rownames(gbif_query_species_sn) = NULL
-rownames(gbif_backbone_species_sn) = NULL
-gbif_backbone_key_species_sn = bind_cols(gbif_query_species_sn %>%
-                                           rename(class_q = class,
-                                                  order_q = order,
-                                                  family_q = family,
-                                                  scientific_name_q = scientificName),
-                                         gbif_backbone_species_sn) %>%
-  mutate(local_occ_count = NA) %>%
-  filter(rank %in% c("SPECIES", "SUBSPECIES"))
+  write_csv(gbif_backbone_key_species_sn, backbone_file("species_sn"))
+}
 
-# by specific epithet, for those which returned NA
-gbif_query_species_e = taxa_unique %>%
-  filter(!is.na(specificEpithet)) %>%
-  select(class,
-         order,
-         family,
-         genus,
-         specificEpithet,
-         scientificName) %>%
-  anti_join(gbif_backbone_key_species_sn, by = c("class" = "class_q",
-                                                 "order" = "order_q",
-                                                 "family" = "family_q",
-                                                 "scientificName" = "scientific_name_q")) %>%
-  select(-scientificName) %>%
-  distinct()
+## species, by specific epithet, for those which returned NA above
+if (file.exists(backbone_file("species_e"))) {
+  cat("\tSpecies IDs (by specificEpithet) already resolved, reading checkpoint\n")
+  gbif_backbone_key_species_e = read_csv(backbone_file("species_e"), show_col_types = FALSE)
+} else {
+  cat("\tLooking up GBIF species IDs (by specificEpithet)\n")
 
-# query IDs by specific epithet
-Sys.sleep(10)
-gbif_backbone_species_e = name_backbone_checklist(gbif_query_species_e, bucket_size = 100, sleep = 10)
+  gbif_query_species_e = taxa_unique %>%
+    filter(!is.na(specificEpithet)) %>%
+    select(class,
+           order,
+           family,
+           genus,
+           specificEpithet,
+           scientificName) %>%
+    anti_join(gbif_backbone_key_species_sn, by = c("class" = "class_q",
+                                                   "order" = "order_q",
+                                                   "family" = "family_q",
+                                                   "scientificName" = "scientific_name_q")) %>%
+    select(-scientificName) %>%
+    distinct()
 
-# parse IDs
-rownames(gbif_query_species_e) = NULL
-rownames(gbif_backbone_species_e) = NULL
-gbif_backbone_key_species_e = bind_cols(gbif_query_species_e %>%
-                                          rename(class_q = class,
-                                                 order_q = order,
-                                                 family_q = family,
-                                                 genus_q = genus,
-                                                 specific_epithet_q = specificEpithet),
-                                        gbif_backbone_species_e) %>%
-  mutate(local_occ_count = NA) %>%
-  filter(rank %in% c("SPECIES", "SUBSPECIES"))
+  gbif_backbone_species_e = with_retry(
+    function() name_backbone_checklist(gbif_query_species_e, bucket_size = 100, sleep = 10),
+    label = "backbone species (specificEpithet)"
+  )
+
+  rownames(gbif_query_species_e) = NULL
+  rownames(gbif_backbone_species_e) = NULL
+  gbif_backbone_key_species_e = bind_cols(gbif_query_species_e %>%
+                                            rename(class_q = class,
+                                                   order_q = order,
+                                                   family_q = family,
+                                                   genus_q = genus,
+                                                   specific_epithet_q = specificEpithet),
+                                          gbif_backbone_species_e) %>%
+    mutate(local_occ_count = NA) %>%
+    filter(rank %in% c("SPECIES", "SUBSPECIES"))
+
+  write_csv(gbif_backbone_key_species_e, backbone_file("species_e"))
+}
 
 # combine specific results
 gbif_backbone_key_species = bind_rows(gbif_backbone_key_species_sn,
                                       gbif_backbone_key_species_e)
 
-## query by genus
-cat("\tLooking up genus IDs\n")
+## genus
+if (file.exists(backbone_file("genus"))) {
+  cat("\tGenus IDs already resolved, reading checkpoint\n")
+  gbif_backbone_key_genus = read_csv(backbone_file("genus"), show_col_types = FALSE)
+} else {
+  cat("\tLooking up genus IDs\n")
 
-gbif_query_genus = taxa_unique %>%
-  select(class,
-         order,
-         family,
-         genus) %>%
-  filter(!is.na(genus)) %>%
-  distinct()
+  gbif_query_genus = taxa_unique %>%
+    select(class,
+           order,
+           family,
+           genus) %>%
+    filter(!is.na(genus)) %>%
+    distinct()
 
-Sys.sleep(10)
-gbif_backbone_genus = name_backbone_checklist(gbif_query_genus, bucket_size = 1500, sleep = 10)
+  gbif_backbone_genus = with_retry(
+    function() name_backbone_checklist(gbif_query_genus, bucket_size = 1500, sleep = 10),
+    label = "backbone genus"
+  )
 
-rownames(gbif_query_genus) = NULL
-rownames(gbif_backbone_genus) = NULL
+  rownames(gbif_query_genus) = NULL
+  rownames(gbif_backbone_genus) = NULL
 
-gbif_backbone_key_genus = bind_cols(gbif_query_genus %>%
-                                      rename(class_q = class,
-                                             order_q = order,
-                                             family_q = family,
-                                             genus_q = genus),
-                                    gbif_backbone_genus) %>%
-  mutate(local_occ_count = NA) %>%
-  filter(rank == "GENUS")
+  gbif_backbone_key_genus = bind_cols(gbif_query_genus %>%
+                                        rename(class_q = class,
+                                               order_q = order,
+                                               family_q = family,
+                                               genus_q = genus),
+                                      gbif_backbone_genus) %>%
+    mutate(local_occ_count = NA) %>%
+    filter(rank == "GENUS")
 
-## query by family
-cat("\tLooking up family IDs\n")
+  write_csv(gbif_backbone_key_genus, backbone_file("genus"))
+}
 
-gbif_query_family = taxa_unique %>%
-  select(class,
-         order,
-         family) %>%
-  filter(!is.na(family)) %>%
-  distinct()
+## family
+if (file.exists(backbone_file("family"))) {
+  cat("\tFamily IDs already resolved, reading checkpoint\n")
+  gbif_backbone_key_family = read_csv(backbone_file("family"), show_col_types = FALSE)
+} else {
+  cat("\tLooking up family IDs\n")
 
-Sys.sleep(10)
-gbif_backbone_family = name_backbone_checklist(gbif_query_family, bucket_size = 500, sleep = 10)
+  gbif_query_family = taxa_unique %>%
+    select(class,
+           order,
+           family) %>%
+    filter(!is.na(family)) %>%
+    distinct()
 
-rownames(gbif_query_family) = NULL
-rownames(gbif_backbone_family) = NULL
+  gbif_backbone_family = with_retry(
+    function() name_backbone_checklist(gbif_query_family, bucket_size = 500, sleep = 10),
+    label = "backbone family"
+  )
 
-gbif_backbone_key_family = bind_cols(gbif_query_family %>%
-                                       rename(class_q = class,
-                                              order_q = order,
-                                              family_q = family),
-                                     gbif_backbone_family) %>%
-  mutate(local_occ_count = NA) %>%
-  filter(rank == "FAMILY")
+  rownames(gbif_query_family) = NULL
+  rownames(gbif_backbone_family) = NULL
 
-# row bind all queries
+  gbif_backbone_key_family = bind_cols(gbif_query_family %>%
+                                         rename(class_q = class,
+                                                order_q = order,
+                                                family_q = family),
+                                       gbif_backbone_family) %>%
+    mutate(local_occ_count = NA) %>%
+    filter(rank == "FAMILY")
+
+  write_csv(gbif_backbone_key_family, backbone_file("family"))
+}
+
+# row bind all queries into the full backbone, shared by every system's occurrence query below
 gbif_backbone_key = bind_rows(gbif_backbone_key_species,
                               gbif_backbone_key_genus,
                               gbif_backbone_key_family)
 
-cat("\tQuerying local taxa occurrences\n")
+valid_keys = unique(na.omit(gbif_backbone_key$usageKey))
 
+cat("Backbone resolution done:", length(valid_keys), "valid GBIF keys.\n")
+```
+
+# Query local occurrences (per system, checkpointed)
+```{r}
 # lookup table
 # gbif_wkt_polygon (optional): a WKT POLYGON string defining the study system's geographic
 # extent. When present for a study system, occurrences are queried within this polygon
@@ -236,147 +317,184 @@ study_system_lookup = data.frame(
   stringsAsFactors = FALSE
 )
 
-# index into it
-this_row = study_system_lookup[study_system_lookup$study_system == study_system, ]
+for (system in study_systems) {
 
-gbif_country_code = this_row$gbif_country_code
-gbif_gid1_code = this_row$gbif_gid1_code
-gbif_wkt_polygon = this_row$gbif_wkt_polygon
-
-valid_keys = unique(na.omit(gbif_backbone_key$usageKey))
-
-# default to a polygon query when one is provided for this study system, otherwise fall
-# back to country (+ optional state/province) codes
-if (!is.na(gbif_wkt_polygon)) {
-  preds = list(
-    pred_within(gbif_wkt_polygon),
-    pred_in("taxonKey", valid_keys)
-  )
-} else {
-  preds = list(
-    pred("country", gbif_country_code),
-    pred_in("taxonKey", valid_keys)
-  )
-  if (!is.na(gbif_gid1_code)) {
-    preds = c(preds, list(pred("gadm", gbif_gid1_code)))
+  if (file.exists(occ_file(system))) {
+    cat(paste0("\nOccurrences for '", system, "' already downloaded, skipping\n"))
+    next
   }
-}
 
-download_submission = occ_download(
-  pred_and(.list = preds),
-  format = "SIMPLE_CSV"
-)
+  this_row = study_system_lookup[study_system_lookup$study_system == system, ]
 
-occ_download_wait(download_submission)
+  if (nrow(this_row) == 0) {
+    cat(paste0("\nNo GBIF country/region lookup defined for study_system '", system,
+               "' -- add it to study_system_lookup above. Skipping for now.\n"))
+    next
+  }
 
-occ_download_file = occ_download_get(download_submission, path = here(run_dir, "output"))
-occ_data_raw = occ_download_import(occ_download_file)
+  cat(paste0("\nQuerying local occurrences for '", system, "'...\n"))
 
-# clean, exact per-key counts — no facet, no hierarchy contamination
-occ_data_summary = occ_data_raw %>%
-  count(taxonKey, name = "occ_count") %>%
-  rename(usageKey = taxonKey)
+  gbif_country_code = this_row$gbif_country_code
+  gbif_gid1_code = this_row$gbif_gid1_code
+  gbif_wkt_polygon = this_row$gbif_wkt_polygon
 
-write_csv(occ_data_summary, here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv")))
+  # default to a polygon query when one is provided for this study system, otherwise fall
+  # back to country (+ optional state/province) codes
+  if (!is.na(gbif_wkt_polygon)) {
+    preds = list(
+      pred_within(gbif_wkt_polygon),
+      pred_in("taxonKey", valid_keys)
+    )
+  } else {
+    preds = list(
+      pred("country", gbif_country_code),
+      pred_in("taxonKey", valid_keys)
+    )
+    if (!is.na(gbif_gid1_code)) {
+      preds = c(preds, list(pred("gadm", gbif_gid1_code)))
+    }
+  }
 
-# cleanup
-if (file.exists(as.character(occ_download_file))) {
-  file.remove(as.character(occ_download_file))
+  # submit + wait + download + import as one retry unit -- if any part fails, resubmit fresh
+  occ_data_raw = with_retry(function() {
+    download_submission = occ_download(
+      pred_and(.list = preds),
+      format = "SIMPLE_CSV"
+    )
+
+    occ_download_wait(download_submission)
+
+    occ_download_file = occ_download_get(download_submission, path = here(run_dir, "output"), overwrite = TRUE)
+    data = occ_download_import(occ_download_file)
+
+    if (file.exists(as.character(occ_download_file))) {
+      file.remove(as.character(occ_download_file))
+    }
+
+    data
+  }, label = paste0("occurrence download (", system, ")"))
+
+  # clean, exact per-key counts — no facet, no hierarchy contamination
+  occ_data_summary = occ_data_raw %>%
+    count(taxonKey, name = "occ_count") %>%
+    rename(usageKey = taxonKey)
+
+  write_csv(occ_data_summary, occ_file(system))
+
+  cat(paste0("Done with '", system, "'.\n"))
 }
 ```
 
 # Process GBIF data
+
+Builds the composite output from whichever per-system occurrence files exist right now. Safe to run before every system has finished -- re-run later to pick up the rest.
 ```{r}
-occ_data_summary = read_csv(here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data.csv"))) %>%
-  mutate(usageKey = as.character(usageKey)) %>%
-  select(usageKey,
-         occ_count)
+completed_systems = study_systems[file.exists(occ_file(study_systems))]
+pending_systems = setdiff(study_systems, completed_systems)
 
-gbif_backbone_key_occ = gbif_backbone_key %>%
-  left_join(occ_data_summary, by = "usageKey") %>%
-  mutate(local_occ_count = ifelse(is.na(occ_count), 0, occ_count))
+if (length(pending_systems) > 0) {
+  cat("NOTE: still waiting on GBIF occurrence queries for:", paste(pending_systems, collapse = ", "), "\n",
+      "Re-run this script to pick them up; the composite output below only reflects:", paste(completed_systems, collapse = ", "), "\n\n")
+}
 
-# join with taxa_out
-taxa_out = taxa_out %>%
-  left_join(gbif_backbone_key_occ %>%
-              filter(rank == "FAMILY") %>%
-              rename(gbif_count_family_local = local_occ_count,
-                     gbif_familyKey = familyKey) %>%
-              select(class_q,
-                     order_q,
-                     family_q,
-                     gbif_familyKey,
-                     gbif_count_family_local),
-            by = c("class" = "class_q",
-                   "order" = "order_q",
-                   "family" = "family_q")) %>%
-  left_join(gbif_backbone_key_occ %>%
-              filter(rank == "GENUS") %>%
-              rename(gbif_count_genus_local = local_occ_count,
-                     gbif_genusKey = genusKey) %>%
-              select(class_q,
-                     order_q,
-                     family_q,
-                     genus_q,
-                     gbif_genusKey,
-                     gbif_count_genus_local),
-            by = c("class" = "class_q",
-                   "order" = "order_q",
-                   "family" = "family_q",
-                   "genus" = "genus_q")) %>%
-  left_join(gbif_backbone_key_occ %>%
-              filter(rank %in% c("SPECIES", "SUBSPECIES"),
-                     !is.na(scientific_name_q)) %>%
-              rename(local_gbif_count_species = local_occ_count,
-                     gbif_speciesKey = speciesKey) %>%
-              select(class_q,
-                     order_q,
-                     family_q,
-                     scientific_name_q,
-                     gbif_speciesKey,
-                     local_gbif_count_species) %>%
-              rename(gbif_speciesKey_s = gbif_speciesKey,
-                     local_gbif_count_species_s = local_gbif_count_species),
-            by = c("class" = "class_q",
-                   "order" = "order_q",
-                   "family" = "family_q",
-                   "scientificName" = "scientific_name_q")) %>%
-  left_join(gbif_backbone_key_occ %>%
-              filter(rank %in% c("SPECIES", "SUBSPECIES"),
-                     !is.na(specific_epithet_q)) %>%
-              rename(local_gbif_count_species = local_occ_count,
-                     gbif_speciesKey = speciesKey) %>%
-              select(class_q,
-                     order_q,
-                     family_q,
-                     genus_q,
-                     specific_epithet_q,
-                     gbif_speciesKey,
-                     local_gbif_count_species) %>%
-              rename(gbif_speciesKey_e = gbif_speciesKey,
-                     local_gbif_count_species_e = local_gbif_count_species) %>%
-              distinct(),
-            by = c("class" = "class_q",
-                   "order" = "order_q",
-                   "family" = "family_q",
-                   "genus" = "genus_q",
-                   "specificEpithet" = "specific_epithet_q")) %>%
-  mutate(gbif_speciesKey = coalesce(gbif_speciesKey_s, gbif_speciesKey_e),
-         gbif_count_species_local = coalesce(local_gbif_count_species_s, local_gbif_count_species_e),
-         # correct errant parents with counts less than children
-         gbif_count_genus_local = if_else((!is.na(gbif_count_species_local) & is.na(gbif_count_genus_local)) | 
-                                            gbif_count_species_local > gbif_count_genus_local,
-                                          gbif_count_species_local,
-                                          gbif_count_genus_local),
-         gbif_count_family_local = if_else((!is.na(gbif_count_genus_local) & is.na(gbif_count_family_local)) | 
-                                             gbif_count_genus_local > gbif_count_family_local,
-                                           gbif_count_genus_local,
-                                           gbif_count_family_local)) %>%
-  select(-gbif_speciesKey_s,
-         -gbif_speciesKey_e,
-         -local_gbif_count_species_s,
-         -local_gbif_count_species_e) %>%
-  distinct()
+# build the per-accession GBIF occurrence join for one system's occurrence counts
+build_taxa_out_for_system = function(system) {
+  occ_data_summary = read_csv(occ_file(system), show_col_types = FALSE) %>%
+    mutate(usageKey = as.character(usageKey)) %>%
+    select(usageKey,
+           occ_count)
+
+  gbif_backbone_key_occ = gbif_backbone_key %>%
+    left_join(occ_data_summary, by = "usageKey") %>%
+    mutate(local_occ_count = ifelse(is.na(occ_count), 0, occ_count))
+
+  taxa_out %>%
+    left_join(gbif_backbone_key_occ %>%
+                filter(rank == "FAMILY") %>%
+                rename(gbif_count_family_local = local_occ_count,
+                       gbif_familyKey = familyKey) %>%
+                select(class_q,
+                       order_q,
+                       family_q,
+                       gbif_familyKey,
+                       gbif_count_family_local),
+              by = c("class" = "class_q",
+                     "order" = "order_q",
+                     "family" = "family_q")) %>%
+    left_join(gbif_backbone_key_occ %>%
+                filter(rank == "GENUS") %>%
+                rename(gbif_count_genus_local = local_occ_count,
+                       gbif_genusKey = genusKey) %>%
+                select(class_q,
+                       order_q,
+                       family_q,
+                       genus_q,
+                       gbif_genusKey,
+                       gbif_count_genus_local),
+              by = c("class" = "class_q",
+                     "order" = "order_q",
+                     "family" = "family_q",
+                     "genus" = "genus_q")) %>%
+    left_join(gbif_backbone_key_occ %>%
+                filter(rank %in% c("SPECIES", "SUBSPECIES"),
+                       !is.na(scientific_name_q)) %>%
+                rename(local_gbif_count_species = local_occ_count,
+                       gbif_speciesKey = speciesKey) %>%
+                select(class_q,
+                       order_q,
+                       family_q,
+                       scientific_name_q,
+                       gbif_speciesKey,
+                       local_gbif_count_species) %>%
+                rename(gbif_speciesKey_s = gbif_speciesKey,
+                       local_gbif_count_species_s = local_gbif_count_species),
+              by = c("class" = "class_q",
+                     "order" = "order_q",
+                     "family" = "family_q",
+                     "scientificName" = "scientific_name_q")) %>%
+    left_join(gbif_backbone_key_occ %>%
+                filter(rank %in% c("SPECIES", "SUBSPECIES"),
+                       !is.na(specific_epithet_q)) %>%
+                rename(local_gbif_count_species = local_occ_count,
+                       gbif_speciesKey = speciesKey) %>%
+                select(class_q,
+                       order_q,
+                       family_q,
+                       genus_q,
+                       specific_epithet_q,
+                       gbif_speciesKey,
+                       local_gbif_count_species) %>%
+                rename(gbif_speciesKey_e = gbif_speciesKey,
+                       local_gbif_count_species_e = local_gbif_count_species) %>%
+                distinct(),
+              by = c("class" = "class_q",
+                     "order" = "order_q",
+                     "family" = "family_q",
+                     "genus" = "genus_q",
+                     "specificEpithet" = "specific_epithet_q")) %>%
+    mutate(gbif_speciesKey = coalesce(gbif_speciesKey_s, gbif_speciesKey_e),
+           gbif_count_species_local = coalesce(local_gbif_count_species_s, local_gbif_count_species_e),
+           # correct errant parents with counts less than children
+           gbif_count_genus_local = if_else((!is.na(gbif_count_species_local) & is.na(gbif_count_genus_local)) |
+                                              gbif_count_species_local > gbif_count_genus_local,
+                                            gbif_count_species_local,
+                                            gbif_count_genus_local),
+           gbif_count_family_local = if_else((!is.na(gbif_count_genus_local) & is.na(gbif_count_family_local)) |
+                                               gbif_count_genus_local > gbif_count_family_local,
+                                             gbif_count_genus_local,
+                                             gbif_count_family_local)) %>%
+    select(-gbif_speciesKey_s,
+           -gbif_speciesKey_e,
+           -local_gbif_count_species_s,
+           -local_gbif_count_species_e) %>%
+    distinct() %>%
+    mutate(study_system = system)
+}
+
+# one row per (accession, study_system) -- lets downstream scripts either take a union across
+# systems (for taxonomy: is this candidate plausible anywhere in the run) or look at a specific
+# system (for a home-system / contamination check)
+taxa_out = map_dfr(completed_systems, build_taxa_out_for_system)
 
 cat("Done with GBIF.\n")
 

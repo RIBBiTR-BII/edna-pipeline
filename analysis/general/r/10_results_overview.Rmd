@@ -12,7 +12,7 @@ This script provides a first look at the processed and analyzed results, includi
 librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr, vegan, janitor)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "panama_16s_2026-09-16")
+run_dir = here("16S_sequence_processing", "runs", "pennsylvania_16s_2026-09-16")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
@@ -28,7 +28,7 @@ res_06_class = read_csv(here(run_dir, "output", paste0(config$run$name, "_06_hyb
 # res_08_controlled = read_csv(here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv")))
 
 # sample_metadata
-res_07_sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_07_sample_id_map.csv")))
+res_03_sample_map = read_csv(here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv")))
 
 # exported file
 res_09_export = read_csv(here(run_dir, "output", paste0(config$run$name, "_09_prelim_results.csv")))
@@ -146,7 +146,10 @@ sample_taxa_group = res_09_export %>%
     class == "Mammalia" ~ "Mammalia Other",
     class == "Aves" ~ "Aves",
     class == "Actinopteri" ~ "Actinopteri",
-    class == "Reptilia" ~ "Reptilia",
+    order %in% c("Squamata",
+                 "Testudines",
+                 "Crocodilia",
+                 "Rhynchocephalia") ~ "Reptilia",
     #class == "Branchiopoda" ~ "Branchiopoda",
     #class == "Insecta" ~ "Insecta",
     #class == "Lepidosauria" ~ "Lepidosauria",
@@ -204,9 +207,9 @@ sample_taxa_group_agg_long_co = gene_props_co %>%
 
 # Build a named color vector
 taxa_colors <- setNames(
-  c(RColorBrewer::brewer.pal(8, "Dark2"), "grey80"),
+  c(RColorBrewer::brewer.pal(8, "Dark2"), "#802040", "grey80"),
   c("Actinopteri", "Amphibia", "Aves", "Bacteria",
-    "Homo sapiens", "Mammalia Other", "Metazoa Other", "Other",
+    "Homo sapiens", "Mammalia Other", "Metazoa Other", "Other", "Reptilia",
     "Unassigned")
 )
 
@@ -289,7 +292,12 @@ amphibian_asvs_controlled = asv_agg %>%
   filter(total_asv_reads_controlled > 0,
          class %in% "Amphibia") %>%
   arrange(taxonomic_rank,
-          desc(total_asv_reads_controlled))
+          desc(total_asv_reads_controlled)) %>%
+  select(asv_id,
+         genus,
+         species,
+         total_asv_reads_controlled,
+         everything())
 
 amphibian_asvs_controlled_hybrid = res_06_class %>%
   filter(asv_id %in% amphibian_asvs_controlled$asv_id)
@@ -300,7 +308,7 @@ amphibian_asvs_controlled_hybrid = res_06_class %>%
 samples_filtered = res_09_export %>%
   filter(asv_id == "74ce083ac47674eb5740d03e521385c2",
          asv_reads_raw > 0) %>%
-  left_join(res_07_sample_map, by = c("edna_sequencing_id",
+  left_join(res_03_sample_map, by = c("edna_sequencing_id",
                                       "feature_id"))
 
 ```
@@ -338,7 +346,7 @@ check_unclassified = res_06_class %>%
 # Sample-level variation
 
 This section looks at how different samples are from one another, using
-`res_07_sample_map` (site, region, coordinates, environmental readings) to
+`res_03_sample_map` (site, region, coordinates, environmental readings) to
 give the read-based comparisons spatial and environmental context, and to
 check how well replicates from the same site/date agree.
 
@@ -381,7 +389,7 @@ pcoa = cmdscale(bray_dist, k = 2, eig = TRUE)
 colnames(pcoa$points) = c("pcoa1", "pcoa2")
 pct_var = round(100 * pcoa$eig[1:2] / sum(pcoa$eig[pcoa$eig > 0]), 1)
 
-sample_meta = res_07_sample_map %>%
+sample_meta = res_03_sample_map %>%
   distinct(edna_sequencing_id, site, region, date, transect)
 
 pcoa_scores = as_tibble(pcoa$points, rownames = "edna_sequencing_id") %>%
@@ -395,7 +403,7 @@ ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = as.factor(site))) +
        title = "Sample community composition (Bray-Curtis PCA)") +
   theme_bw()
 
-ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = region)) +
+ggplot(pcoa_scores, aes(x = pcoa1, y = pcoa2, color = region, shape = region)) +
   geom_point(size = 2, alpha = 0.8) +
   labs(x = paste0("PCA1 (", pct_var[1], "%)"),
        y = paste0("PCA2 (", pct_var[2], "%)"),
@@ -459,7 +467,7 @@ replicate_concordance
 
 ## Environmental variable patterns
 ```{r}
-env_vars = res_07_sample_map %>%
+env_vars = res_03_sample_map %>%
   distinct(edna_sequencing_id, water_temp_c, p_h, conductivity_us_cm)
 
 # how complete is env data for this run?
@@ -504,7 +512,7 @@ ggplot(env_long, aes(x = env_value, y = pcoa1)) +
 site_amph = sample_read_count %>%
   left_join(sample_type_lookup, by = "edna_sequencing_id") %>%
   filter(sample_type == "sample") %>%
-  left_join(res_07_sample_map %>%
+  left_join(res_03_sample_map %>%
               distinct(edna_sequencing_id, site, site_latitude, site_longitude, region),
             by = "edna_sequencing_id") %>%
   filter(!is.na(site_latitude), !is.na(site_longitude)) %>%
