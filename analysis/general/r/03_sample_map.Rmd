@@ -127,7 +127,17 @@ env_obs = db_env %>%
   ungroup()
 
 sample_map_env = sample_map %>%
-  left_join(env_obs, by = "visit_id")
+  left_join(env_obs, by = "visit_id") %>%
+  mutate(study_system = case_when(
+    country == "panama" ~ "panama",
+    country == "brazil" ~ "brazil",
+    region == "pennsylvania" ~ "pennsylvania",
+    region == "california" ~ "sierra_nevada",
+    pcr_control | extraction_negative_control ~ "lab_control",
+    edna_sequencing_name == "Tissue_63" ~ "pennsylvania",
+    edna_sequencing_name %in% c("RP_330", "RP_343", "RP_345", "RP_346") ~ "brazil",
+    .default = NA
+  ))
 
 ```
 
@@ -137,20 +147,8 @@ Assign each sample a canonical `study_system` label, derived from its RIBBiTR `r
 
 `study_system_lookup` below maps a normalized `region` value (lowercased, non-alphanumeric characters collapsed to `_`) to a canonical study_system label. If any regions in your run don't map (see the warning below), add them here.
 ```{r}
-study_system_lookup = tibble(
-  region_key = c("brazil", "panama", "sierra_nevada", "pennsylvania"),
-  study_system = c("brazil", "panama", "sierra_nevada", "pennsylvania")
-)
-
-norm_region = function(x) tolower(gsub("[^a-z0-9]+", "_", tolower(x)))
-
-sample_map_env = sample_map_env %>%
-  mutate(region_key = norm_region(region)) %>%
-  left_join(study_system_lookup, by = "region_key") %>%
-  select(-region_key)
-
 unmapped_regions = sample_map_env %>%
-  filter(!is.na(region), is.na(study_system)) %>%
+  filter(is.na(study_system)) %>%
   distinct(region)
 
 if (nrow(unmapped_regions) > 0) {

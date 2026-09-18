@@ -21,7 +21,9 @@ The query is split into two stages that behave differently under repeated runs:
 - **Taxon resolution ("backbone")** -- resolving each hit taxon to a GBIF `usageKey` -- is the same regardless of study system, so it only runs once for the whole run, not once per system. Each sub-query (by scientific name, by epithet, by genus, by family) is checkpointed to its own file; if you re-run this script, any sub-query whose checkpoint file already exists is skipped rather than re-queried. This is what used to require manually re-running individual code chunks by hand when GBIF's servers hiccupped -- now you can just re-run the whole script and only the parts that didn't finish will re-query.
 - **Occurrence counting** is per system, and is checkpointed the same way, one file per system (`..._05_gbif_occ_data_<system>.csv`). Re-running the script picks up any systems that haven't finished yet and skips ones that have. You can run this script as many times as you need across a session (or multiple sessions) until every system has a checkpoint file.
 
-Both stages also retry transient GBIF failures automatically (see `with_retry` below) before giving up.
+Both stages also retry transient GBIF failures automatically (see `with_retry` below), with the wait between retries increasing linearly, before giving up.
+
+Occurrence downloads specifically also checkpoint the GBIF download request key itself (`..._05_gbif_download_key_<system>.txt`), separately from waiting on it. Waiting on a download commonly errors out well before the download is actually ready -- retrying that would otherwise submit a whole new download request each time, abandoning a perfectly good in-progress job. Instead, once a request is submitted its key is saved, and every subsequent wait attempt (including ones from a fresh run of this script) checks that same request rather than submitting a new one. If a download's job has genuinely failed rather than just being slow, delete its key file to force a fresh submission.
 
 The final "Process GBIF data" step builds a composite table from whichever per-system occurrence files exist *at the time it's run* -- so it's safe to run before every system has finished; it'll just reflect however many systems are done so far, and you can re-run it again later once the rest complete.
 
@@ -50,8 +52,11 @@ if (!file.exists(sample_map_file)) {
   stop("Sample map not found at: ", sample_map_file, "\nRun 03_sample_map.Rmd first.")
 }
 
+possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
+
 study_systems = read_csv(sample_map_file, show_col_types = FALSE) %>%
-  filter(!is.na(study_system)) %>%
+  filter(!is.na(study_system),
+         study_system %in% possible_study_systems) %>%
   distinct(study_system) %>%
   arrange(study_system) %>%
   pull(study_system)
@@ -64,19 +69,29 @@ backbone_file = function(label) here(run_dir, "output", paste0(config$run$name, 
 # checkpoint file path (occurrence counts, one per study system)
 occ_file = function(system) here(run_dir, "output", paste0(config$run$name, "_05_gbif_occ_data_", system, ".csv"))
 
+# checkpoint file path holding the GBIF download key for a pending/in-progress occurrence
+# download, one per study system -- lets a retry (or a re-run of this script) check the
+# existing download job instead of submitting a duplicate one (see the occurrence query chunk)
+download_key_file = function(system) here(run_dir, "output", paste0(config$run$name, "_05_gbif_download_key_", system, ".txt"))
+
 # composite output file (built from whichever per-system occurrence files exist so far)
 taxa_out_file = here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv"))
 
-# retry a GBIF call up to `attempts` times, waiting `wait_sec` between failures -- GBIF's
-# servers intermittently error/timeout regardless of query validity, so this replaces manually
-# re-running a chunk until it happens to succeed
-with_retry = function(expr_fn, label, attempts = 5, wait_sec = 30) {
+# retry a GBIF call up to `attempts` times, with the wait between failures increasing linearly
+# (attempt n waits n * wait_sec, capped at max_wait_sec) -- GBIF's servers intermittently
+# error/timeout regardless of query validity, so this replaces manually re-running a chunk
+# until it happens to succeed
+with_retry = function(expr_fn, label, attempts = 5, wait_sec = 30, max_wait_sec = Inf) {
   for (attempt in seq_len(attempts)) {
     result = tryCatch(list(ok = TRUE, value = expr_fn()),
                        error = function(e) list(ok = FALSE, error = e))
     if (result$ok) return(result$value)
     cat(sprintf("  [%s] attempt %d/%d failed: %s\n", label, attempt, attempts, conditionMessage(result$error)))
-    if (attempt < attempts) Sys.sleep(wait_sec)
+    if (attempt < attempts) {
+      sleep_time = min(wait_sec * attempt, max_wait_sec)
+      cat(sprintf("  [%s] waiting %ds before retrying...\n", label, sleep_time))
+      Sys.sleep(sleep_time)
+    }
   }
   stop(paste0(label, ": all ", attempts, " attempts failed"))
 }
@@ -158,7 +173,7 @@ if (file.exists(backbone_file("species_sn"))) {
     distinct()
 
   gbif_backbone_species_sn = with_retry(
-    function() name_backbone_checklist(gbif_query_species_sn, bucket_size = 3500, sleep = 10),
+    function() name_backbone_checklist(gbif_query_species_sn, bucket_size = 3500, sleep = 60),
     label = "backbone species (scientificName)"
   )
 
@@ -199,7 +214,7 @@ if (file.exists(backbone_file("species_e"))) {
     distinct()
 
   gbif_backbone_species_e = with_retry(
-    function() name_backbone_checklist(gbif_query_species_e, bucket_size = 100, sleep = 10),
+    function() name_backbone_checklist(gbif_query_species_e, bucket_size = 100, sleep = 60),
     label = "backbone species (specificEpithet)"
   )
 
@@ -238,7 +253,7 @@ if (file.exists(backbone_file("genus"))) {
     distinct()
 
   gbif_backbone_genus = with_retry(
-    function() name_backbone_checklist(gbif_query_genus, bucket_size = 1500, sleep = 10),
+    function() name_backbone_checklist(gbif_query_genus, bucket_size = 1500, sleep = 60),
     label = "backbone genus"
   )
 
@@ -272,7 +287,7 @@ if (file.exists(backbone_file("family"))) {
     distinct()
 
   gbif_backbone_family = with_retry(
-    function() name_backbone_checklist(gbif_query_family, bucket_size = 500, sleep = 10),
+    function() name_backbone_checklist(gbif_query_family, bucket_size = 500, sleep = 60),
     label = "backbone family"
   )
 
@@ -355,16 +370,35 @@ for (system in study_systems) {
     }
   }
 
-  # submit + wait + download + import as one retry unit -- if any part fails, resubmit fresh
+  # Submission and waiting are retried separately, and deliberately don't share a retry unit:
+  # occ_download_wait() commonly errors/times out on the status-check request well before the
+  # download itself is actually ready (the job keeps processing fine on GBIF's end regardless).
+  # If waiting and submitting were retried together, every one of those transient wait errors
+  # would resubmit a brand new download request -- abandoning a perfectly good in-progress job
+  # and needlessly reloading GBIF's queue. Instead, the request key is checkpointed to disk
+  # immediately after submission, and a retry (whether from with_retry below, or from
+  # re-running this script entirely in a new session) reuses that same key.
+  if (file.exists(download_key_file(system))) {
+    download_key = readLines(download_key_file(system), n = 1)
+    cat(paste0("\tResuming pending download request for '", system, "': ", download_key, "\n"))
+  } else {
+    download_key = as.character(with_retry(
+      function() occ_download(pred_and(.list = preds), format = "SIMPLE_CSV"),
+      label = paste0("occurrence download submission (", system, ")")
+    ))
+    writeLines(download_key, download_key_file(system))
+    cat(paste0("\tSubmitted download request for '", system, "': ", download_key, "\n"))
+  }
+
+  # wait + download + import as one retry unit, always against the same download_key -- a
+  # download can take a while to prepare, so this is patient (many attempts, linear backoff,
+  # capped per-attempt wait). If the underlying GBIF job has genuinely failed (not just a
+  # transient wait error) rather than just being slow, delete download_key_file() for this
+  # system to force a fresh submission on the next run.
   occ_data_raw = with_retry(function() {
-    download_submission = occ_download(
-      pred_and(.list = preds),
-      format = "SIMPLE_CSV"
-    )
+    occ_download_wait(download_key)
 
-    occ_download_wait(download_submission)
-
-    occ_download_file = occ_download_get(download_submission, path = here(run_dir, "output"), overwrite = TRUE)
+    occ_download_file = occ_download_get(download_key, path = here(run_dir, "output"), overwrite = TRUE)
     data = occ_download_import(occ_download_file)
 
     if (file.exists(as.character(occ_download_file))) {
@@ -372,7 +406,10 @@ for (system in study_systems) {
     }
 
     data
-  }, label = paste0("occurrence download (", system, ")"))
+  }, label = paste0("occurrence download wait/import (", system, ")"), attempts = 15, wait_sec = 20, max_wait_sec = 300)
+
+  # done -- clear the pending-download marker now that the job's data has been retrieved
+  file.remove(download_key_file(system))
 
   # clean, exact per-key counts — no facet, no hierarchy contamination
   occ_data_summary = occ_data_raw %>%
