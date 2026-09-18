@@ -18,10 +18,10 @@ Fill out the parameters below to point to the corresponding local directories an
 librarian::shelf(tidyverse, RPostgres, DBI, RIBBiTR-BII/ribbitrrr, here, janitor, aws.s3)
 
 # directory to copy files to
-destination_dir = here("16S_sequence_processing", "runs", "sierra_nevada_16s_2026-09-11", "sequences")
+destination_dir = here("16S_sequence_processing", "runs", "all_systems_16s_2026-09-17", "sequences")
 
 # system(s) of interest, any of: brazil, panama, pennsylvania, sierra_nevada, lab_controls (case sensitive)
-soi = c("sierra_nevada")
+soi = c("brazil", "panama", "pennsylvania", "sierra_nevada")
 
 # gene(s) of interest, any of: 12S, 16S
 gene = c("16S")
@@ -261,28 +261,83 @@ if (length(list.files(destination_dir)) > 0) {
   }
 }
 
-cat(paste0("Copying ", as.character(nrow(all_seqs_inventory)), " sequence files to destination directory from s3 server... "))
+cat(paste0("Copying ", as.character(nrow(all_seqs_inventory)), " sequence files to destination directory from s3 server...\n"))
 
-pb = txtProgressBar(min = 1, max = nrow(all_seqs_inventory), style = 3)
+# NOTE: parse_response = FALSE is important here. By default, aws.s3's save_object()
+# streams the download to disk via write_disk(), but its internal response handler
+# still re-reads the whole file back into memory afterward (to check for/parse an
+# XML error body). For a handful of small files this is invisible; for a bulk copy
+# of many/large files, that per-file re-buffering compounds and can exhaust RAM well
+# before disk space would. parse_response = FALSE skips that step, so each file is
+# only ever streamed to disk. The tradeoff is that aws.s3 will then also silently
+# write an S3 error body (e.g. on a 404) as if it were the file, so we verify size
+# and checksum against the inventory we already pulled, rather than trusting the
+# call to raise an error.
 
-for (ii in 1:length(all_seqs_inventory$sequencing_s3_filepath)) {
+pb = txtProgressBar(min = 0, max = nrow(all_seqs_inventory), style = 3)
+
+copy_results = vector("list", nrow(all_seqs_inventory))
+
+for (ii in seq_len(nrow(all_seqs_inventory))) {
   kk = all_seqs_inventory$sequencing_s3_filepath[ii]
-  save_object(
-    object = kk,
-    bucket = "ribbitr-edna-sequences",
-    key = Sys.getenv("aws_edna_access_key"),
-    secret = Sys.getenv("aws_edna_secret_access_key"),
-    region = "us-west-1",
-    file = file.path(destination_dir, basename(kk))
+  dest_file = file.path(destination_dir, basename(kk))
+
+  dl_error = tryCatch({
+    save_object(
+      object = kk,
+      bucket = "ribbitr-edna-sequences",
+      key = Sys.getenv("aws_edna_access_key"),
+      secret = Sys.getenv("aws_edna_secret_access_key"),
+      region = "us-west-1",
+      file = dest_file,
+      parse_response = FALSE
+    )
+    NA_character_
+  }, error = function(e) conditionMessage(e))
+
+  expected_size = as.numeric(all_seqs_inventory$size[ii])
+  expected_etag = gsub('"', '', all_seqs_inventory$e_tag[ii])
+  actual_size = if (is.na(dl_error) && file.exists(dest_file)) file.info(dest_file)$size else NA_real_
+  size_match = isTRUE(actual_size == expected_size)
+
+  # a multipart-uploaded object's ETag is a composite hash, not the whole-file MD5,
+  # so checksum verification only applies to single-part uploads (ETag has no "-")
+  checksum_checked = is.na(dl_error) && size_match && !grepl("-", expected_etag, fixed = TRUE)
+  checksum_match = if (checksum_checked) identical(unname(tools::md5sum(dest_file)), expected_etag) else NA
+
+  copy_results[[ii]] = tibble(
+    sequencing_s3_filepath = kk,
+    dest_file = dest_file,
+    dl_error = dl_error,
+    expected_size = expected_size,
+    actual_size = actual_size,
+    size_match = size_match,
+    checksum_checked = checksum_checked,
+    checksum_match = checksum_match
   )
+
   setTxtProgressBar(pb, ii)
 }
 
-cat("\ndone.")
+copy_results = bind_rows(copy_results)
+
+copy_failures = copy_results %>%
+  filter(!is.na(dl_error) | !size_match | (checksum_checked & !checksum_match))
+
+cat("\ndone.\n")
+
+if (nrow(copy_failures) > 0) {
+  cat(paste0(nrow(copy_failures), " file(s) failed to copy correctly (download error, size mismatch, or checksum mismatch). See `copy_failures` for details.\n"))
+} else {
+  cat("All files copied successfully; size verified for all, checksum verified for single-part uploads.\n")
+}
 ```
 
 # copied files check
 ```{r}
+# `copy_failures` (from the previous chunk) is the authoritative per-file
+# size/checksum check. This is a secondary, coarser check based only on
+# which filenames exist in the destination directory.
 dest_dir_files_raw = tibble(absolute_filepath = c(list.files(destination_dir, full.names = FALSE, recursive = TRUE))) %>%
   mutate(filename = basename(absolute_filepath))
 
