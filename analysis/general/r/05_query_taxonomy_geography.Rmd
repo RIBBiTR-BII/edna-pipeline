@@ -312,6 +312,12 @@ gbif_backbone_key = bind_rows(gbif_backbone_key_species,
 
 valid_keys = unique(na.omit(gbif_backbone_key$usageKey))
 
+# usageKey as character from here on, to join cleanly against occ_data_summary's usageKey
+# below (itself character, since it round-trips through a checkpoint CSV) -- computed after
+# valid_keys above, which GBIF's API predicate expects as numeric keys
+gbif_backbone_key = gbif_backbone_key %>%
+  mutate(usageKey = as.character(usageKey))
+
 cat("Backbone resolution done:", length(valid_keys), "valid GBIF keys.\n")
 ```
 
