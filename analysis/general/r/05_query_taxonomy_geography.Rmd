@@ -398,12 +398,26 @@ for (system in study_systems) {
   occ_data_raw = with_retry(function() {
     occ_download_wait(download_key)
 
-    occ_download_file = occ_download_get(download_key, path = here(run_dir, "output"), overwrite = TRUE)
-    data = occ_download_import(occ_download_file)
+    # overwrite = FALSE (the default) is deliberate: if the zip is already on disk from an
+    # earlier attempt (e.g. the read below failed/crashed after a slow multi-GB download
+    # succeeded), reuse it instead of re-downloading
+    occ_download_file = as.character(occ_download_get(download_key, path = here(run_dir, "output"), overwrite = FALSE))
 
-    if (file.exists(as.character(occ_download_file))) {
-      file.remove(as.character(occ_download_file))
-    }
+    # occ_download_import() would unzip the whole file to disk and load every column of every
+    # occurrence row into memory -- for a system with many millions of occurrences (e.g.
+    # Pennsylvania) that alone can exhaust available RAM (and the on-disk unzip step can fail
+    # outright under memory/disk pressure). All we actually need is taxonKey, to count
+    # occurrences per taxon below, so read just that one column straight out of the zip
+    # (GBIF's SIMPLE_CSV format is tab-delimited despite the name) without ever extracting or
+    # materializing the rest of the file.
+    zip_contents = utils::unzip(occ_download_file, list = TRUE)
+    data_entry = zip_contents$Name[which.max(zip_contents$Length)]
+
+    data = readr::read_tsv(unz(occ_download_file, data_entry),
+                           col_types = readr::cols_only(taxonKey = readr::col_double()),
+                           show_col_types = FALSE)
+
+    file.remove(occ_download_file)
 
     data
   }, label = paste0("occurrence download wait/import (", system, ")"), attempts = 15, wait_sec = 20, max_wait_sec = 300)
