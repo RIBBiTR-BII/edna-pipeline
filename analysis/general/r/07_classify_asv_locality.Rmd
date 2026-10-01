@@ -1,0 +1,540 @@
+---
+title: "Classify ASV locality"
+author: "Cob Staines"
+output: html_document
+---
+
+# Description
+
+This script assesses, for each study system an ASV was detected in, whether its classified taxonomy (script 06) is expected locally -- i.e. whether a detection looks like a real local occurrence or like contamination (cross-system spillover, lab, or anthropogenic DNA).
+
+This script **only flags, it drops nothing**. Filtering reads on the basis of these flags is left to script 08. Output is one row per (asv_id, study_system) for every system whose field samples (field negatives included) contain the ASV.
+
+Two independent lines of evidence are reported side by side:
+
+**Locality (GBIF)** -- occurrence counts for the accepted taxon at its accepted rank, in each system (script 05). `local_status` is one of (in order of precedence):
+
+- `anthropogenic`: taxon listed in `anthropogenic_taxa` (config), regardless of GBIF
+- `local`: accepted taxon recorded in this system (or listed in `local_overrides` for this system)
+- `other_system`: not recorded in this system, but recorded in another system in the run -- a likely cross-system contaminant
+- `local_genus_only`: species not recorded in this system (or not resolved by GBIF), but its genus is -- a GBIF gap, split, or cryptic species?
+- `not_in_run`: not recorded in any system in the run -- lab/reagent contamination, or a GBIF gap
+- `unassessable`: no classification at species/genus/family rank, not Metazoa, or no GBIF data
+
+For 2-way ties from script 06 (`A/B`), each candidate is assessed and the most local status is kept.
+
+**Reads** -- how the ASV is distributed across samples and systems. Raw read share is biased by sequencing effort (systems have very different sample counts), so evidence is based on within-sample relative abundance (ASV reads / sample reads):
+
+- `detection_rate`: fraction of the system's samples in which the ASV was detected (per sample, since detection varies substantially between field replicates; `n_sites_detected` is reported alongside)
+- `rel_abund_max`, `rel_abund_median`: within-sample relative abundance across detected samples in the system. Cross-contamination / tag-jumping tends to appear at trace relative abundance.
+- `rel_abund_mean`: mean relative abundance across *all* of the system's samples (zeros included), used to compare systems: `norm_share` (share of the ASV's summed `rel_abund_mean` across systems), `dominant_system`, and `log10_ratio_to_dominant` (0 in the dominant system).
+
+Field negatives are pooled with field samples (their DNA is field-derived), and also reported separately. Lab controls (PCR/extraction controls and the `lab_control` pseudo-system) are excluded from the evidence and reported as descriptive columns only.
+
+`review_case` tags the ambiguous rows, where the two lines of evidence disagree (see plots below), using the reference thresholds `locality_min_rel_abund` and `locality_log_ratio_cutoff` from the config:
+
+- `other_system_abundant`: GBIF says the taxon belongs to another system, but reads look real here (non-trace, and not dwarfed by the dominant system)
+- `local_trace`: GBIF says local, but the detection looks like spillover from another dominant system (trace, and far below the dominant system)
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, here, plotly)
+
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R); this is read
+# directly so the same values apply whether this script is run manually or via the driver
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
+
+# import run config file
+run_dir = here(pipeline_config$run_dir)
+cat(paste0("Run_dir: ", run_dir, "\n"))
+
+# read in config file
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+# reference thresholds (plot lines and review_case tags only -- nothing is filtered here)
+locality_min_rel_abund = pipeline_config$locality_min_rel_abund
+locality_log_ratio_cutoff = pipeline_config$locality_log_ratio_cutoff
+
+# manual status overrides ("Genus species" or "Genus")
+anthropogenic_taxa = unlist(pipeline_config$anthropogenic_taxa)
+local_overrides = pipeline_config$local_overrides
+
+# synonymous species names, applied the same way as in script 06 so accepted names match GBIF lookups
+species_synonyms = pipeline_config$species_synonyms
+
+apply_species_synonyms = function(x, synonym_list) {
+  for (canonical in names(synonym_list)) {
+    x[x %in% synonym_list[[canonical]]] = canonical
+  }
+  x
+}
+
+# max ignoring NA, NA (not -Inf) when all values are NA
+max_or_na = function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+
+possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
+
+tax_ranks = c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")
+
+# precedence when combining tie candidates (first = kept)
+status_levels = c("anthropogenic", "local", "other_system", "local_genus_only", "not_in_run", "unassessable")
+
+# input files
+sample_map_file = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
+gbif_file = here(run_dir, "output", paste0(config$run$name, "_05_taxonomy_table_gbif_occ.csv"))
+classification_file = here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv"))
+
+# output file
+locality_out = here(run_dir, "output", paste0(config$run$name, "_07_asv_locality.csv"))
+```
+
+# Load data
+```{r}
+sample_map = read_csv(sample_map_file, show_col_types = FALSE)
+
+asv_classification = read_csv(classification_file, show_col_types = FALSE)
+
+feature_table =
+  read_tsv(here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "sample_table/feature-table.tsv"),
+           skip = 1, show_col_types = FALSE) %>%
+  as.data.frame() %>%
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+# per-system GBIF occurrence counts (script 05), if run
+if (file.exists(gbif_file)) {
+  taxa_geography = read_csv(gbif_file, show_col_types = FALSE) %>%
+    filter(!is.na(accession)) %>%
+    mutate(specificEpithet = apply_species_synonyms(specificEpithet, species_synonyms))
+} else {
+  cat("No GBIF occurrence table found (script 05), all ASVs will be unassessable by GBIF.\n")
+  taxa_geography = tibble(study_system = character(), family = character(), genus = character(),
+                          specificEpithet = character(), gbif_count_family_local = numeric(),
+                          gbif_count_genus_local = numeric(), gbif_count_species_local = numeric())
+}
+```
+
+# Read evidence
+```{r}
+# classify each sample: evidence pool (field samples + field negatives, per system) vs lab controls
+sample_class = sample_map %>%
+  transmute(feature_id,
+            study_system,
+            site,
+            sample_class = case_when(
+              pcr_control %in% TRUE | extraction_negative_control %in% TRUE | study_system %in% "lab_control" ~ "lab_control",
+              !(study_system %in% possible_study_systems) ~ "unknown",
+              field_negative_control %in% TRUE ~ "field_negative",
+              .default = "field_sample"))
+
+# within-sample relative abundance (samples with zero reads are dropped)
+feature_long = feature_table %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "feature_id",
+               values_to = "reads") %>%
+  group_by(feature_id) %>%
+  mutate(sample_reads = sum(reads)) %>%
+  ungroup() %>%
+  filter(sample_reads > 0) %>%
+  mutate(rel_abund = reads / sample_reads) %>%
+  left_join(sample_class, by = "feature_id")
+
+unmapped_samples = feature_long %>%
+  filter(is.na(sample_class) | sample_class == "unknown") %>%
+  distinct(feature_id) %>%
+  pull(feature_id)
+
+if (length(unmapped_samples) > 0) {
+  cat("NOTE: excluding", length(unmapped_samples), "sample(s) with no known study system:\n\t",
+      paste(unmapped_samples, collapse = "\n\t"), "\n")
+}
+
+feature_pool = feature_long %>%
+  filter(sample_class %in% c("field_sample", "field_negative"))
+
+# samples/sites per system (denominators)
+system_sizes = feature_pool %>%
+  distinct(study_system, feature_id, site) %>%
+  group_by(study_system) %>%
+  summarise(n_samples = n_distinct(feature_id),
+            n_sites = n_distinct(site, na.rm = TRUE),
+            .groups = "drop")
+
+print(system_sizes)
+
+# per (asv_id, study_system) evidence
+read_evidence = feature_pool %>%
+  filter(reads > 0) %>%
+  group_by(asv_id, study_system) %>%
+  summarise(reads = sum(reads),
+            n_samples_detected = n(),
+            n_sites_detected = n_distinct(site, na.rm = TRUE),
+            rel_abund_max = max(rel_abund),
+            rel_abund_median = median(rel_abund),
+            rel_abund_sum = sum(rel_abund),
+            n_field_neg_detected = sum(sample_class == "field_negative"),
+            field_neg_rel_abund_max = max_or_na(rel_abund[sample_class == "field_negative"]),
+            .groups = "drop") %>%
+  left_join(system_sizes, by = "study_system") %>%
+  mutate(detection_rate = n_samples_detected / n_samples,
+         rel_abund_mean = rel_abund_sum / n_samples) %>%
+  select(-rel_abund_sum) %>%
+  group_by(asv_id) %>%
+  mutate(n_systems_detected = n(),
+         systems_detected = paste(sort(study_system), collapse = ";"),
+         norm_share = rel_abund_mean / sum(rel_abund_mean),
+         dominant_system = study_system[which.max(rel_abund_mean)],
+         log10_ratio_to_dominant = log10(rel_abund_mean / max(rel_abund_mean))) %>%
+  ungroup()
+
+# lab controls, run-wide per ASV (descriptive only)
+lab_control_evidence = feature_long %>%
+  filter(sample_class == "lab_control",
+         reads > 0) %>%
+  group_by(asv_id) %>%
+  summarise(lab_control_n_detected = n(),
+            lab_control_max_reads = max(reads),
+            lab_control_rel_abund_max = max(rel_abund),
+            .groups = "drop")
+```
+
+# GBIF locality
+```{r}
+# accepted taxonomy per ASV, one row per candidate (2-way ties "A/B" from script 06 are split
+# into their two candidates; non-tied ASVs have a single candidate)
+split_candidate = function(x, i) {
+  na_if(if_else(str_detect(x, "/"), str_split_i(x, "/", i), x), "NA")
+}
+
+classification_candidates = map_dfr(1:2, function(i) {
+  asv_classification %>%
+    select(asv_id, accept_method, taxonomic_rank, all_of(tax_ranks)) %>%
+    mutate(across(all_of(tax_ranks), \(x) split_candidate(x, i)),
+           candidate = i)
+}) %>%
+  distinct(across(-candidate), .keep_all = TRUE) %>%
+  # accepted species may carry an intraspecific epithet; GBIF lookups are by specific epithet
+  mutate(specificEpithet = word(species, 1))
+
+# per-system GBIF counts for each rank (NA = name not resolved by GBIF)
+gbif_species = taxa_geography %>%
+  filter(!is.na(specificEpithet), !is.na(gbif_count_species_local)) %>%
+  group_by(study_system, family, genus, specificEpithet) %>%
+  summarise(gbif_count_species = max(gbif_count_species_local), .groups = "drop")
+
+gbif_genus = taxa_geography %>%
+  filter(!is.na(genus), !is.na(gbif_count_genus_local)) %>%
+  group_by(study_system, family, genus) %>%
+  summarise(gbif_count_genus = max(gbif_count_genus_local), .groups = "drop")
+
+gbif_family = taxa_geography %>%
+  filter(!is.na(family), !is.na(gbif_count_family_local)) %>%
+  group_by(study_system, family) %>%
+  summarise(gbif_count_family = max(gbif_count_family_local), .groups = "drop")
+
+gbif_systems = sort(unique(taxa_geography$study_system))
+
+# every candidate x every system with GBIF data, with counts in that system and in the run's
+# other systems at each rank
+candidate_gbif = classification_candidates %>%
+  crossing(study_system = gbif_systems) %>%
+  left_join(gbif_species, by = c("study_system", "family", "genus", "specificEpithet")) %>%
+  left_join(gbif_genus, by = c("study_system", "family", "genus")) %>%
+  left_join(gbif_family, by = c("study_system", "family")) %>%
+  group_by(asv_id, candidate) %>%
+  mutate(n_other_species = sum(gbif_count_species > 0, na.rm = TRUE) - (gbif_count_species > 0 & !is.na(gbif_count_species)),
+         n_other_genus = sum(gbif_count_genus > 0, na.rm = TRUE) - (gbif_count_genus > 0 & !is.na(gbif_count_genus)),
+         n_other_family = sum(gbif_count_family > 0, na.rm = TRUE) - (gbif_count_family > 0 & !is.na(gbif_count_family)),
+         systems_species_recorded = paste(sort(study_system[gbif_count_species > 0 & !is.na(gbif_count_species)]), collapse = ";"),
+         systems_genus_recorded = paste(sort(study_system[gbif_count_genus > 0 & !is.na(gbif_count_genus)]), collapse = ";"),
+         systems_family_recorded = paste(sort(study_system[gbif_count_family > 0 & !is.na(gbif_count_family)]), collapse = ";")) %>%
+  ungroup() %>%
+  select(asv_id, candidate, study_system, gbif_count_species, gbif_count_genus, gbif_count_family,
+         n_other_species, n_other_genus, n_other_family,
+         systems_species_recorded, systems_genus_recorded, systems_family_recorded)
+
+# does a candidate match a "Genus species" / "Genus" list?
+matches_taxa_list = function(genus, specificEpithet, taxa_list) {
+  if (length(taxa_list) == 0) return(rep(FALSE, length(genus)))
+  (genus %in% taxa_list) | (paste(genus, specificEpithet) %in% taxa_list)
+}
+
+# assess each (asv_id, study_system, candidate)
+locality_candidates = read_evidence %>%
+  select(asv_id, study_system) %>%
+  left_join(classification_candidates, by = "asv_id", relationship = "many-to-many") %>%
+  left_join(candidate_gbif, by = c("asv_id", "candidate", "study_system")) %>%
+  rowwise() %>%
+  mutate(local_override = matches_taxa_list(genus, specificEpithet, unlist(local_overrides[[study_system]]))) %>%
+  ungroup() %>%
+  mutate(anthropogenic = matches_taxa_list(genus, specificEpithet, anthropogenic_taxa),
+         # rank the GBIF assessment is made at: the accepted rank, or genus when an accepted species
+         # was not resolved by GBIF
+         gbif_assessed_rank = case_when(
+           !(kingdom %in% "Metazoa") ~ NA_character_,
+           taxonomic_rank == "species" & !is.na(gbif_count_species) ~ "species",
+           taxonomic_rank == "species" & !is.na(gbif_count_genus) ~ "genus",
+           taxonomic_rank == "genus" & !is.na(gbif_count_genus) ~ "genus",
+           taxonomic_rank == "family" & !is.na(gbif_count_family) ~ "family",
+           .default = NA_character_),
+         gbif_count_here = case_when(
+           gbif_assessed_rank == "species" ~ gbif_count_species,
+           gbif_assessed_rank == "genus" ~ gbif_count_genus,
+           gbif_assessed_rank == "family" ~ gbif_count_family),
+         n_other_systems = case_when(
+           gbif_assessed_rank == "species" ~ n_other_species,
+           gbif_assessed_rank == "genus" ~ n_other_genus,
+           gbif_assessed_rank == "family" ~ n_other_family),
+         systems_recorded = case_when(
+           gbif_assessed_rank == "species" ~ systems_species_recorded,
+           gbif_assessed_rank == "genus" ~ systems_genus_recorded,
+           gbif_assessed_rank == "family" ~ systems_family_recorded),
+         systems_recorded = na_if(systems_recorded, ""),
+         # species accepted but assessed at genus (not resolved by GBIF) -> at best local_genus_only
+         species_fell_back = taxonomic_rank == "species" & gbif_assessed_rank %in% "genus",
+         local_status = case_when(
+           anthropogenic ~ "anthropogenic",
+           local_override ~ "local",
+           is.na(gbif_assessed_rank) ~ "unassessable",
+           gbif_count_here > 0 & !species_fell_back ~ "local",
+           gbif_count_here > 0 & species_fell_back ~ "local_genus_only",
+           n_other_systems > 0 ~ "other_system",
+           gbif_assessed_rank == "species" & gbif_count_genus > 0 & !is.na(gbif_count_genus) ~ "local_genus_only",
+           .default = "not_in_run"),
+         local_status_source = case_when(
+           anthropogenic ~ "anthropogenic_taxa",
+           local_override ~ "local_overrides",
+           local_status == "unassessable" ~ NA_character_,
+           .default = "gbif"),
+         local_status = factor(local_status, levels = status_levels))
+
+# keep the most local candidate per (asv_id, study_system)
+locality_gbif = locality_candidates %>%
+  group_by(asv_id, study_system) %>%
+  mutate(n_candidates = n_distinct(candidate)) %>%
+  arrange(local_status, candidate, .by_group = TRUE) %>%
+  slice_head(n = 1) %>%
+  ungroup() %>%
+  select(asv_id, study_system, local_status, local_status_source, gbif_assessed_rank,
+         gbif_count_here, n_other_systems, systems_recorded, n_candidates)
+
+print(count(locality_gbif, local_status))
+```
+
+# Combine
+```{r}
+asv_locality = read_evidence %>%
+  left_join(locality_gbif, by = c("asv_id", "study_system")) %>%
+  left_join(asv_classification %>%
+              select(asv_id, accept_method, taxonomic_rank, all_of(tax_ranks)),
+            by = "asv_id") %>%
+  left_join(lab_control_evidence, by = "asv_id") %>%
+  mutate(local_status = replace_na(as.character(local_status), "unassessable"),
+         n_candidates = replace_na(n_candidates, 0),
+         in_lab_controls = !is.na(lab_control_n_detected),
+         lab_control_n_detected = replace_na(lab_control_n_detected, 0),
+         is_dominant = study_system == dominant_system,
+         review_case = case_when(
+           local_status == "other_system" &
+             rel_abund_max >= locality_min_rel_abund &
+             log10_ratio_to_dominant >= locality_log_ratio_cutoff ~ "other_system_abundant",
+           local_status == "local" &
+             !is_dominant &
+             rel_abund_max < locality_min_rel_abund &
+             log10_ratio_to_dominant < locality_log_ratio_cutoff ~ "local_trace",
+           .default = NA_character_),
+         taxon_label = coalesce(if_else(!is.na(species), paste(genus, species), NA_character_),
+                                genus, family, order, class, phylum, kingdom, domain, "unclassified")) %>%
+  select(asv_id,
+         study_system,
+         local_status,
+         local_status_source,
+         review_case,
+         taxon_label,
+         accept_method,
+         taxonomic_rank,
+         all_of(tax_ranks),
+         gbif_assessed_rank,
+         gbif_count_here,
+         n_other_systems,
+         systems_recorded,
+         n_candidates,
+         reads,
+         n_samples,
+         n_samples_detected,
+         detection_rate,
+         n_sites,
+         n_sites_detected,
+         rel_abund_max,
+         rel_abund_median,
+         rel_abund_mean,
+         norm_share,
+         is_dominant,
+         dominant_system,
+         log10_ratio_to_dominant,
+         n_systems_detected,
+         systems_detected,
+         n_field_neg_detected,
+         field_neg_rel_abund_max,
+         in_lab_controls,
+         lab_control_n_detected,
+         lab_control_max_reads,
+         lab_control_rel_abund_max) %>%
+  arrange(asv_id, study_system)
+
+print(count(asv_locality, local_status))
+print(count(asv_locality, review_case))
+
+write_csv(asv_locality, locality_out)
+```
+
+# Visualize
+
+Plots to help pick the thresholds script 08 will filter on. Dashed lines mark the current reference thresholds (`locality_min_rel_abund`, `locality_log_ratio_cutoff`). Hover over any mark for its ASV, taxon, and evidence.
+
+```{r}
+# status palette: the three statuses that drive threshold decisions get distinct hues; the rest
+# are muted gray, distinguished by shape
+status_colors = c(local = "#2a78d6",
+                  other_system = "#eb6834",
+                  not_in_run = "#1baf7a",
+                  local_genus_only = "#8c8b86",
+                  anthropogenic = "#8c8b86",
+                  unassessable = "#c3c2bd")
+
+status_shapes = c(local = 16,
+                  other_system = 16,
+                  not_in_run = 16,
+                  local_genus_only = 1,
+                  anthropogenic = 17,
+                  unassessable = 4)
+
+status_codes = c(local = "L",
+                 other_system = "O",
+                 not_in_run = "N",
+                 local_genus_only = "G",
+                 anthropogenic = "A",
+                 unassessable = "U")
+
+plot_data = asv_locality %>%
+  mutate(local_status = factor(local_status, levels = status_levels),
+         hover = paste0(taxon_label, " (", coalesce(taxonomic_rank, "unclassified"), ")",
+                        "<br>asv: ", asv_id,
+                        "<br>system: ", study_system, " | status: ", local_status,
+                        "<br>GBIF recorded in: ", coalesce(systems_recorded, "none"),
+                        "<br>detected ", n_samples_detected, "/", n_samples, " samples, ",
+                        n_sites_detected, " sites",
+                        "<br>rel. abund. max: ", signif(rel_abund_max, 2),
+                        " | log10 ratio to dominant (", dominant_system, "): ", round(log10_ratio_to_dominant, 2),
+                        if_else(in_lab_controls, "<br>in lab controls", "")))
+
+theme_locality = theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank(),
+        panel.grid.major = element_line(color = "#e6e5e0", linewidth = 0.3),
+        strip.text = element_text(face = "bold", hjust = 0))
+```
+
+## Shared ASVs across systems
+
+Each row is an ASV detected in more than one system, grouped by its dominant system. Fill is the ASV's share of (sequencing-effort-normalized) relative abundance in each system; letters are `local_status` (L local, O other_system, G local_genus_only, N not_in_run, A anthropogenic, U unassessable). Look for rows with one dark cell and pale cells marked O or N elsewhere.
+```{r fig.width=9, fig.height=12}
+shared = plot_data %>%
+  filter(n_systems_detected > 1) %>%
+  mutate(row_label = paste0(taxon_label, " [", substr(asv_id, 1, 6), "]"))
+
+row_order = shared %>%
+  filter(is_dominant) %>%
+  arrange(dominant_system, class, order, family, genus, species, desc(rel_abund_mean)) %>%
+  pull(row_label)
+
+shared = shared %>%
+  mutate(row_label = factor(row_label, levels = rev(unique(row_order))),
+         study_system = factor(study_system, levels = possible_study_systems),
+         status_code = status_codes[as.character(local_status)])
+
+p_shared = ggplot(shared, aes(x = study_system, y = row_label, text = hover)) +
+  geom_tile(aes(fill = log10(norm_share)), color = "white", linewidth = 0.5) +
+  geom_text(aes(label = status_code,
+                color = norm_share > 0.1),
+            size = 2.6) +
+  scale_fill_gradient(low = "#cde2fb", high = "#0d366b", name = "log10 share") +
+  scale_color_manual(values = c(`TRUE` = "#ffffff", `FALSE` = "#0b0b0b"), guide = "none") +
+  scale_x_discrete(position = "top", drop = FALSE) +
+  labs(x = NULL, y = NULL) +
+  theme_locality +
+  theme(panel.grid.major = element_blank(),
+        axis.text.y = element_text(size = 6))
+
+ggplotly(p_shared, tooltip = "text", height = max(600, 14 * n_distinct(shared$row_label)))
+```
+
+## Detection rate vs. relative abundance, by system
+
+One mark per (ASV, system). Likely contamination sits bottom-left (rare, trace). Confusing cases: `other_system` (orange) in the upper right -- GBIF says not local, but reads look real; `local` (blue) in the lower left of a system that isn't dominant for the ASV.
+```{r fig.width=10, fig.height=8}
+p_scatter = ggplot(plot_data, aes(x = detection_rate, y = rel_abund_max,
+                                  color = local_status, shape = local_status, text = hover)) +
+  geom_hline(yintercept = locality_min_rel_abund, linetype = "dashed", color = "#52514e", linewidth = 0.4) +
+  geom_point(size = 2, alpha = 0.8) +
+  scale_x_log10() +
+  scale_y_log10() +
+  scale_color_manual(values = status_colors, drop = FALSE) +
+  scale_shape_manual(values = status_shapes, drop = FALSE) +
+  facet_wrap(~ study_system) +
+  labs(x = "detection rate (fraction of samples)",
+       y = "max within-sample relative abundance",
+       color = "local_status", shape = "local_status") +
+  theme_locality
+
+ggplotly(p_scatter, tooltip = "text")
+```
+
+## Calibration: `local` vs. `other_system` in non-dominant systems
+
+For ASVs detected in more than one system, the detections outside the ASV's dominant system, split by GBIF status. If spillover explains the `other_system` detections, they should sit left of the `local` ones on both metrics -- a threshold is defensible where the two distributions separate.
+```{r fig.width=10, fig.height=6}
+calibration = plot_data %>%
+  filter(n_systems_detected > 1,
+         !is_dominant,
+         local_status %in% c("local", "other_system", "not_in_run")) %>%
+  transmute(asv_id, local_status, hover,
+            `log10 ratio to dominant system` = log10_ratio_to_dominant,
+            `log10 max relative abundance` = log10(rel_abund_max)) %>%
+  pivot_longer(cols = c(`log10 ratio to dominant system`, `log10 max relative abundance`),
+               names_to = "metric", values_to = "value")
+
+thresholds = tibble(metric = c("log10 ratio to dominant system", "log10 max relative abundance"),
+                    value = c(locality_log_ratio_cutoff, log10(locality_min_rel_abund)))
+
+p_calibration = ggplot(calibration, aes(x = value, fill = local_status)) +
+  geom_histogram(bins = 40, color = "white", linewidth = 0.2) +
+  geom_vline(data = thresholds, aes(xintercept = value),
+             linetype = "dashed", color = "#52514e", linewidth = 0.4) +
+  scale_fill_manual(values = status_colors) +
+  facet_grid(local_status ~ metric, scales = "free") +
+  labs(x = NULL, y = "(ASV, system) detections") +
+  theme_locality +
+  theme(legend.position = "none")
+
+ggplotly(p_calibration)
+```
+
+## Cases to review
+
+Rows where GBIF and read evidence disagree at the current reference thresholds (`review_case`).
+```{r}
+asv_locality %>%
+  filter(!is.na(review_case)) %>%
+  arrange(review_case, study_system, desc(rel_abund_max)) %>%
+  transmute(review_case,
+            study_system,
+            taxon = taxon_label,
+            asv = substr(asv_id, 1, 8),
+            recorded_in = systems_recorded,
+            dominant = dominant_system,
+            detected = paste0(n_samples_detected, "/", n_samples),
+            rel_abund_max = signif(rel_abund_max, 2),
+            log10_ratio = round(log10_ratio_to_dominant, 2),
+            lab_ctrl = in_lab_controls) %>%
+  knitr::kable()
+```

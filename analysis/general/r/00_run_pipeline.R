@@ -5,8 +5,8 @@
 # Script 03 (sample map) runs first, since script 05 (GBIF query) needs its study_system
 # column to know which system(s) are present in the run. Script 05 only runs when
 # 00_pipeline_config.yml sets gbif_query: true.
-# Note: script 07 (per-ASV home-system / contamination detection, feeding into script 08's
-# controls) is planned but not yet implemented -- the driver skips straight from 06 to 08.
+# Script 07 (per-ASV x system locality flags) only flags -- its plots are for choosing script 08's
+# filtering thresholds, so knit it manually to view them (the driver's HTML output is discarded).
 #
 # Each script's own write_csv()/write.csv() calls save the actual pipeline outputs to
 # run_dir/output as usual. Knitting still produces a throwaway HTML doc per script (that's
@@ -40,6 +40,7 @@ if (isTRUE(run_config$gbif_query)) {
 }
 
 render_step("06_classify_asv.Rmd")
+render_step("07_classify_asv_locality.Rmd")
 render_step("08_sample_controls.Rmd")
 render_step("09_export_results.Rmd")
 

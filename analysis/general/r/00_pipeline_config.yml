@@ -14,6 +14,11 @@ json_blast_results_file: "web_blast_results"
 # 03_sample_map.Rmd and 05_query_taxonomy_geography.Rmd)
 gbif_query: true
 
+# minimum GBIF occurrence count (max across the run's systems) for a genus / family to count as
+# "in-run" in the genus / family `_inrun` accept methods (script 06)
+inrun_genus_min_occ: 20
+inrun_family_min_occ: 50
+
 # minimum p_identical (against the local contaminant library) for a hit to flag an ASV as a
 # likely contaminant (script 06)
 contaminant_identity_cutoff: 0.98
@@ -33,6 +38,36 @@ species_synonyms:
     - regilla
     - hypochondriaca
     - sierra
+
+# locality classification (script 07) -- 07 only flags, these two thresholds are drawn as
+# reference lines on 07's plots (and used to tag `review_case`) to help pick values for script 08
+# minimum within-sample relative abundance (ASV reads / sample reads) considered non-trace
+locality_min_rel_abund: 0.001
+# log10 ratio of an ASV's mean relative abundance in a system to that in its dominant system,
+# below which a detection looks like spillover from the dominant system
+locality_log_ratio_cutoff: -2
+
+# taxa commonly introduced by people (food, pets, handling) -- flagged `anthropogenic` in script 07
+# regardless of GBIF records. "Genus species" or "Genus".
+anthropogenic_taxa:
+  - Homo sapiens
+  - Bos taurus
+  - Sus scrofa
+  - Gallus gallus
+  - Meleagris gallopavo
+  - Ovis aries
+  - Capra hircus
+  - Equus caballus
+  - Canis lupus
+  - Felis catus
+
+# taxa known to occur in a study system but missing from its GBIF records -- flagged `local` in
+# script 07 regardless of GBIF. study_system -> list of "Genus species" or "Genus".
+local_overrides:
+  brazil: []
+  panama: []
+  pennsylvania: []
+  sierra_nevada: []
 
 # ASV control threshold factor for field contaminants (script 08)
 asv_control_th_factor: 100

@@ -60,7 +60,7 @@ if (file_test("-d", json_blast_results_file)) {
 
 extract_json_results = function(file_in) {
   json_blast_result = fromJSON(file_in)
-  search_result = json_blast_results$BlastOutput2$report$results$search
+  json_blast_result$BlastOutput2$report$results$search
 }
 
 # strip hit taxa

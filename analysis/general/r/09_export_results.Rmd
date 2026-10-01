@@ -80,9 +80,9 @@ asv_out = asv_controlled %>%
          species,
          n_hits,
          p_identical_max,
-         gbif_count_family_local,
-         gbif_count_genus_local,
-         gbif_count_species_local) %>%
+         gbif_count_family_inrun,
+         gbif_count_genus_inrun,
+         gbif_count_species_inrun) %>%
   arrange(feature_id,
           desc(asv_reads_controlled))
 
