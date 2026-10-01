@@ -137,6 +137,78 @@ all_taxids = unique(all_hits$taxid)
 cat("Querying NCBI taxa...\n")
 ncbi_taxa = classification(all_taxids, db = "ncbi")  # **
 
+# Some lookups come back NA (with a "Giving up on query after 3 tries" warning). Besides transient
+# NCBI failures, taxize marks any response containing the text "error" as failed -- so a batch
+# containing e.g. Andinoacara rivulatus (common name "green terror") fails every time, taking the
+# rest of its 50-taxid batch with it. Retry failed taxids with fetch_ncbi_lineage() below, which
+# queries NCBI directly and only fails on real HTTP/XML errors, with an increasing wait. Taxids
+# with no ranked lineage (e.g. synthetic constructs) still return a data frame, so only genuine
+# failures are retried. Stop rather than continue, since a failed lookup silently strips taxonomy
+# from every hit to that taxid.
+
+# lineage for each taxid, in the same format as taxize::classification(db = "ncbi"): a data frame
+# of name/rank/id per taxid (full lineage, then the taxon itself), NA where NCBI returned nothing
+fetch_ncbi_lineage = function(taxids, chunk_size = 100) {
+  taxids = as.character(taxids)
+  out = rep(list(NA), length(taxids))
+  names(out) = taxids
+
+  for (chunk in split(taxids, ceiling(seq_along(taxids) / chunk_size))) {
+    doc = xml2::read_xml(paste0("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=taxonomy",
+                                "&id=", paste(chunk, collapse = ","),
+                                "&api_key=", Sys.getenv("ENTREZ_KEY")))
+
+    for (node in xml2::xml_find_all(doc, "/TaxaSet/Taxon")) {
+      lineage = xml2::xml_find_all(node, "./LineageEx/Taxon")
+      lineage_df = data.frame(
+        name = c(xml2::xml_text(xml2::xml_find_first(lineage, "./ScientificName")),
+                 xml2::xml_text(xml2::xml_find_first(node, "./ScientificName"))),
+        rank = tolower(c(xml2::xml_text(xml2::xml_find_first(lineage, "./Rank")),
+                         xml2::xml_text(xml2::xml_find_first(node, "./Rank")))),
+        id = c(xml2::xml_text(xml2::xml_find_first(lineage, "./TaxId")),
+               xml2::xml_text(xml2::xml_find_first(node, "./TaxId"))),
+        stringsAsFactors = FALSE)
+
+      # a merged (outdated) taxid is returned under its current TaxId, with the queried one
+      # listed under AkaTaxIds
+      node_ids = c(xml2::xml_text(xml2::xml_find_first(node, "./TaxId")),
+                   xml2::xml_text(xml2::xml_find_all(node, "./AkaTaxIds/TaxId")))
+      for (node_id in intersect(node_ids, chunk)) {
+        out[[node_id]] = lineage_df
+      }
+    }
+
+    Sys.sleep(0.2)  # stay under NCBI's request rate limit
+  }
+
+  out
+}
+
+lookup_failed = function(x) !map_lgl(x, is.data.frame)
+taxid_retry_attempts = 5
+
+for (attempt in seq_len(taxid_retry_attempts)) {
+  failed_taxids = all_taxids[lookup_failed(ncbi_taxa)]
+  if (length(failed_taxids) == 0) break
+  cat("Retrying", length(failed_taxids), "failed taxid lookup(s), attempt", attempt, "of", taxid_retry_attempts, "...\n")
+  Sys.sleep(15 * attempt)
+  retried = tryCatch(fetch_ncbi_lineage(failed_taxids),
+                     error = function(e) {
+                       cat("  lookup failed:", conditionMessage(e), "\n")
+                       NULL
+                     })
+  if (!is.null(retried)) {
+    ncbi_taxa[match(failed_taxids, all_taxids)] = retried
+  }
+}
+
+failed_taxids = all_taxids[lookup_failed(ncbi_taxa)]
+if (length(failed_taxids) > 0) {
+  stop("NCBI taxonomy lookup still failing after ", taxid_retry_attempts, " retries for ",
+       length(failed_taxids), " taxid(s):\n\t", paste(failed_taxids, collapse = "\n\t"),
+       "\nRe-run this chunk to try again.")
+}
+
 # extract taxa
 all_taxa = tibble(taxid = c())
 
