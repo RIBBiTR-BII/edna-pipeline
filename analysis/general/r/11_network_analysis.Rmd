@@ -1,0 +1,771 @@
+---
+title: "Network analysis of ASV detections"
+author: "Cob Staines"
+output: html_document
+---
+
+# Description
+
+This script builds the sample--ASV network and uses its structure to separate signal from contamination, alongside the GBIF / read evidence in script 07. It **only flags, it drops nothing**, and nothing downstream reads its outputs: it is for exploration (including in Gephi / Cytoscape) and for checking the contamination filters of script 08.
+
+`network_input` (config) picks which detections the network is built from:
+
+- `raw`: the denoised feature table, before any filtering (needs scripts 03, 06, 07)
+- `filtered`: script 08's controlled reads (needs script 08 too)
+
+Running it on both and comparing is a before/after check of script 08: if the filters remove contamination rather than ecology, cross-system similarity edges should drop, ubiquitous contaminant communities should disappear, and association with site should rise relative to association with sequencing run. All outputs carry the input in their name (`_11_raw_...`, `_11_filtered_...`).
+
+## Network export
+
+Node and edge tables for Gephi (Data Laboratory > Import Spreadsheet: the nodes table first, then an edges table, appended to the same workspace). Three graphs share the one nodes table (`node_type` is `sample` or `asv`):
+
+- **detection** edges (sample -- ASV): every non-zero ASV in every sample, lab controls included. `Weight` is the within-sample relative abundance, so trace detections barely pull on a force layout; filter on `rel_abund` / `log10_rel_abund` to show only the non-trace skeleton. `run_ratio_to_max` is the detection's relative abundance over the ASV's maximum in any sample of the same sequencing run (1 = the run's source; ~1e-3 and below = candidate cross-talk).
+- **co-occurrence** edges (ASV -- ASV): pairs of ASVs detected in the same samples (all samples, controls included), `Weight` = Jaccard similarity, thresholded by `network_min_shared_samples` and `network_min_jaccard`. Sample nodes have no co-occurrence edges; filter `node_type == asv` in Gephi.
+- **similarity** edges (sample -- sample): each sample with at least `network_knn_min_asvs` non-anthropogenic ASVs linked to its `network_knn_k` most similar samples (cosine similarity of sqrt relative abundance on non-anthropogenic reads, each ASV weighted by inverse prevalence so near-ubiquitous ASVs count little), `Weight` = similarity. `cross_system` and `same_run` flag edges between systems and within a sequencing run; ASV nodes have no similarity edges.
+
+Field-sample nodes carry `anthropogenic_read_share` and `nonlocal_read_share`: the share of the sample's reads from ASVs flagged `anthropogenic`, or `other_system` / `not_in_run`, in its system (script 07). They are kept apart because human DNA dominates many samples and would mask cross-system contamination. ASV nodes carry script 07's `local_status` in each system (`status_<system>`), limited to the systems the ASV is detected in with this input.
+
+## Network analysis
+
+The guiding question is whether an ASV's presence is better explained by **ecological** structure (system, site, field replicates) or by **lab** structure (sequencing run, extraction batch, the sample's own negative controls). Three kinds of evidence are produced:
+
+**Detection features** -- one row per (sample, ASV) detection in field samples and field negatives:
+
+- `run_ratio_to_max`: relative abundance over the ASV's maximum in any sample of the same sequencing run. ~1e-3 and below is typical of cross-talk from the run's source sample.
+- `own_negative_rel_abund_max`, `log10_ratio_to_own_negatives`: the ASV's maximum relative abundance in the sample's *own* linked negative controls (same field negative, extraction negative, or PCR control group), and the sample's relative abundance against it. A detection at or below its own negatives is not distinguishable from contamination.
+- `n_replicate_libraries`, `n_replicates_detected`: for field samples sequenced as several libraries, in how many the ASV was detected. Real eDNA tends to replicate; trace leaks tend not to.
+
+**ASV co-occurrence communities** -- groups of ASVs that tend to be detected in the same samples (Leiden communities on the co-occurrence graph). Each community is tested for association with lab batches vs. ecology (see below). A community tied to a sequencing run or extraction batch, or concentrated in controls, is a candidate *contaminant cohort*.
+
+**Sample similarity communities** -- groups of samples with similar composition (Leiden communities on the k-nearest-neighbour similarity graph), tested the same way, plus per-sample neighbourhood shares (how many of a sample's nearest neighbours share its system, run, and site).
+
+**Batch vs. ecology association.** Runs and systems are confounded (some systems were sequenced on their own runs), so each association is tested against a stratified permutation null:
+
+- *run beyond system*: mutual information with `sequencing_date`, shuffling run labels **within** each system
+- *extraction beyond system*: the same for `extraction_date`
+- *site beyond run*: mutual information with `site`, shuffling site labels **within** each run
+
+`*_excess` is the observed mutual information minus its permutation mean (a chance-corrected effect size, comparable across labels with different numbers of categories), and `*_p` the permutation p-value.
+
+**Reference cases.** `network_reference_cases` (config) lists ASVs and (ASV, system) pairs whose status is already understood. Their metrics are printed side by side as a sanity check: a metric that does not separate the known cases should not be used for filtering.
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, here, igraph, plotly)
+
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R)
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
+
+run_dir = here(pipeline_config$run_dir)
+cat(paste0("Run_dir: ", run_dir, "\n"))
+
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+# which detections to build the network from: "raw" (feature table) or "filtered" (script 08)
+network_input = pipeline_config$network_input
+if (!(network_input %in% c("raw", "filtered"))) {
+  stop("network_input must be 'raw' or 'filtered', not '", network_input, "'")
+}
+
+# network export
+network_min_shared_samples = pipeline_config$network_min_shared_samples
+network_min_jaccard = pipeline_config$network_min_jaccard
+network_knn_k = pipeline_config$network_knn_k
+network_knn_min_asvs = pipeline_config$network_knn_min_asvs
+
+# network analysis
+network_seed = pipeline_config$network_seed
+network_leiden_resolution = pipeline_config$network_leiden_resolution
+network_n_permutations = pipeline_config$network_n_permutations
+network_min_community_size = pipeline_config$network_min_community_size
+network_reference_cases = pipeline_config$network_reference_cases
+
+possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
+
+tax_ranks = c("domain", "kingdom", "phylum", "class", "order", "family", "genus", "species")
+
+# samples whose DNA is field-derived (the evidence pool, as in script 07)
+field_classes = c("field_sample", "field_negative")
+
+# input files
+sample_map_file = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
+classification_file = here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv"))
+locality_file = here(run_dir, "output", paste0(config$run$name, "_07_asv_locality.csv"))
+feature_table_file = here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "sample_table/feature-table.tsv")
+controlled_file = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv"))
+
+# output files, named by input
+out_prefix = paste0(config$run$name, "_11_", network_input, "_")
+network_nodes_out = here(run_dir, "output", paste0(out_prefix, "network_nodes.csv"))
+network_detection_edges_out = here(run_dir, "output", paste0(out_prefix, "network_edges_detection.csv"))
+network_cooccurrence_edges_out = here(run_dir, "output", paste0(out_prefix, "network_edges_cooccurrence.csv"))
+network_similarity_edges_out = here(run_dir, "output", paste0(out_prefix, "network_edges_similarity.csv"))
+detection_features_out = here(run_dir, "output", paste0(out_prefix, "detection_network_features.csv"))
+asv_metrics_out = here(run_dir, "output", paste0(out_prefix, "asv_network_metrics.csv"))
+sample_metrics_out = here(run_dir, "output", paste0(out_prefix, "sample_network_metrics.csv"))
+community_association_out = here(run_dir, "output", paste0(out_prefix, "community_association.csv"))
+cytoscape_session_out = here(run_dir, "output", paste0(out_prefix, "networks.cys"))
+```
+
+# Load data
+```{r}
+input_files = c(sample_map_file, classification_file, locality_file,
+                if (network_input == "raw") feature_table_file else controlled_file)
+missing_inputs = input_files[!file.exists(input_files)]
+if (length(missing_inputs) > 0) {
+  stop("Missing input(s) for network_input = '", network_input, "':\n\t", paste(missing_inputs, collapse = "\n\t"))
+}
+
+# guess_max = Inf: some sample map columns are NA for most rows, and would otherwise be guessed
+# as logical and their later values dropped
+sample_map = read_csv(sample_map_file, show_col_types = FALSE, guess_max = Inf)
+asv_classification = read_csv(classification_file, show_col_types = FALSE)
+asv_locality = read_csv(locality_file, show_col_types = FALSE)
+
+# (asv_id, feature_id, reads) for every sample x ASV
+if (network_input == "raw") {
+  asv_reads = read_tsv(feature_table_file, skip = 1, show_col_types = FALSE) %>%
+    rename(asv_id = "#OTU ID") %>%
+    pivot_longer(cols = -asv_id, names_to = "feature_id", values_to = "reads")
+} else {
+  # script 08 clean reads (0 for removed detections)
+  asv_reads = read_csv(controlled_file, show_col_types = FALSE) %>%
+    transmute(asv_id, feature_id, reads = asv_count_controlled)
+}
+
+# fixed row order, so edge orientation and floating-point sums don't depend on the input's order
+asv_reads = asv_reads %>%
+  arrange(asv_id)
+```
+
+# Network export
+```{r}
+# sample class and labels (same classes as script 07)
+sample_classes = sample_map %>%
+  transmute(feature_id,
+            study_system,
+            site,
+            sequencing_date,
+            sample_class = case_when(
+              pcr_control %in% TRUE | extraction_negative_control %in% TRUE | study_system %in% "lab_control" ~ "lab_control",
+              !(study_system %in% possible_study_systems) ~ "unknown",
+              field_negative_control %in% TRUE ~ "field_negative",
+              .default = "field_sample"))
+
+# within-sample relative abundance (samples with zero reads are dropped)
+feature_long = asv_reads %>%
+  group_by(feature_id) %>%
+  mutate(sample_reads = sum(reads)) %>%
+  ungroup() %>%
+  filter(sample_reads > 0) %>%
+  mutate(rel_abund = reads / sample_reads) %>%
+  left_join(sample_classes, by = "feature_id")
+
+# every detection, with its run-level ratio and script 07's (asv, system) status
+network_detections = feature_long %>%
+  filter(reads > 0) %>%
+  group_by(asv_id, sequencing_date) %>%
+  mutate(run_ratio_to_max = rel_abund / max(rel_abund)) %>%
+  ungroup() %>%
+  left_join(asv_locality %>% select(asv_id, study_system, local_status),
+            by = c("asv_id", "study_system"))
+
+# systems each ASV is detected in with this input, and its dominant system (highest mean relative
+# abundance over the system's field-pool samples, as in script 07)
+system_n_samples = feature_long %>%
+  filter(sample_class %in% field_classes) %>%
+  distinct(study_system, feature_id) %>%
+  count(study_system, name = "n_system_samples")
+
+asv_systems = network_detections %>%
+  filter(sample_class %in% field_classes) %>%
+  group_by(asv_id, study_system) %>%
+  summarise(rel_abund_sum = sum(rel_abund), .groups = "drop") %>%
+  left_join(system_n_samples, by = "study_system") %>%
+  mutate(rel_abund_mean = rel_abund_sum / n_system_samples)
+
+asv_system_summary = asv_systems %>%
+  group_by(asv_id) %>%
+  summarise(n_systems_detected = n(),
+            systems_detected = paste(sort(study_system), collapse = ";"),
+            dominant_system = study_system[which.max(rel_abund_mean)],
+            .groups = "drop") %>%
+  left_join(asv_locality %>% select(asv_id, dominant_system = study_system, dominant_status = local_status),
+            by = c("asv_id", "dominant_system"))
+
+# sample nodes
+sample_load = network_detections %>%
+  filter(sample_class %in% field_classes) %>%
+  group_by(feature_id) %>%
+  summarise(anthropogenic_read_share = sum(reads[local_status %in% "anthropogenic"]) / sum(reads),
+            nonlocal_read_share = sum(reads[local_status %in% c("other_system", "not_in_run")]) / sum(reads),
+            .groups = "drop")
+
+sample_nodes = feature_long %>%
+  distinct(feature_id, study_system, site, sample_class, sample_reads) %>%
+  left_join(network_detections %>% count(feature_id, name = "n_asvs"), by = "feature_id") %>%
+  left_join(sample_load, by = "feature_id") %>%
+  left_join(sample_map %>%
+              select(feature_id, region, sequencing_date, extraction_date, edna_sample_id,
+                     pcr_control_type, field_negative_control_group,
+                     extraction_negative_control_group, pcr_control_group),
+            by = "feature_id") %>%
+  transmute(Id = feature_id,
+            Label = feature_id,
+            node_type = "sample",
+            sample_class = coalesce(sample_class, "unknown"),
+            study_system,
+            region,
+            site,
+            sequencing_date,
+            extraction_date,
+            edna_sample_id,
+            pcr_control_type,
+            field_negative_control_group,
+            extraction_negative_control_group,
+            pcr_control_group,
+            sample_reads,
+            n_asvs,
+            anthropogenic_read_share,
+            nonlocal_read_share)
+
+# ASV nodes (status in each detected system as separate columns, NA elsewhere)
+asv_status_wide = asv_locality %>%
+  semi_join(asv_systems, by = c("asv_id", "study_system")) %>%
+  select(asv_id, study_system, local_status) %>%
+  pivot_wider(names_from = study_system, values_from = local_status, names_prefix = "status_")
+
+asv_nodes = network_detections %>%
+  group_by(asv_id) %>%
+  summarise(total_reads = sum(reads),
+            n_samples_detected = n(),
+            n_runs_detected = n_distinct(sequencing_date, na.rm = TRUE),
+            n_field_negatives_detected = sum(sample_class %in% "field_negative"),
+            n_lab_controls_detected = sum(sample_class %in% "lab_control"),
+            rel_abund_max = max(rel_abund),
+            .groups = "drop") %>%
+  left_join(asv_classification %>% select(asv_id, taxonomic_rank, all_of(tax_ranks)), by = "asv_id") %>%
+  left_join(asv_system_summary, by = "asv_id") %>%
+  left_join(asv_status_wide, by = "asv_id") %>%
+  mutate(taxon_label = coalesce(if_else(!is.na(species), paste(genus, species), NA_character_),
+                                genus, family, order, class, phylum, kingdom, domain, "unclassified"),
+         Label = paste0(taxon_label, " [", substr(asv_id, 1, 6), "]"),
+         node_type = "asv") %>%
+  select(Id = asv_id,
+         Label,
+         node_type,
+         taxon_label,
+         taxonomic_rank,
+         phylum, class, order, family, genus, species,
+         dominant_system,
+         dominant_status,
+         starts_with("status_"),
+         n_systems_detected,
+         systems_detected,
+         n_samples_detected,
+         n_runs_detected,
+         n_field_negatives_detected,
+         n_lab_controls_detected,
+         total_reads,
+         rel_abund_max)
+
+nodes = bind_rows(sample_nodes, asv_nodes)
+
+# detection edges (sample -- ASV)
+detection_edges = network_detections %>%
+  transmute(Source = feature_id,
+            Target = asv_id,
+            Type = "Undirected",
+            Weight = rel_abund,
+            reads,
+            rel_abund,
+            log10_rel_abund = log10(rel_abund),
+            run_ratio_to_max,
+            sample_class = coalesce(sample_class, "unknown"),
+            study_system,
+            sequencing_date,
+            local_status)
+
+# co-occurrence edges (ASV -- ASV), from shared-sample counts
+presence = network_detections %>%
+  distinct(asv_id, feature_id) %>%
+  mutate(present = 1) %>%
+  pivot_wider(names_from = feature_id, values_from = present, values_fill = 0) %>%
+  column_to_rownames("asv_id") %>%
+  as.matrix()
+
+shared_samples = tcrossprod(presence)
+n_detected = diag(shared_samples)
+
+pairs = which(upper.tri(shared_samples) & shared_samples >= network_min_shared_samples, arr.ind = TRUE)
+
+cooccurrence_edges = tibble(Source = rownames(shared_samples)[pairs[, 1]],
+                            Target = colnames(shared_samples)[pairs[, 2]],
+                            n_shared = shared_samples[pairs]) %>%
+  mutate(jaccard = n_shared / (n_detected[Source] + n_detected[Target] - n_shared)) %>%
+  filter(jaccard >= network_min_jaccard) %>%
+  transmute(Source, Target, Type = "Undirected", Weight = jaccard, jaccard, n_shared)
+
+# similarity edges (sample -- sample): each sample to its k nearest samples by cosine similarity of
+# sqrt(relative abundance), on non-anthropogenic reads so samples don't cluster by how much human
+# DNA they carry. Each ASV is weighted by inverse prevalence (log(n samples / n samples detected)),
+# so near-ubiquitous ASVs (e.g. positive-control leak, unclassified background) don't dominate
+anthropogenic_asvs = asv_locality %>%
+  filter(local_status == "anthropogenic") %>%
+  distinct(asv_id) %>%
+  pull(asv_id)
+
+composition = network_detections %>%
+  filter(!(asv_id %in% anthropogenic_asvs)) %>%
+  group_by(feature_id) %>%
+  mutate(p = reads / sum(reads)) %>%
+  ungroup() %>%
+  select(feature_id, asv_id, p) %>%
+  pivot_wider(names_from = asv_id, values_from = p, values_fill = 0) %>%
+  column_to_rownames("feature_id") %>%
+  as.matrix()
+
+asv_idf = log(n_distinct(network_detections$feature_id) / colSums(composition > 0))
+weighted = sweep(sqrt(composition), 2, asv_idf, `*`)
+weighted = weighted[rowSums(composition > 0) >= network_knn_min_asvs & rowSums(weighted) > 0, , drop = FALSE]
+weighted = weighted / sqrt(rowSums(weighted^2))
+
+sample_similarity = tcrossprod(weighted)
+diag(sample_similarity) = NA
+
+sample_knn = map_dfr(rownames(sample_similarity), function(s) {
+  sims = sample_similarity[s, ]
+  nn = head(order(sims, decreasing = TRUE), network_knn_k)
+  tibble(from = s, to = colnames(sample_similarity)[nn], similarity = sims[nn])
+}) %>%
+  filter(similarity > 0)
+
+sample_attrs = sample_map %>%
+  select(feature_id, study_system, sequencing_date)
+
+# undirected: a pair found from both ends is kept once and marked mutual
+similarity_edges = sample_knn %>%
+  mutate(Source = pmin(from, to),
+         Target = pmax(from, to)) %>%
+  group_by(Source, Target) %>%
+  summarise(similarity = first(similarity),
+            mutual = n() == 2,
+            .groups = "drop") %>%
+  left_join(sample_attrs %>% rename(Source = feature_id, source_system = study_system, source_run = sequencing_date),
+            by = "Source") %>%
+  left_join(sample_attrs %>% rename(Target = feature_id, target_system = study_system, target_run = sequencing_date),
+            by = "Target") %>%
+  transmute(Source, Target, Type = "Undirected", Weight = similarity, similarity, mutual,
+            cross_system = source_system != target_system,
+            same_run = source_run == target_run)
+
+cat("Network input:", network_input, "\n")
+cat("Network nodes:", nrow(sample_nodes), "samples,", nrow(asv_nodes), "ASVs\n")
+cat("Detection edges:", nrow(detection_edges), "\n")
+cat("Co-occurrence edges:", nrow(cooccurrence_edges), "\n")
+cat("Similarity edges:", nrow(similarity_edges), "\n")
+
+# empty strings (not "NA") so Gephi reads missing values as missing
+write_csv(nodes, network_nodes_out, na = "")
+write_csv(detection_edges, network_detection_edges_out, na = "")
+write_csv(cooccurrence_edges, network_cooccurrence_edges_out, na = "")
+write_csv(similarity_edges, network_similarity_edges_out, na = "")
+```
+
+# Build graphs
+```{r}
+# sample -- ASV detections (bipartite: type TRUE = ASV)
+g_detection = graph_from_data_frame(detection_edges, vertices = nodes, directed = FALSE)
+V(g_detection)$type = V(g_detection)$node_type == "asv"
+
+# ASV -- ASV co-occurrence, and sample -- sample similarity, each on its own node subset
+g_cooccurrence = graph_from_data_frame(cooccurrence_edges, vertices = asv_nodes, directed = FALSE)
+g_similarity = graph_from_data_frame(similarity_edges, vertices = sample_nodes, directed = FALSE)
+
+cat("detection graph:", vcount(g_detection), "nodes,", ecount(g_detection), "edges\n")
+cat("co-occurrence graph:", sum(degree(g_cooccurrence) > 0), "connected ASVs,", ecount(g_cooccurrence), "edges\n")
+cat("similarity graph:", sum(degree(g_similarity) > 0), "connected samples,", ecount(g_similarity), "edges\n")
+```
+
+# Helpers
+```{r}
+# mutual information (nats) between two categorical vectors, ignoring NA pairs
+mutual_information = function(x, y) {
+  keep = !is.na(x) & !is.na(y)
+  p = table(x[keep], y[keep]) / sum(keep)
+  expected = outer(rowSums(p), colSums(p))
+  nonzero = p > 0
+  sum(p[nonzero] * log(p[nonzero] / expected[nonzero]))
+}
+
+# shuffle labels within strata
+permute_within = function(label, strata) {
+  strata = coalesce(as.character(strata), "NA")
+  out = label
+  for (s in unique(strata)) {
+    i = which(strata == s)
+    out[i] = label[i][sample.int(length(i))]
+  }
+  out
+}
+
+# association of x with label beyond strata: observed MI vs. a stratified permutation null
+association_test = function(x, label, strata, n_perm = network_n_permutations) {
+  observed = mutual_information(x, label)
+  null = replicate(n_perm, mutual_information(x, permute_within(label, strata)))
+  tibble(mi = observed,
+         excess = observed - mean(null),
+         p = (sum(null >= observed) + 1) / (n_perm + 1))
+}
+
+# the three batch vs. ecology tests for a categorical grouping x over samples (rows of `samples`)
+batch_vs_ecology = function(x, samples) {
+  bind_cols(association_test(x, samples$sequencing_date, samples$study_system) %>% rename_with(~ paste0("run_", .x)),
+            association_test(x, samples$extraction_date, samples$study_system) %>% rename_with(~ paste0("extraction_", .x)),
+            association_test(x, samples$site, samples$sequencing_date) %>% rename_with(~ paste0("site_", .x)))
+}
+```
+
+# Detection features
+```{r}
+# each sample's own negative controls, via the control-group ids shared with them
+link_controls = function(group_col, is_control, control_type) {
+  groups = sample_map %>%
+    select(feature_id, group = all_of(group_col)) %>%
+    filter(!is.na(group))
+  groups %>%
+    inner_join(groups %>%
+                 filter(feature_id %in% sample_map$feature_id[is_control]) %>%
+                 rename(control_id = feature_id),
+               by = "group", relationship = "many-to-many") %>%
+    filter(feature_id != control_id) %>%
+    transmute(feature_id, control_id, control_type = control_type)
+}
+
+control_links = bind_rows(
+  link_controls("field_negative_control_group", sample_map$field_negative_control %in% TRUE, "field_negative"),
+  link_controls("extraction_negative_control_group", sample_map$extraction_negative_control %in% TRUE, "extraction_negative"),
+  link_controls("pcr_control_group", sample_map$pcr_control_type %in% "pcr_negative_control", "pcr_negative"))
+
+n_own_negatives = control_links %>%
+  group_by(feature_id) %>%
+  summarise(n_own_negatives = n_distinct(control_id),
+            own_negative_types_linked = paste(sort(unique(control_type)), collapse = ";"),
+            .groups = "drop")
+
+own_negative_evidence = control_links %>%
+  inner_join(detection_edges %>% select(control_id = Source, asv_id = Target, control_rel_abund = rel_abund),
+             by = "control_id", relationship = "many-to-many") %>%
+  group_by(feature_id, asv_id) %>%
+  summarise(own_negative_rel_abund_max = max(control_rel_abund),
+            own_negative_types_detected = paste(sort(unique(control_type)), collapse = ";"),
+            .groups = "drop")
+
+# replicate libraries of the same field sample
+replicate_detection = detection_edges %>%
+  select(feature_id = Source, asv_id = Target) %>%
+  left_join(sample_map %>% select(feature_id, edna_sample_id), by = "feature_id") %>%
+  filter(!is.na(edna_sample_id)) %>%
+  count(edna_sample_id, asv_id, name = "n_replicates_detected")
+
+n_replicate_libraries = sample_map %>%
+  filter(!is.na(edna_sample_id)) %>%
+  count(edna_sample_id, name = "n_replicate_libraries")
+
+detection_features = detection_edges %>%
+  filter(sample_class %in% field_classes) %>%
+  rename(feature_id = Source, asv_id = Target) %>%
+  left_join(sample_map %>% select(feature_id, site, extraction_date, edna_sample_id), by = "feature_id") %>%
+  left_join(n_own_negatives, by = "feature_id") %>%
+  left_join(own_negative_evidence, by = c("feature_id", "asv_id")) %>%
+  left_join(n_replicate_libraries, by = "edna_sample_id") %>%
+  left_join(replicate_detection, by = c("edna_sample_id", "asv_id")) %>%
+  mutate(n_own_negatives = replace_na(n_own_negatives, 0),
+         in_own_negatives = !is.na(own_negative_rel_abund_max),
+         log10_ratio_to_own_negatives = log10(rel_abund / own_negative_rel_abund_max),
+         log10_run_ratio_to_max = log10(run_ratio_to_max)) %>%
+  select(feature_id, asv_id, study_system, site, sequencing_date, extraction_date, sample_class,
+         reads, rel_abund, local_status,
+         run_ratio_to_max, log10_run_ratio_to_max,
+         n_own_negatives, own_negative_types_linked, in_own_negatives, own_negative_types_detected,
+         own_negative_rel_abund_max, log10_ratio_to_own_negatives,
+         edna_sample_id, n_replicate_libraries, n_replicates_detected)
+
+cat("field detections:", nrow(detection_features), "\n")
+cat("  with linked negatives:", sum(detection_features$n_own_negatives > 0), "\n")
+cat("  also in own negatives:", sum(detection_features$in_own_negatives), "\n")
+cat("  in replicated field samples:", sum(detection_features$n_replicate_libraries > 1, na.rm = TRUE), "\n")
+```
+
+# ASV co-occurrence communities
+```{r}
+set.seed(network_seed)
+
+asv_leiden = cluster_leiden(g_cooccurrence,
+                            objective_function = "modularity",
+                            weights = E(g_cooccurrence)$Weight,
+                            resolution = network_leiden_resolution,
+                            n_iterations = -1)
+
+asv_community = tibble(asv_id = V(g_cooccurrence)$name,
+                       community = membership(asv_leiden),
+                       cooccurrence_degree = degree(g_cooccurrence),
+                       cooccurrence_strength = strength(g_cooccurrence, weights = E(g_cooccurrence)$Weight)) %>%
+  add_count(community, name = "community_size") %>%
+  mutate(asv_community = if_else(cooccurrence_degree > 0 & community_size >= network_min_community_size,
+                                 paste0("asv_c", community), NA_character_)) %>%
+  select(asv_id, asv_community, cooccurrence_degree, cooccurrence_strength)
+
+cat("ASV communities (>=", network_min_community_size, "ASVs):", n_distinct(na.omit(asv_community$asv_community)), "\n")
+
+# field-pool samples, with labels for the association tests
+pool_samples = sample_nodes %>%
+  filter(sample_class %in% field_classes) %>%
+  select(feature_id = Id, study_system, site, sequencing_date, extraction_date)
+
+# per community: which samples contain any member ASV, its control share, and batch vs. ecology
+asv_community_detections = detection_edges %>%
+  inner_join(asv_community %>% filter(!is.na(asv_community)), by = c("Target" = "asv_id"))
+
+asv_community_association = asv_community_detections %>%
+  group_by(asv_community) %>%
+  summarise(n_asvs = n_distinct(Target),
+            n_samples = n_distinct(Source),
+            n_runs = n_distinct(sequencing_date, na.rm = TRUE),
+            n_systems = n_distinct(study_system[sample_class %in% field_classes], na.rm = TRUE),
+            control_detection_share = mean(sample_class %in% c("field_negative", "lab_control")),
+            lab_control_detection_share = mean(sample_class %in% "lab_control"),
+            median_rel_abund = median(rel_abund),
+            samples = list(unique(Source)),
+            .groups = "drop") %>%
+  mutate(tests = map(samples, \(s) batch_vs_ecology(pool_samples$feature_id %in% s, pool_samples))) %>%
+  unnest(tests) %>%
+  select(-samples) %>%
+  left_join(asv_community %>%
+              filter(!is.na(asv_community)) %>%
+              left_join(asv_nodes %>% select(asv_id = Id, Label, total_reads), by = "asv_id") %>%
+              group_by(asv_community) %>%
+              slice_max(total_reads, n = 5, with_ties = FALSE) %>%
+              summarise(top_members = paste(Label, collapse = "; "), .groups = "drop"),
+            by = "asv_community") %>%
+  mutate(graph = "asv_cooccurrence", .before = 1) %>%
+  rename(community = asv_community) %>%
+  arrange(desc(run_excess))
+
+asv_community_association
+```
+
+# Sample similarity communities
+```{r}
+set.seed(network_seed)
+
+sample_leiden = cluster_leiden(g_similarity,
+                               objective_function = "modularity",
+                               weights = E(g_similarity)$Weight,
+                               resolution = network_leiden_resolution,
+                               n_iterations = -1)
+
+sample_community = tibble(feature_id = V(g_similarity)$name,
+                          community = membership(sample_leiden),
+                          similarity_degree = degree(g_similarity)) %>%
+  add_count(community, name = "community_size") %>%
+  mutate(sample_community = if_else(similarity_degree > 0 & community_size >= network_min_community_size,
+                                    paste0("sample_c", community), NA_character_)) %>%
+  select(feature_id, sample_community, similarity_degree)
+
+# share of each sample's nearest neighbours that share its system / run / site
+neighbor_shares = similarity_edges %>%
+  select(a = Source, b = Target) %>%
+  { bind_rows(., rename(., a = b, b = a)) } %>%
+  left_join(sample_map %>% select(a = feature_id, a_system = study_system, a_run = sequencing_date, a_site = site), by = "a") %>%
+  left_join(sample_map %>% select(b = feature_id, b_system = study_system, b_run = sequencing_date, b_site = site), by = "b") %>%
+  group_by(feature_id = a) %>%
+  summarise(n_neighbors = n(),
+            neighbor_same_system_share = mean(a_system == b_system, na.rm = TRUE),
+            neighbor_same_run_share = mean(a_run == b_run, na.rm = TRUE),
+            neighbor_same_site_share = mean(a_site == b_site, na.rm = TRUE),
+            .groups = "drop")
+
+# one test over the whole partition (samples in a community, field pool only)
+community_samples = pool_samples %>%
+  inner_join(sample_community %>% filter(!is.na(sample_community)), by = "feature_id")
+
+sample_partition_association = batch_vs_ecology(community_samples$sample_community, community_samples) %>%
+  mutate(graph = "sample_similarity", community = "all (partition)",
+         n_samples = nrow(community_samples), .before = 1)
+
+# per community: membership indicator vs. labels
+sample_community_association = community_samples %>%
+  group_by(community = sample_community) %>%
+  summarise(n_samples = n(),
+            n_runs = n_distinct(sequencing_date, na.rm = TRUE),
+            n_systems = n_distinct(study_system, na.rm = TRUE),
+            systems = paste(sort(unique(study_system)), collapse = ";"),
+            samples = list(feature_id),
+            .groups = "drop") %>%
+  mutate(tests = map(samples, \(s) batch_vs_ecology(community_samples$feature_id %in% s, community_samples))) %>%
+  unnest(tests) %>%
+  select(-samples) %>%
+  mutate(graph = "sample_similarity", .before = 1) %>%
+  arrange(desc(run_excess))
+
+sample_partition_association
+sample_community_association
+```
+
+# ASV and sample metrics
+```{r}
+asv_metrics = asv_nodes %>%
+  select(asv_id = Id, Label, taxon_label, taxonomic_rank, dominant_system, dominant_status,
+         starts_with("status_"), n_systems_detected, n_samples_detected, n_runs_detected,
+         n_field_negatives_detected, n_lab_controls_detected, total_reads, rel_abund_max) %>%
+  left_join(asv_classification %>% select(asv_id, short_sequence_flag, contaminant_flag), by = "asv_id") %>%
+  left_join(asv_community, by = "asv_id") %>%
+  left_join(detection_features %>%
+              group_by(asv_id) %>%
+              summarise(n_field_detections = n(),
+                        share_run_trace = mean(run_ratio_to_max < 1e-3),
+                        share_in_own_negatives = mean(in_own_negatives),
+                        median_log10_ratio_to_own_negatives = median(log10_ratio_to_own_negatives, na.rm = TRUE),
+                        replicate_detection_rate = sum(pmax(n_replicates_detected - 1, 0), na.rm = TRUE) /
+                          sum(pmax(n_replicate_libraries - 1, 0), na.rm = TRUE),
+                        .groups = "drop"),
+            by = "asv_id") %>%
+  mutate(lab_control_share = n_lab_controls_detected / n_samples_detected,
+         replicate_detection_rate = if_else(is.nan(replicate_detection_rate), NA_real_, replicate_detection_rate))
+
+sample_metrics = sample_nodes %>%
+  select(feature_id = Id, sample_class, study_system, site, sequencing_date, extraction_date,
+         sample_reads, n_asvs, anthropogenic_read_share, nonlocal_read_share) %>%
+  left_join(sample_community, by = "feature_id") %>%
+  left_join(neighbor_shares, by = "feature_id") %>%
+  left_join(n_own_negatives, by = "feature_id")
+
+detection_features = detection_features %>%
+  left_join(asv_community %>% select(asv_id, asv_community), by = "asv_id") %>%
+  left_join(sample_community %>% select(feature_id, sample_community), by = "feature_id")
+
+community_association = bind_rows(asv_community_association,
+                                  sample_partition_association,
+                                  sample_community_association)
+
+write_csv(detection_features, detection_features_out)
+write_csv(asv_metrics, asv_metrics_out)
+write_csv(sample_metrics, sample_metrics_out)
+write_csv(community_association, community_association_out)
+```
+
+# Reference cases
+
+Known cases from `network_reference_cases`. Cases with a `study_system` are summarized over that system's detections only.
+```{r}
+reference_cases = map_dfr(network_reference_cases, \(x) tibble(asv_id = x$asv_id,
+                                                                study_system = x$study_system %||% NA_character_,
+                                                                expected = x$expected,
+                                                                note = x$note %||% NA_character_))
+
+reference_check = reference_cases %>%
+  mutate(features = map2(asv_id, study_system, \(a, s) {
+    detection_features %>%
+      filter(asv_id == a, is.na(s) | study_system == s) %>%
+      summarise(n_detections = n(),
+                median_rel_abund = median(rel_abund),
+                median_log10_run_ratio = median(log10_run_ratio_to_max),
+                share_in_own_negatives = mean(in_own_negatives),
+                replicated = sum(n_replicates_detected > 1, na.rm = TRUE))
+  })) %>%
+  unnest(features) %>%
+  left_join(asv_metrics %>% select(asv_id, Label, n_samples_detected, n_runs_detected, n_systems_detected,
+                                   lab_control_share, asv_community, short_sequence_flag),
+            by = "asv_id") %>%
+  select(expected, Label, study_system, n_detections, median_rel_abund, median_log10_run_ratio,
+         share_in_own_negatives, replicated, n_samples_detected, n_runs_detected, n_systems_detected,
+         lab_control_share, asv_community, short_sequence_flag, note) %>%
+  arrange(expected)
+
+reference_check
+```
+
+# Visualize
+
+## ASV communities: batch vs. ecology
+
+One point per ASV co-occurrence community. x is the chance-corrected association with sequencing run (beyond system), y with site (beyond run); size is the number of ASVs, fill the share of the community's detections that are in negatives or lab controls. Contaminant cohorts should sit to the right, low, and dark; ecological communities high and pale.
+```{r fig.width=8, fig.height=6}
+p_communities = asv_community_association %>%
+  mutate(hover = paste0(community, ": ", n_asvs, " ASVs, ", n_samples, " samples, ", n_runs, " runs",
+                        "<br>run excess MI: ", signif(run_excess, 2), " (p = ", signif(run_p, 2), ")",
+                        "<br>site excess MI: ", signif(site_excess, 2), " (p = ", signif(site_p, 2), ")",
+                        "<br>control share: ", round(control_detection_share, 2),
+                        "<br>", top_members)) %>%
+  ggplot(aes(x = run_excess, y = site_excess, size = n_asvs, fill = control_detection_share, text = hover)) +
+  geom_hline(yintercept = 0, color = "#c3c2bd", linewidth = 0.3) +
+  geom_vline(xintercept = 0, color = "#c3c2bd", linewidth = 0.3) +
+  geom_point(shape = 21, color = "white", stroke = 0.4, alpha = 0.9) +
+  scale_fill_gradient(low = "#cde2fb", high = "#0d366b", limits = c(0, 1), name = "control share") +
+  scale_size_continuous(range = c(2, 10), name = "ASVs") +
+  labs(x = "association with sequencing run (excess MI, beyond system)",
+       y = "association with site (excess MI, beyond run)") +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+ggplotly(p_communities, tooltip = "text")
+```
+
+## Detection features by GBIF status
+
+Distribution of the cross-talk and own-negative features across script 07's `local_status`. If the features carry signal, `other_system` / `not_in_run` detections should sit lower than `local` ones.
+```{r fig.width=10, fig.height=5}
+detection_features %>%
+  filter(local_status %in% c("local", "other_system", "not_in_run", "local_genus_only")) %>%
+  transmute(local_status,
+            `log10 run ratio to max` = log10_run_ratio_to_max,
+            `log10 ratio to own negatives` = log10_ratio_to_own_negatives) %>%
+  pivot_longer(-local_status, names_to = "feature", values_to = "value") %>%
+  filter(is.finite(value)) %>%
+  ggplot(aes(x = value, y = local_status)) +
+  geom_boxplot(outlier.size = 0.6, outlier.alpha = 0.4, fill = "#cde2fb", color = "#52514e", linewidth = 0.3) +
+  facet_wrap(~ feature, scales = "free_x") +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+```
+
+# Cytoscape (optional)
+
+Sends the co-occurrence and similarity graphs, with community memberships, to a running Cytoscape (via RCy3) and saves a session. Skipped when RCy3 is not installed or Cytoscape is not open. Nothing here feeds the outputs above.
+```{r}
+cytoscape_available = requireNamespace("RCy3", quietly = TRUE) &&
+  tryCatch({ RCy3::cytoscapePing(); TRUE }, error = function(e) FALSE)
+
+if (cytoscape_available) {
+  system_colors = c(brazil = "#eda100", panama = "#e87ba4", pennsylvania = "#008300", sierra_nevada = "#4a3aa7")
+
+  # ASV co-occurrence, colored by community
+  V(g_cooccurrence)$asv_community = asv_community$asv_community[match(V(g_cooccurrence)$name, asv_community$asv_id)]
+  g_cooc_connected = induced_subgraph(g_cooccurrence, degree(g_cooccurrence) > 0)
+  RCy3::createNetworkFromIgraph(g_cooc_connected, title = "ASV co-occurrence", collection = config$run$name)
+  RCy3::createVisualStyle("asv_cooccurrence", defaults = list(NODE_SHAPE = "ellipse", EDGE_TRANSPARENCY = 120))
+  RCy3::setNodeColorMapping("asv_community", mapping.type = "d", style.name = "asv_cooccurrence")
+  RCy3::setNodeSizeMapping("total_reads", mapping.type = "c", style.name = "asv_cooccurrence")
+  RCy3::setNodeLabelMapping("Label", style.name = "asv_cooccurrence")
+  RCy3::setVisualStyle("asv_cooccurrence")
+  RCy3::layoutNetwork("force-directed")
+
+  # sample similarity, colored by system
+  V(g_similarity)$sample_community = sample_community$sample_community[match(V(g_similarity)$name, sample_community$feature_id)]
+  g_sim_connected = induced_subgraph(g_similarity, degree(g_similarity) > 0)
+  RCy3::createNetworkFromIgraph(g_sim_connected, title = "sample similarity", collection = config$run$name)
+  RCy3::createVisualStyle("sample_similarity", defaults = list(NODE_SHAPE = "ellipse", EDGE_TRANSPARENCY = 120))
+  RCy3::setNodeColorMapping("study_system", names(system_colors), unname(system_colors),
+                            mapping.type = "d", style.name = "sample_similarity")
+  RCy3::setEdgeLineWidthMapping("Weight", c(0, 1), c(0.5, 4), style.name = "sample_similarity")
+  RCy3::setVisualStyle("sample_similarity")
+  RCy3::layoutNetwork("force-directed")
+
+  RCy3::saveSession(cytoscape_session_out)
+  cat("Cytoscape session saved:", cytoscape_session_out, "\n")
+} else {
+  cat("Cytoscape not available (RCy3 not installed or Cytoscape not running) -- skipped.\n")
+}
+```

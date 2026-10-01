@@ -55,7 +55,7 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 locality_min_rel_abund = pipeline_config$locality_min_rel_abund
 locality_log_ratio_cutoff = pipeline_config$locality_log_ratio_cutoff
 
-# manual status overrides ("Genus species" or "Genus")
+# manual status overrides ("Genus species", "Genus", or "Family")
 anthropogenic_taxa = unlist(pipeline_config$anthropogenic_taxa)
 local_overrides = pipeline_config$local_overrides
 
@@ -114,7 +114,7 @@ if (file.exists(gbif_file)) {
 }
 ```
 
-# Read evidence
+# Clean data
 ```{r}
 # classify each sample: evidence pool (field samples + field negatives, per system) vs lab controls
 sample_class = sample_map %>%
@@ -253,10 +253,10 @@ candidate_gbif = classification_candidates %>%
          n_other_species, n_other_genus, n_other_family,
          systems_species_recorded, systems_genus_recorded, systems_family_recorded)
 
-# does a candidate match a "Genus species" / "Genus" list?
-matches_taxa_list = function(genus, specificEpithet, taxa_list) {
+# does a candidate match a "Genus species" / "Genus" / "Family" list?
+matches_taxa_list = function(family, genus, specificEpithet, taxa_list) {
   if (length(taxa_list) == 0) return(rep(FALSE, length(genus)))
-  (genus %in% taxa_list) | (paste(genus, specificEpithet) %in% taxa_list)
+  (family %in% taxa_list) | (genus %in% taxa_list) | (paste(genus, specificEpithet) %in% taxa_list)
 }
 
 # assess each (asv_id, study_system, candidate)
@@ -265,9 +265,9 @@ locality_candidates = read_evidence %>%
   left_join(classification_candidates, by = "asv_id", relationship = "many-to-many") %>%
   left_join(candidate_gbif, by = c("asv_id", "candidate", "study_system")) %>%
   rowwise() %>%
-  mutate(local_override = matches_taxa_list(genus, specificEpithet, unlist(local_overrides[[study_system]]))) %>%
+  mutate(local_override = matches_taxa_list(family, genus, specificEpithet, unlist(local_overrides[[study_system]]))) %>%
   ungroup() %>%
-  mutate(anthropogenic = matches_taxa_list(genus, specificEpithet, anthropogenic_taxa),
+  mutate(anthropogenic = matches_taxa_list(family, genus, specificEpithet, anthropogenic_taxa),
          # rank the GBIF assessment is made at: the accepted rank, or genus when an accepted species
          # was not resolved by GBIF
          gbif_assessed_rank = case_when(
@@ -321,7 +321,7 @@ locality_gbif = locality_candidates %>%
 print(count(locality_gbif, local_status))
 ```
 
-# Combine
+# Combine ASVs
 ```{r}
 asv_locality = read_evidence %>%
   left_join(locality_gbif, by = c("asv_id", "study_system")) %>%
@@ -468,11 +468,181 @@ p_shared = ggplot(shared, aes(x = study_system, y = row_label, text = hover)) +
 ggplotly(p_shared, tooltip = "text", height = max(600, 14 * n_distinct(shared$row_label)))
 ```
 
+## System exclusivity
+
+The next three views summarize how each ASV's (sequencing-effort-normalized) relative abundance is split across systems (`norm_share`), to separate ASVs exclusive to or dominated by one system from those shared between several.
+```{r}
+# system identity palette (kept distinct from the status hues above)
+system_colors = c(brazil = "#eda100",
+                  panama = "#e87ba4",
+                  pennsylvania = "#008300",
+                  sierra_nevada = "#4a3aa7")
+
+# one row per ASV: dominant system, its share, status there, and a per-system breakdown for hover
+asv_summary = plot_data %>%
+  arrange(asv_id, desc(norm_share)) %>%
+  group_by(asv_id, taxon_label, dominant_system, n_systems_detected) %>%
+  summarise(dominant_share = max(norm_share),
+            total_reads = sum(reads),
+            dominant_status = as.character(local_status[is_dominant]),
+            share_text = paste0(study_system, ": ", signif(norm_share, 2), " (", local_status, ")",
+                                collapse = "<br>"),
+            .groups = "drop") %>%
+  mutate(dominant_system = factor(dominant_system, levels = possible_study_systems),
+         hover = paste0(taxon_label, "<br>asv: ", asv_id, "<br>", share_text))
+```
+
+### Share profile per ASV
+
+Each thin bar is one ASV, split by its share in each system it was detected in (the dominant system's share at the bottom). ASVs are grouped by dominant system and sorted by dominant share, so ASVs exclusive to one system form the solid block on the left and shared ASVs form the mixed tail on the right.
+```{r fig.width=10, fig.height=9}
+structure_order = asv_summary %>%
+  arrange(dominant_system, desc(dominant_share), desc(total_reads)) %>%
+  group_by(dominant_system) %>%
+  mutate(x = row_number(),
+         panel = paste0("dominant in ", dominant_system, " (", n(), " ASVs, ",
+                        sum(n_systems_detected == 1), " exclusive)")) %>%
+  ungroup() %>%
+  mutate(panel = fct_inorder(panel))
+
+structure_data = plot_data %>%
+  select(asv_id, study_system, norm_share) %>%
+  inner_join(structure_order %>% select(asv_id, dominant_system, x, panel, hover), by = "asv_id") %>%
+  group_by(asv_id) %>%
+  # dominant system at the bottom, then remaining systems by decreasing share
+  arrange(desc(study_system == as.character(dominant_system)), desc(norm_share), .by_group = TRUE) %>%
+  mutate(ymax = cumsum(norm_share),
+         ymin = ymax - norm_share) %>%
+  ungroup() %>%
+  mutate(study_system = factor(study_system, levels = possible_study_systems))
+
+p_structure = ggplot(structure_data,
+                     aes(xmin = x - 0.5, xmax = x + 0.5, ymin = ymin, ymax = ymax,
+                         fill = study_system, text = hover)) +
+  geom_rect() +
+  scale_fill_manual(values = system_colors, name = "detected in", drop = FALSE) +
+  scale_x_continuous(expand = c(0, 0)) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), expand = c(0, 0)) +
+  facet_wrap(~ panel, ncol = 1, scales = "free_x") +
+  labs(x = "ASVs, sorted by dominant-system share", y = "share of normalized rel. abund.") +
+  theme_locality +
+  theme(panel.grid.major = element_blank(),
+        axis.text.x = element_blank())
+
+ggplotly(p_structure, tooltip = "text")
+```
+
+### Shared ASVs in system space
+
+Each system sits at a corner of the square, and each shared ASV (detected in more than one system) is placed at the share-weighted average of the corners: near a corner = dominated by that system, on an edge = split between two adjacent systems, toward the center = spread across several. Exclusive ASVs would all sit exactly on a corner, so they are counted in the corner labels rather than plotted. The center is ambiguous -- an even 4-way split and a 50/50 split between diagonal systems (brazil + pennsylvania, panama + sierra_nevada) land in the same place -- so check the hover breakdown. Color is `local_status` in the dominant system, size is total reads.
+```{r fig.width=8, fig.height=8}
+corners = tibble(study_system = possible_study_systems,
+                 cx = c(-1, 1, 1, -1),
+                 cy = c(1, 1, -1, -1))
+
+radviz = plot_data %>%
+  filter(n_systems_detected > 1) %>%
+  left_join(corners, by = "study_system") %>%
+  group_by(asv_id) %>%
+  summarise(x = sum(norm_share * cx),
+            y = sum(norm_share * cy),
+            .groups = "drop") %>%
+  inner_join(asv_summary, by = "asv_id") %>%
+  mutate(dominant_status = factor(dominant_status, levels = status_levels))
+
+corner_labels = corners %>%
+  left_join(asv_summary %>%
+              filter(n_systems_detected == 1) %>%
+              count(study_system = as.character(dominant_system), name = "n_exclusive"),
+            by = "study_system") %>%
+  mutate(n_exclusive = replace_na(n_exclusive, 0),
+         label = paste0(study_system, "\n", n_exclusive, " exclusive ASVs"),
+         ly = cy * 1.18)
+
+p_radviz = ggplot() +
+  geom_polygon(data = corners, aes(x = cx, y = cy), fill = NA, color = "#c3c2bd", linewidth = 0.4) +
+  geom_segment(aes(x = c(-1, -1), y = c(1, -1), xend = c(1, 1), yend = c(-1, 1)),
+               color = "#e6e5e0", linetype = "dashed", linewidth = 0.3) +
+  geom_text(data = corner_labels, aes(x = cx, y = ly, label = label), size = 3.2, color = "#0b0b0b") +
+  geom_point(data = radviz,
+             aes(x = x, y = y, color = dominant_status, shape = dominant_status,
+                 size = log10(total_reads), text = hover),
+             alpha = 0.75) +
+  scale_color_manual(values = status_colors, drop = FALSE, name = "status in dominant system") +
+  scale_shape_manual(values = status_shapes, drop = FALSE, name = "status in dominant system") +
+  scale_size_continuous(range = c(1.5, 7), name = "log10 total reads") +
+  coord_equal(xlim = c(-1.45, 1.45), ylim = c(-1.35, 1.35)) +
+  theme_void(base_size = 11)
+
+ggplotly(p_radviz, tooltip = "text")
+```
+
+### Directional spillover between systems
+
+Rows are the system an ASV is dominant in; columns are the other systems it was also detected in. Off-diagonal cells give the number of ASVs (and the fraction of the row's dominant ASVs) detected in that column; the diagonal gives the number of ASVs dominant in that system. An asymmetric matrix (e.g. many pennsylvania -> panama, few panama -> pennsylvania) points to a direction of contamination, while symmetric sharing between nearby systems is more consistent with real shared taxa.
+```{r fig.width=7, fig.height=6}
+n_dominant = asv_summary %>%
+  count(source = dominant_system, name = "n_dominant")
+
+spillover = plot_data %>%
+  filter(!is_dominant) %>%
+  mutate(source = factor(dominant_system, levels = possible_study_systems),
+         detected_in = factor(study_system, levels = possible_study_systems)) %>%
+  group_by(source, detected_in) %>%
+  summarise(n_asvs = n(),
+            n_local = sum(local_status == "local"),
+            n_other_system = sum(local_status == "other_system"),
+            n_not_in_run = sum(local_status == "not_in_run"),
+            n_other_status = n_asvs - n_local - n_other_system - n_not_in_run,
+            n_review = sum(!is.na(review_case)),
+            median_log10_ratio = median(log10_ratio_to_dominant),
+            median_rel_abund_max = median(rel_abund_max),
+            .groups = "drop") %>%
+  left_join(n_dominant, by = "source") %>%
+  mutate(frac_of_source = n_asvs / n_dominant)
+
+spillover_grid = expand_grid(source = factor(possible_study_systems, levels = possible_study_systems),
+                             detected_in = factor(possible_study_systems, levels = possible_study_systems)) %>%
+  left_join(spillover %>% select(source, detected_in, n_asvs, frac_of_source, median_log10_ratio),
+            by = c("source", "detected_in")) %>%
+  left_join(n_dominant, by = "source") %>%
+  mutate(diagonal = source == detected_in,
+         n_asvs = replace_na(n_asvs, 0),
+         frac_of_source = replace_na(frac_of_source, 0),
+         label = if_else(diagonal,
+                         paste0(replace_na(n_dominant, 0), "\ndominant"),
+                         paste0(n_asvs, "\n", scales::percent(frac_of_source, accuracy = 0.1))),
+         hover = if_else(diagonal,
+                         paste0(source, ": ", replace_na(n_dominant, 0), " ASVs dominant here"),
+                         paste0(n_asvs, " ASVs dominant in ", source, " also detected in ", detected_in,
+                                "<br>median log10 ratio to dominant: ", round(median_log10_ratio, 2))))
+
+p_spillover = ggplot(spillover_grid, aes(x = detected_in, y = source, text = hover)) +
+  geom_tile(data = filter(spillover_grid, !diagonal), aes(fill = frac_of_source),
+            color = "white", linewidth = 1) +
+  geom_tile(data = filter(spillover_grid, diagonal), fill = "#e6e5e0", color = "white", linewidth = 1) +
+  geom_text(aes(label = label, color = !diagonal & frac_of_source > 0.15), size = 3.2) +
+  scale_fill_gradient(low = "#cde2fb", high = "#0d366b", name = "fraction of\nrow's ASVs") +
+  scale_color_manual(values = c(`TRUE` = "#ffffff", `FALSE` = "#0b0b0b"), guide = "none") +
+  scale_x_discrete(position = "top") +
+  scale_y_discrete(limits = rev) +
+  labs(x = "also detected in", y = "dominant in") +
+  theme_locality +
+  theme(panel.grid.major = element_blank())
+
+ggplotly(p_spillover, tooltip = "text")
+
+spillover %>%
+  arrange(desc(n_asvs)) %>%
+  mutate(across(c(median_log10_ratio, median_rel_abund_max, frac_of_source), \(x) signif(x, 2)))
+```
+
 ## Detection rate vs. relative abundance, by system
 
 One mark per (ASV, system). Likely contamination sits bottom-left (rare, trace). Confusing cases: `other_system` (orange) in the upper right -- GBIF says not local, but reads look real; `local` (blue) in the lower left of a system that isn't dominant for the ASV.
 ```{r fig.width=10, fig.height=8}
-p_scatter = ggplot(plot_data, aes(x = detection_rate, y = rel_abund_max,
+p_scatter = ggplot(plot_data %>%
+                     filter(!(local_status %in% c("unassessable", "anthropogenic"))), aes(x = detection_rate, y = rel_abund_max,
                                   color = local_status, shape = local_status, text = hover)) +
   geom_hline(yintercept = locality_min_rel_abund, linetype = "dashed", color = "#52514e", linewidth = 0.4) +
   geom_point(size = 2, alpha = 0.8) +
@@ -523,12 +693,13 @@ ggplotly(p_calibration)
 
 Rows where GBIF and read evidence disagree at the current reference thresholds (`review_case`).
 ```{r}
-asv_locality %>%
+asv_review = asv_locality %>%
   filter(!is.na(review_case)) %>%
   arrange(review_case, study_system, desc(rel_abund_max)) %>%
   transmute(review_case,
             study_system,
             taxon = taxon_label,
+            taxonomic_rank,
             asv = substr(asv_id, 1, 8),
             recorded_in = systems_recorded,
             dominant = dominant_system,
@@ -537,4 +708,23 @@ asv_locality %>%
             log10_ratio = round(log10_ratio_to_dominant, 2),
             lab_ctrl = in_lab_controls) %>%
   knitr::kable()
+
+
+
+```
+
+# asv locality clean systems
+```{r}
+asv_locality_clean = asv_locality %>%
+  group_by(asv_id) %>%
+  summarize(n_systems = n(),
+            n_local = sum(local_status == "local"),
+            .groups = "drop") %>%
+  filter(n_systems == 1,
+         n_local == 1) %>%
+left_join(asv_locality, by = "asv_id") %>%
+  filter(class == "Amphibia") %>%
+  arrange(study_system,
+          desc(rel_abund_max))
+
 ```

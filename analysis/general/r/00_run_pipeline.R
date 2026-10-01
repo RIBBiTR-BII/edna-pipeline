@@ -41,7 +41,7 @@ if (isTRUE(run_config$gbif_query)) {
 
 render_step("06_classify_asv.Rmd")
 render_step("07_classify_asv_locality.Rmd")
-render_step("08_sample_controls.Rmd")
+render_step("08_contamination_filtering.Rmd")
 render_step("09_export_results.Rmd")
 
 cat("\nPipeline complete. Outputs saved under:", here(run_config$run_dir, "output"), "\n")

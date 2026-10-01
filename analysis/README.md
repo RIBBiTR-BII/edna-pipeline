@@ -77,8 +77,10 @@ You then have two options for running the scripts:
   - A likely taxonomy is assigned to each ASV following the hierarchy `accept_method`s if the given `accept_method` criteria are met. All assigned taxonomy from all methods, along with all hits, are exported to the specified `hybrid_classification_out` path.
   - The single "best" classifications (i.e. `accept_method` with greatest priority in hierarchy) for each ASV are exported to the specified `classification_out` path.
 
-8. **Control for Contamination** *(08_sample_controls.Rmd)*: This script calculates controlled ASV reads for each sample by subtracting any read counts found in controls (multiplied by a scaling factor `asv_control_th_factor`), with minimum controlled reads of 0.
-  - Lab positive and negative controls are applied to all samples globally, while field negative controls are applied to corresponding field samples only.
+8. **Contamination Filtering** *(08_contamination_filtering.Rmd)*: This script turns the flags from steps 6 and 7, and the read counts in the run's controls, into the clean read count for every sample x ASV. It is the only step that removes reads.
+  - Each row keeps the raw count next to the clean count; a removed detection gets a clean count of 0 and a `filter_reason` (`short_sequence`, `contaminant_library`, `anthropogenic`, `positive_control`, or `control_threshold`). Each filter can be switched off under `filters` in `00_pipeline_config.yml`.
+  - Control threshold: PCR and extraction negative controls are applied to all samples globally, while field negative controls are applied to corresponding field samples only (raw count minus `asv_control_th_factor` x the control's count, floored at 0).
+  - PCR positive-control components are identified by sequence from the positive controls, and removed outside the systems where they are local.
 
 9. **Export Results** *(09_export_results.Rmd)*: This script combines results from steps 3, 6, and 8, and as well as sample metadata from the RIBBiTR database, to create two cohesive outputs:
   a. for ASVs (reads, classifications, etc.)

@@ -68,6 +68,7 @@ asv_out = asv_controlled %>%
          asv_sequence,
          asv_reads_raw,
          asv_reads_controlled,
+         filter_reason,
          control_th_source,
          taxonomic_rank,
          domain,

@@ -1,0 +1,271 @@
+---
+title: "Contamination filtering"
+author: "Cob Staines"
+output: html_document
+---
+
+# Description
+
+This script turns the flags from scripts 06 and 07, and the read counts in the run's controls, into decisions: it produces the **clean** read count for every sample x ASV. It is the only step that removes reads; everything upstream only flags, and script 09 exports the clean counts.
+
+Every row keeps its raw count (`asv_count_raw`) next to the clean count (`asv_count_controlled`). A removed detection has a clean count of **0** (never NA), and `filter_reason` says why. Each filter also has its own logical column (`filter_*`), and can be switched off in `filters` (config). When several filters apply, `filter_reason` is the first in this order:
+
+1. `short_sequence`: ASV shorter than `short_sequence_length_cutoff` (script 06) -- primer-dimer / synthetic artifacts, not amplicon sequence
+2. `contaminant_library`: ASV matches the local contaminant library (script 06)
+3. `anthropogenic`: ASV's taxon is in `anthropogenic_taxa` (script 07), e.g. human DNA
+4. `positive_control`: ASV is a component of the PCR positive control (see below)
+5. `control_threshold`: raw count at or below the control threshold (see below)
+
+**Positive-control components** are found from the data: ASVs making up at least `positive_control_min_rel_abund` of the reads in a PCR positive control (median across the run's positive controls). They are identified by sequence (ASV), not taxon name, so real local ASVs of the same species with other sequences are untouched. Where a component is also local in a system (script 07 `local_status`), its detections there cannot be told apart from the positive control by sequence; `positive_control_remove_local` decides whether they are removed too (`positive_control_local` marks them either way).
+
+**Control threshold.** For each ASV, the maximum count in the run's PCR negative and extraction negative controls (applied to all samples), and in each field negative control group (applied to that group's samples only), whichever is larger, times `asv_control_th_factor`. The clean count is the raw count minus this threshold, floored at 0. Positive controls are **not** used here: reads of non-component ASVs in a positive control are leaks *into* it from samples, and subtracting them would remove real detections.
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, here)
+
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R); this is read
+# directly so the same values apply whether this script is run manually or via the driver
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
+
+# import run config file
+run_dir = here(pipeline_config$run_dir)
+cat(paste0("Run_dir: ", run_dir, "\n"))
+
+# read in config file
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+# which filters to apply (a filter switched off never removes reads, and its filter_* column is FALSE)
+filters_enabled = pipeline_config$filters
+
+# asv control threshold factor for field contaminants
+asv_control_th_factor = pipeline_config$asv_control_th_factor
+
+# positive-control components: min median share of positive-control reads, and whether to remove
+# them in systems where they are also local
+positive_control_min_rel_abund = pipeline_config$positive_control_min_rel_abund
+positive_control_remove_local = pipeline_config$positive_control_remove_local
+
+# input files
+classification_file = here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv"))
+locality_file = here(run_dir, "output", paste0(config$run$name, "_07_asv_locality.csv"))
+sample_map_file = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
+feature_table_file = here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"), "sample_table/feature-table.tsv")
+
+# control output file
+control_out = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv"))
+```
+
+# Load data
+```{r}
+asv_classification = read_csv(classification_file, show_col_types = FALSE)
+
+asv_flags = asv_classification %>%
+  select(asv_id,
+         contaminant_flag,
+         contaminant_id,
+         contaminant_p_identity,
+         short_sequence_flag)
+
+asv_locality = read_csv(locality_file, show_col_types = FALSE)
+
+# guess_max = Inf: some sample map columns are NA for most rows, and would otherwise be guessed
+# as logical and their later values dropped
+sample_map = read_csv(sample_map_file, show_col_types = FALSE, guess_max = Inf)
+
+sample_map_simple = sample_map %>%
+  mutate(sample_type = case_when(
+    pcr_control ~ pcr_control_type,
+    extraction_negative_control ~ "extraction_negative_control",
+    field_negative_control ~ "field_negative_control",
+    grepl("sterile", comments_edna_sample, ignore.case = TRUE) ~ "sterile",
+    .default = "sample")) %>%
+  select(feature_id,
+         edna_sequencing_id,
+         study_system,
+         extraction_negative_control,
+         pcr_control,
+         pcr_control_type,
+         field_negative_control,
+         field_negative_control_group,
+         sample_type)
+
+feature_table =
+  read_tsv(feature_table_file, skip = 1, show_col_types = FALSE) %>%
+  as.data.frame() %>%
+  rename("asv_id" = "#OTU ID") %>%
+  arrange(asv_id)
+
+sample_asv = feature_table %>%
+  pivot_longer(cols = -asv_id,
+               names_to = "feature_id",
+               values_to = "asv_count") %>%
+  left_join(sample_map_simple, by = "feature_id")
+```
+
+# Identify control ASVs
+```{r}
+# lab negative controls
+control_asv_pcr_neg = sample_asv %>%
+  filter(pcr_control_type == "pcr_negative_control") %>%
+  group_by(asv_id) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop") %>%
+  mutate(control_th_source = "pcr_nc")
+
+# extraction negative controls (pooled across run)
+control_asv_extraction = sample_asv %>%
+  filter(extraction_negative_control) %>%
+  group_by(asv_id) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop") %>%
+  mutate(control_th_source = "extraction_nc")
+
+# field negative controls
+control_asv_neg_field = sample_asv %>%
+  filter(field_negative_control) %>%
+  group_by(asv_id, field_negative_control_group) %>%
+  summarise(max_control_asv_count = max(asv_count),
+            .groups = "drop") %>%
+  mutate(control_th_source = "field")
+
+# per (asv, field negative control group): the largest of the lab-wide and the group's own control
+# counts (field_negative_control_group NA = samples outside any field negative group)
+control_asv = bind_rows(control_asv_pcr_neg,
+                        control_asv_extraction) %>%
+  cross_join(bind_rows(control_asv_neg_field %>%
+                         select(field_negative_control_group) %>%
+                         distinct(),
+                       tibble(field_negative_control_group = NA))) %>%
+  bind_rows(control_asv_neg_field) %>%
+  filter(max_control_asv_count > 0) %>%
+  group_by(asv_id, field_negative_control_group) %>%
+  slice_max(max_control_asv_count, n = 1, with_ties = FALSE) %>%
+  ungroup()
+```
+
+# Positive-control components
+```{r}
+positive_control_samples = sample_asv %>%
+  filter(pcr_control_type %in% "pcr_positive_control") %>%
+  group_by(feature_id) %>%
+  mutate(rel_abund = asv_count / sum(asv_count)) %>%
+  ungroup()
+
+positive_control_components = positive_control_samples %>%
+  group_by(asv_id) %>%
+  summarise(positive_control_median_rel_abund = median(rel_abund),
+            .groups = "drop") %>%
+  filter(positive_control_median_rel_abund >= positive_control_min_rel_abund) %>%
+  left_join(asv_classification %>% select(asv_id, genus, species), by = "asv_id") %>%
+  arrange(desc(positive_control_median_rel_abund))
+
+cat("Positive controls in run:", n_distinct(positive_control_samples$feature_id), "\n")
+cat("Positive-control components (median share >=", positive_control_min_rel_abund, "):\n")
+print(positive_control_components)
+
+# (asv, system) pairs where a component is also local
+positive_control_local_pairs = asv_locality %>%
+  filter(asv_id %in% positive_control_components$asv_id,
+         local_status == "local") %>%
+  select(asv_id, study_system)
+```
+
+# Apply filters & export
+```{r}
+# an ASV is anthropogenic if script 07 flags it in any system (the flag is taxon-based, so it also
+# applies in controls, which script 07 does not assess)
+anthropogenic_asvs = asv_locality %>%
+  filter(local_status == "anthropogenic") %>%
+  distinct(asv_id) %>%
+  pull(asv_id)
+
+filter_order = c("short_sequence", "contaminant_library", "anthropogenic", "positive_control", "control_threshold")
+
+sample_asv_control = sample_asv %>%
+  left_join(control_asv, by = c("asv_id", "field_negative_control_group")) %>%
+  left_join(asv_flags, by = "asv_id") %>%
+  left_join(positive_control_local_pairs %>% mutate(positive_control_local = TRUE),
+            by = c("asv_id", "study_system")) %>%
+  mutate(max_control_asv_count = replace_na(max_control_asv_count, 0),
+         asv_control_th = asv_control_th_factor * max_control_asv_count,
+         positive_control_component = asv_id %in% positive_control_components$asv_id,
+         positive_control_local = replace_na(positive_control_local, FALSE),
+         detected = asv_count > 0,
+         # each filter: applies only to detections, and only when switched on
+         filter_short_sequence = isTRUE(filters_enabled$short_sequence) & detected &
+           short_sequence_flag %in% TRUE,
+         filter_contaminant_library = isTRUE(filters_enabled$contaminant_library) & detected &
+           contaminant_flag %in% TRUE,
+         filter_anthropogenic = isTRUE(filters_enabled$anthropogenic) & detected &
+           asv_id %in% anthropogenic_asvs,
+         filter_positive_control = isTRUE(filters_enabled$positive_control) & detected &
+           positive_control_component & (positive_control_remove_local | !positive_control_local),
+         filter_control_threshold = isTRUE(filters_enabled$control_threshold) & detected &
+           asv_count <= asv_control_th,
+         filter_reason = case_when(
+           filter_short_sequence ~ "short_sequence",
+           filter_contaminant_library ~ "contaminant_library",
+           filter_anthropogenic ~ "anthropogenic",
+           filter_positive_control ~ "positive_control",
+           filter_control_threshold ~ "control_threshold",
+           .default = NA_character_),
+         # clean count: 0 when removed, otherwise raw minus the control threshold (if on), floored at 0
+         asv_count_controlled = case_when(
+           !is.na(filter_reason) ~ 0,
+           isTRUE(filters_enabled$control_threshold) ~ pmax(asv_count - asv_control_th, 0),
+           .default = asv_count),
+         detected_controlled = asv_count_controlled > 0) %>%
+  rename(asv_count_raw = asv_count) %>%
+  arrange(asv_id, desc(asv_count_raw)) %>%
+  select(asv_id,
+         feature_id,
+         edna_sequencing_id,
+         sample_type,
+         study_system,
+         asv_count_raw,
+         asv_count_controlled,
+         detected,
+         detected_controlled,
+         filter_reason,
+         starts_with("filter_"),
+         positive_control_component,
+         positive_control_local,
+         control_th_source,
+         max_control_asv_count,
+         asv_control_th,
+         contaminant_id,
+         contaminant_p_identity)
+
+write_csv(sample_asv_control, control_out)
+```
+
+# Filter summary
+
+Reads and detections removed by each filter (`filter_reason`, so each removed detection is counted once, under the first filter that applies), by sample type. `kept` rows are detections that survive; their reads are the clean counts.
+```{r}
+filter_summary = sample_asv_control %>%
+  filter(detected) %>%
+  mutate(filter_reason = factor(coalesce(filter_reason, "kept"), levels = c(filter_order, "kept")),
+         sample_type = if_else(sample_type == "sample", "sample", "control")) %>%
+  group_by(sample_type, filter_reason) %>%
+  summarise(detections = n(),
+            reads_raw = sum(asv_count_raw),
+            reads_clean = sum(asv_count_controlled),
+            .groups = "drop") %>%
+  group_by(sample_type) %>%
+  mutate(share_of_raw_reads = round(reads_raw / sum(reads_raw), 3)) %>%
+  ungroup()
+
+filter_summary
+
+# positive-control components in systems where they are also local: what positive_control_remove_local decides
+sample_asv_control %>%
+  filter(detected, positive_control_local) %>%
+  left_join(asv_classification %>% select(asv_id, genus, species), by = "asv_id") %>%
+  group_by(asv_id, genus, species, study_system) %>%
+  summarise(detections = n(),
+            reads_raw = sum(asv_count_raw),
+            removed = sum(filter_reason %in% "positive_control"),
+            .groups = "drop")
+```

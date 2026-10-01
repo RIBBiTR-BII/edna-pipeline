@@ -48,9 +48,10 @@ locality_min_rel_abund: 0.001
 locality_log_ratio_cutoff: -2
 
 # taxa commonly introduced by people (food, pets, handling) -- flagged `anthropogenic` in script 07
-# regardless of GBIF records. "Genus species" or "Genus".
+# regardless of GBIF records. "Genus species", "Genus", or "Family".
 anthropogenic_taxa:
   - Homo sapiens
+  - Hominidae
   - Bos taurus
   - Sus scrofa
   - Gallus gallus
@@ -62,12 +63,89 @@ anthropogenic_taxa:
   - Felis catus
 
 # taxa known to occur in a study system but missing from its GBIF records -- flagged `local` in
-# script 07 regardless of GBIF. study_system -> list of "Genus species" or "Genus".
+# script 07 regardless of GBIF. study_system -> list of "Genus species", "Genus", or "Family".
 local_overrides:
   brazil: []
   panama: []
   pennsylvania: []
   sierra_nevada: []
 
+# network export and analysis (script 11) -- exploratory only, nothing downstream reads it
+# build the network from "raw" detections (feature table) or "filtered" ones (script 08 output);
+# run both to compare before / after script 08
+network_input: filtered
+# ASV-ASV co-occurrence edges are kept when a pair shares at least this many samples and its
+# Jaccard similarity (shared / either) is at least this
+network_min_shared_samples: 3
+network_min_jaccard: 0.2
+# sample-sample similarity edges link each sample to its k most similar samples; only samples with
+# at least network_knn_min_asvs non-anthropogenic ASVs get edges (with one or two ASVs, any two
+# samples sharing them look identical)
+network_knn_k: 5
+network_knn_min_asvs: 3
+# random seed for Leiden community detection, so communities are reproducible
+network_seed: 20261001
+# Leiden modularity resolution (higher -> more, smaller communities)
+network_leiden_resolution: 1
+# permutations for the batch vs. ecology association tests
+network_n_permutations: 999
+# communities smaller than this (ASVs or samples) are not tested
+network_min_community_size: 3
+# cases whose status is already understood, printed side by side as a sanity check on the network
+# metrics. asv_id, expected (signal / contamination), optional study_system (summarize that
+# system's detections only), optional note.
+network_reference_cases:
+  - asv_id: 9ce84b93987bc3cd642c2cd4c01024d5
+    expected: contamination
+    note: Homo sapiens ubiquitous ASV
+  - asv_id: 0ca92cd74aec45312e94be27f0486885
+    expected: contamination
+    note: Lithobates clamitans/sylvaticus
+  - asv_id: 94358ea91140062b7847b1a495ec9880
+    expected: contamination
+    note: 32 bp synthetic-like amplicon between the primers, in ~82% of samples
+  - asv_id: 0ca92cd74aec45312e94be27f0486885
+    expected: contamination
+    note: Lithobates clamitans/sylvaticus, PCR positive-control component
+  - asv_id: ae575500c68f3266278fde3b7a12ad29
+    study_system: panama
+    expected: contamination
+    note: Agelaius phoeniceus, 6 reads in one field negative, same run as a 15% Pennsylvania sample
+  - asv_id: 9a6ed181d8f869f1f90b22c035701efa
+    study_system: pennsylvania
+    expected: signal
+    note: Ambystoma maculatum
+  - asv_id: 00dd2bb29513471ce62c573f03653dc6
+    study_system: panama
+    expected: signal
+    note: Colostethus panamansis
+  - asv_id: 7b429759bc40725e7818a4e831173606
+    study_system: brazil
+    expected: signal
+    note: Aplastodiscus leucopygius
+  - asv_id: b4a4bf200c318d20152cd25195c61f13
+    study_system: sierra_nevada
+    expected: signal
+    note: Rana muscosa/sierrae
+
+# contamination filtering (script 08) -- the only step that removes reads. A removed detection
+# gets a clean count of 0 and a filter_reason; a filter switched off here removes nothing
+filters:
+  short_sequence: true        # ASV shorter than short_sequence_length_cutoff (script 06)
+  contaminant_library: true   # ASV matches the local contaminant library (script 06)
+  anthropogenic: true         # taxon in anthropogenic_taxa (script 07)
+  positive_control: true      # PCR positive-control component ASV
+  control_threshold: true     # raw count at or below the control threshold
+
 # ASV control threshold factor for field contaminants (script 08)
 asv_control_th_factor: 100
+
+# an ASV is a positive-control component if it makes up at least this share of the reads in the
+# run's PCR positive controls (median across them); found by sequence, so other ASVs of the same
+# species are untouched (script 08)
+positive_control_min_rel_abund: 0.01
+# also remove positive-control components in systems where they are local (script 07)? There the
+# real taxon and the positive control share a sequence and cannot be told apart by sequence alone.
+# false: in this run the positive-control Lithobates sequence has ~3M reads in Pennsylvania samples,
+# far more than the positive controls hold, so most of it is real local DNA (script 08)
+positive_control_remove_local: false
