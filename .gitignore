@@ -16,6 +16,7 @@
 */analysis/*
 */runs/*
 *_classifier
+*.html
 .Rproj.user
 .positai
 
