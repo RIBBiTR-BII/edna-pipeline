@@ -1,0 +1,161 @@
+---
+title: "Validation sample"
+author: "Cob Staines"
+output: html_document
+---
+
+# Description
+
+This script draws the **validation sample** for the edge classification (script 13): a seeded, stratified random sample of field detections, to be labelled blind by hand (script 12's labelling mode) and used to score model versions. See "Validation protocol" in `analysis/README.md`.
+
+- **Population**: every detection (raw count > 0) in a field library, excluding ASVs hard-flagged in script 06 (`short_sequence`, `contaminant_library`) and the ASVs in `validation$exclude_asvs` (human ASVs: contamination by definition). Other edges clamped by script 13 are included, so the clamps are validated too. The exclusion list is fixed in the config, never taken from script 13, so the population does not move with the model.
+- **Strata**: group (`amphibian` = script 06 class Amphibia, `other`) x study system x abundance band, with x = reads / library reads excluding hard-flagged ASVs and bands split at `abundance_breaks`. Strata are defined from the data alone, never from any model's output.
+- **Draw**: `n_per_stratum` edges per stratum without replacement (all of them if the stratum is smaller), and within each stratum a random `development_share` assigned to the `development` set, the rest to the sealed `test` set (a fractional edge is assigned at random, so small strata reach the development set in proportion). A random `labelling_order` mixes strata, so they are not labelled in blocks.
+- **Waves**: the sample file is never overwritten. Raising `wave` draws a further `n_per_stratum` per stratum from the edges not yet sampled, and appends them. Each stratum's population size `N_h` is stored, so script 13 can weight every labelled edge by `N_h` / (labelled edges of the stratum).
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, here)
+
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R)
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
+
+run_dir = here(pipeline_config$run_dir)
+cat(paste0("Run_dir: ", run_dir, "\n"))
+
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+vc = pipeline_config$validation
+validation_dir = here(vc$dir)
+seed = as.integer(vc$seed)
+wave = as.integer(vc$wave)
+n_per_stratum = map_int(vc$n_per_stratum, as.integer)
+abundance_breaks = as.numeric(unlist(vc$abundance_breaks))
+development_share = as.numeric(vc$development_share)
+exclude_asvs = as.character(unlist(vc$exclude_asvs))
+
+possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
+
+# input files
+sample_map_file = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
+classification_file = here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv"))
+controlled_file = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv"))
+
+# output file
+validation_sample_file = file.path(validation_dir, paste0(config$run$name, "_validation_sample.csv"))
+```
+
+# Load data
+```{r}
+input_files = c(sample_map_file, classification_file, controlled_file)
+missing_inputs = input_files[!file.exists(input_files)]
+if (length(missing_inputs) > 0) {
+  stop("Missing input(s):\n\t", paste(missing_inputs, collapse = "\n\t"))
+}
+
+# guess_max = Inf: some sample map columns are NA for most rows, and would otherwise be guessed
+# as logical and their later values dropped
+sample_map = read_csv(sample_map_file, show_col_types = FALSE, guess_max = Inf)
+asv_classification = read_csv(classification_file, show_col_types = FALSE)
+asv_controlled = read_csv(controlled_file, show_col_types = FALSE, guess_max = Inf) %>%
+  select(asv_id, feature_id, asv_count_raw)
+
+existing_sample = if (file.exists(validation_sample_file)) {
+  read_csv(validation_sample_file, show_col_types = FALSE)
+} else {
+  NULL
+}
+if (!is.null(existing_sample) && wave %in% existing_sample$wave) {
+  stop("Wave ", wave, " is already in ", validation_sample_file,
+       ". The sample is never redrawn: raise `validation$wave` in the config to draw a further wave.")
+}
+```
+
+# Population
+```{r}
+study_systems = intersect(possible_study_systems, sample_map$study_system)
+
+field_libraries = sample_map %>%
+  filter(study_system %in% study_systems,
+         !(pcr_control %in% TRUE), !(extraction_negative_control %in% TRUE), !(field_negative_control %in% TRUE)) %>%
+  select(feature_id, study_system)
+
+hard_flagged_asvs = asv_classification %>%
+  filter(short_sequence_flag %in% TRUE | contaminant_flag %in% TRUE) %>%
+  pull(asv_id)
+
+population = asv_controlled %>%
+  filter(asv_count_raw > 0, !(asv_id %in% hard_flagged_asvs)) %>%
+  group_by(feature_id) %>%
+  mutate(library_reads = sum(asv_count_raw)) %>%
+  ungroup() %>%
+  # excluded ASVs leave the population, but stay in library_reads so strata do not depend on the list
+  filter(!(asv_id %in% exclude_asvs)) %>%
+  inner_join(field_libraries, by = "feature_id") %>%
+  left_join(asv_classification %>% select(asv_id, class_06 = class), by = "asv_id") %>%
+  transmute(asv_id, feature_id, study_system,
+            reads = asv_count_raw,
+            x_stratum = asv_count_raw / library_reads,
+            class_06,
+            group = if_else(class_06 %in% "Amphibia", "amphibian", "other"),
+            band = cut(x_stratum, c(0, abundance_breaks, Inf), right = FALSE,
+                       labels = c(paste0("<", abundance_breaks[1]),
+                                  paste0(abundance_breaks[-length(abundance_breaks)], "-", abundance_breaks[-1]),
+                                  paste0(">=", abundance_breaks[length(abundance_breaks)]))) %>% as.character(),
+            stratum = paste(group, study_system, band, sep = " | ")) %>%
+  add_count(stratum, name = "N_h") %>%
+  arrange(stratum, asv_id, feature_id)
+
+cat("population (field detections, hard flags and", length(exclude_asvs), "excluded ASVs left out):", nrow(population), "\n")
+population %>% count(group, study_system, band) %>%
+  pivot_wider(names_from = band, values_from = n, values_fill = 0) %>%
+  knitr::kable(caption = "population by stratum")
+```
+
+# Draw
+```{r}
+already_sampled = if (is.null(existing_sample)) tibble(asv_id = character(), feature_id = character()) else
+  existing_sample %>% select(asv_id, feature_id)
+
+# a separate, reproducible stream per wave
+set.seed(seed + wave)
+
+draw = population %>%
+  anti_join(already_sampled, by = c("asv_id", "feature_id")) %>%
+  group_by(stratum) %>%
+  group_modify(\(d, key) {
+    n = min(nrow(d), n_per_stratum[[d$group[1]]])
+    # randomised rounding: the fractional development edge goes to development with probability equal
+    # to the fraction, so small strata are not all pushed into one split (round() rounds half to even)
+    n_development = floor(n * development_share)
+    n_development = n_development + (runif(1) < n * development_share - n_development)
+    d %>% slice_sample(n = n) %>%
+      mutate(split = if_else(row_number() <= n_development, "development", "test"))
+  }) %>%
+  ungroup() %>%
+  mutate(wave = wave,
+         run_name = config$run$name,
+         seed = seed,
+         drawn_on = as.character(Sys.Date()))
+
+# random labelling order across strata, continuing after earlier waves
+offset = if (is.null(existing_sample)) 0L else max(existing_sample$labelling_order)
+draw = draw %>%
+  mutate(labelling_order = offset + sample(n())) %>%
+  arrange(labelling_order) %>%
+  mutate(validation_id = sprintf("v%04d", labelling_order)) %>%
+  select(validation_id, labelling_order, asv_id, feature_id, study_system, group, band, stratum, N_h,
+         split, wave, reads, x_stratum, class_06, run_name, seed, drawn_on)
+
+draw %>% count(group, study_system, band, split) %>%
+  pivot_wider(names_from = split, values_from = n, values_fill = 0) %>%
+  knitr::kable(caption = paste("wave", wave, "draw"))
+```
+
+# Write
+```{r}
+dir.create(validation_dir, showWarnings = FALSE, recursive = TRUE)
+validation_sample = bind_rows(existing_sample, draw)
+write_csv(validation_sample, validation_sample_file)
+cat("wrote", nrow(draw), "edges (", nrow(validation_sample), "in total ) to", validation_sample_file, "\n")
+```

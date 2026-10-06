@@ -86,6 +86,43 @@ You then have two options for running the scripts:
   a. for ASVs (reads, classifications, etc.)
   b. field samples (collection site, date, filter method, etc.)
   
+## Exploratory: Contamination Classification (steps 11-14)
+These scripts develop a classification of every detection as signal or contamination, as a possible successor to step 8's filters. They are not run by `00_run_pipeline.R`, and nothing downstream reads their outputs. Their settings are under `network_*`, `edge_classification` and `validation` in `00_pipeline_config.yml`.
+
+11. **Network Analysis** *(11_network_analysis.Rmd)*: builds the sample--ASV network, exports it for Gephi / Cytoscape, and tests ASV and sample communities for association with lab batches vs. ecology.
+12. **ASV Fingerprints** *(12_asv_fingerprints.qmd)*: an interactive viewer (one row of panels per ASV: field samples and field negatives per system, then lab controls) for spotting contamination patterns by eye. It also holds the blind labelling mode for the validation sample. Render it with `quarto render` (or the Render button in RStudio).
+13. **Edge Classification** *(13_edge_classification.Rmd)*: classifies every detection in a field library by an iterated log-odds score (the model is written out in the script's Description), and scores the model against the validation labels.
+14. **Validation Sample** *(14_validation_sample.Rmd)*: draws the seeded, stratified random sample of detections that is labelled by hand and used to score model versions.
+
+### Validation protocol
+*Agreed 2026-10-05. Follow it for every model change, so that versions are compared scientifically rather than tuned to individual cases.*
+
+1. **Reference standard.** A random sample of detections, labelled by hand as `signal`, `contamination` or `uncertain`. These labels are the reference standard. Hand-picked reference cases (`13_edge_labels.csv`) and GBIF locality (script 07) are sanity checks and secondary evidence only, and are never used to score or tune the model.
+2. **Population.** Every detection (raw count > 0) in a field library, excluding ASVs hard-flagged in step 6 (short sequence, contaminant library) and the ASVs listed in `validation$exclude_asvs` (the human ASVs, contamination by definition, so labelling them tells us nothing). The list is fixed in the config, never derived from script 13's clamps, so the population does not move with the model; metrics hold for the population without these ASVs. Other detections that script 13 clamps (e.g. PCR positive-control components) are included, so the clamp decisions are validated too. Control libraries are not sampled: their detections are contamination by definition.
+3. **Strata.** Group (`amphibian` = step 6 class Amphibia, `other`) x study system x abundance band (x = reads / library reads excluding hard flags; bands < 1e-3, 1e-3 to 1e-1, >= 1e-1). Strata are defined from the data alone, never from any model's output, so the same sample is fair to every model version.
+4. **Allocation.** 20 detections per amphibian stratum and 10 per other stratum (360 in total for four systems), drawn with a fixed seed. Amphibians are oversampled because they are the research target; weighting keeps estimates unbiased for both domains.
+5. **Development / test split.** Within each stratum, 2/3 of the draw goes to the **development** set and 1/3 to the **test** set, before any labelling. The development set may be looked at while improving the model. The test set stays **sealed** (`validation$evaluate_test_set: false`) and is scored only for a final comparison of candidate versions; record each test-set scoring in the change log below.
+6. **Blind labelling.** Label in script 12's labelling mode, which shows one sampled detection at a time with step 8 and script 13 information hidden. Use everything an expert would: the fingerprint pattern, taxonomy, GBIF, lab knowledge (e.g. species worked on in the lab). Do not browse script 13's labels for sampled ASVs before labelling them. Add a short note for the reason where useful. Labels autosave in the browser; export them with "export labels CSV" to the validation folder as `<run>_validation_labels.csv`, then re-render scripts 12 and 13.
+7. **Metrics.** Each labelled detection is weighted by its stratum's population over the number of labelled detections of that stratum in the split. Detections labelled `uncertain` are not scored. **Primary metric: cost per detection**, where a false signal (contamination called signal) costs **2**, a false contamination (signal called contamination) costs **1**, and leaving a detection unassigned costs **0.25**. Reported for the **amphibian** domain (primary, the research objective) and **all eDNA** (secondary), alongside coverage, false-signal rate, false-contamination rate and accuracy among assigned detections. Clamped detections count as contamination. Baselines: step 8 (removed = contamination) and "everything is signal".
+8. **Comparing versions.** Every version is scored on the same detections, so differences are paired. A stratified bootstrap (resampling within strata) gives 95% intervals for each version's cost and for its difference from step 8. A version counts as better only if its interval for the difference clearly excludes 0.
+9. **Rules for changing the model.**
+    - Every change is motivated by a contamination mechanism, written as a general rule. No case-by-case adjustments.
+    - Write the change and its rationale in the change log **before** seeing its effect on the development set.
+    - Development-set errors suggest mechanisms to examine; they are not targets to tune away.
+    - Prefer fewer terms and parameters: a change that does not clearly improve the development-set cost is not kept.
+    - Bump `edge_classification$model_version` with every change.
+10. **More labels.** If intervals are too wide, raise `validation$wave` and re-run step 14 to draw more detections from the same strata. The sample file is never redrawn or overwritten.
+11. **Files.** The sample and labels live in `analysis/general/r/validation/`. They are exempt from the repository's `*.csv` gitignore rule, so commit them: the labels are hand work that cannot be regenerated.
+
+### Model change log
+| version | date | change | rationale | development cost (amphibian / all eDNA) |
+|---|---|---|---|---|
+| v0 | 2026-10-03 | Initial model: U1 own negatives, U2 cross-talk, U3 replicates, U4 control share, R1-R3 neighbour votes; clamps for hard flags, control libraries and the ubiquitous human ASV; dynamic denominator. | Design discussion. | not scored |
+| v1 | 2026-10-03 | Clamp every detection of PCR positive-control component ASVs; cap U1's evidence for signal at +1 decade. | Gross positive-control contamination (e.g. *Lithobates* at high abundance in Brazil and Sierra Nevada) cannot be told from signal by read structure; absence from a few negatives is weak evidence. | not scored |
+| v2 | before 2026-10-05 | Cap U4's evidence for signal (logit 1); add 2,000 pseudo reads to field-library denominators; make R3 one-sided (sink evidence only). | Absence from negatives is weak evidence; a high x resting on few remaining reads is weak evidence; the library vote was snowballing towards signal. | not scored |
+
+v0-v2 were made before this protocol: they were motivated partly by inspecting individual cases, some judged with GBIF locality, which the protocol now rules out. They are the starting point, to be scored once the development set is labelled.
+
 ## After Preliminary Analysis
 
 You are now ready to move into your own analysis to address the research questions you have at hand!
