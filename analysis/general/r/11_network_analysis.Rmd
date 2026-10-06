@@ -62,7 +62,8 @@ cat(paste0("Run_dir: ", run_dir, "\n"))
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # which detections to build the network from: "raw" (feature table) or "filtered" (script 08)
-network_input = pipeline_config$network_input
+# network_input = pipeline_config$network_input
+network_input = "raw"
 if (!(network_input %in% c("raw", "filtered"))) {
   stop("network_input must be 'raw' or 'filtered', not '", network_input, "'")
 }
