@@ -1,0 +1,945 @@
+---
+title: "ASV fingerprints"
+author: "Cob Staines"
+format:
+  html:
+    embed-resources: true
+    page-layout: full
+    code-fold: true
+    code-summary: "Code"
+execute:
+  warning: false
+  message: false
+---
+
+# Description
+
+An interactive key for spotting contamination mechanisms by eye. Each ASV gets one row of panels, in a fixed column order: field samples and field negatives for each study system, then the lab controls (extraction negatives, PCR negatives, PCR positives). In each panel:
+
+- **points** are the libraries the ASV was detected in, at their within-sample relative abundance (log10 scale, shared by every panel and every ASV). Relative abundance is over all of the sample's raw reads, as in scripts 07 and 11.
+- **the bar under the panel** is the share of the group's libraries the ASV was detected in (`k/n` below it), so non-detections can be read too.
+- **hollow points** are detections that script 08 removes (hover for the reason); filled points are kept. "Hide removed" shows script 08's clean view.
+
+Hovering a point shows the library, and fades every point in the row that is not from the same sequencing run: cross-talk shows up as a trace smear sharing a run with a high-abundance source.
+
+Reads are **raw** (the denoised feature table, via script 08's `asv_count_raw`), so the key shows contamination before it is filtered. It only displays, it writes nothing. It needs scripts 03, 06, 07 and 08; script 11's ASV communities are added when its `raw` output exists.
+
+Patterns to look for:
+
+| pattern | likely mechanism |
+|---|---|
+| dense, high cloud in one system; sparse or absent in its field negatives and the lab columns | real local taxon |
+| high in one system, plus a faint smear (~1e-4 and below) in other systems / controls, sharing that run | cross-talk / tag-jumping |
+| thin presence across every column, extraction negatives detected as often as field samples or more | reagent (kitome) contamination |
+| high in PCR positives, trace elsewhere | positive-control leak |
+| concentrated in one system's field negatives and samples, absent in lab controls | field / gear carryover |
+
+# Fingerprints
+
+```{=html}
+<style>
+#fp-app { font-size: 13px; }
+#fp-controls { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-bottom: 6px; }
+#fp-controls label { display: flex; gap: 4px; align-items: center; margin: 0; }
+#fp-controls input[type=text] { width: 16em; }
+#fp-controls input[type=number] { width: 4.5em; }
+#fp-controls select, #fp-controls input { font-size: 12px; padding: 1px 4px; }
+#fp-body { display: grid; grid-template-columns: minmax(0, 1fr) 165px; gap: 12px; align-items: start; }
+#fp-legend { position: sticky; top: 8px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #444;
+  border-left: 1px solid #ddd; padding: 2px 0 2px 10px; }
+#fp-legend .head { font-weight: 600; margin-top: 6px; }
+#fp-legend .head:first-child { margin-top: 0; }
+#fp-legend .lk { cursor: default; border-radius: 3px; padding: 0 3px; margin-left: -3px; }
+#fp-legend .lk:hover { background: #eef1f5; }
+#fp-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+#fp-legend .sw.hollow { background: none !important; border: 1.5px solid #555; }
+.fp-pager { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.fp-pager button { font-size: 12px; padding: 0 8px; }
+#fp-header-wrap { position: sticky; top: 0; z-index: 5; background: #fff; border-bottom: 1px solid #ddd; }
+#fp-header-wrap svg, .fp-row svg { display: block; width: 100%; height: auto; }
+.fp-row { border-bottom: 1px solid #eee; padding: 4px 0 2px; }
+.fp-meta { display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: baseline; line-height: 1.4; }
+.fp-taxon { font-weight: 600; font-size: 14px; }
+.fp-sub { color: #666; font-size: 12px; }
+.fp-id { cursor: pointer; font-size: 11px; color: #555; background: #f2f2f2; padding: 0 4px; border-radius: 3px; }
+.fp-id:hover { background: #e3e3e3; }
+.fp-badge { font-size: 11px; padding: 0 5px; border-radius: 8px; border: 1px solid; white-space: nowrap; }
+.fp-row.hl circle.pt:not(.on) { opacity: 0.08; }
+.fp-row.hl circle.pt.on { stroke: #000; stroke-width: 0.8; }
+#fp-tooltip { position: fixed; pointer-events: none; z-index: 10; background: rgba(255,255,255,0.97); border: 1px solid #bbb;
+  border-radius: 4px; padding: 5px 8px; font-size: 12px; line-height: 1.35; box-shadow: 0 2px 6px rgba(0,0,0,0.15); display: none; max-width: 340px; }
+#fp-tooltip b { font-weight: 600; }
+#fp-empty { padding: 20px; color: #666; }
+#fp-labelbar { margin-bottom: 6px; }
+#fp-labelbar button { font-size: 12px; padding: 1px 10px; }
+#fp-labelpanel { display: none; border: 1px solid #c9d1dc; border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; background: #f8fafc; }
+#fp-app.labelling #fp-labelpanel { display: block; }
+#fp-app.labelling #fp-controls, #fp-app.labelling .fp-pager, #fp-app.labelling #fp-labelbar { display: none; }
+#fp-labelpanel .lrow { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: 4px 0; }
+#fp-labelpanel button { font-size: 12px; padding: 1px 8px; }
+#fp-labelpanel button.lab { font-size: 13px; padding: 2px 12px; border: 1.5px solid; border-radius: 4px; background: #fff; }
+#fp-labelpanel .lab-signal { border-color: #4e79a7; color: #4e79a7; }
+#fp-labelpanel .lab-contamination { border-color: #e15759; color: #e15759; }
+#fp-labelpanel .lab-uncertain { border-color: #8a8a8a; color: #6a6a6a; }
+#fp-labelpanel button.lab.on { color: #fff; }
+#fp-labelpanel .lab-signal.on { background: #4e79a7; }
+#fp-labelpanel .lab-contamination.on { background: #e15759; }
+#fp-labelpanel .lab-uncertain.on { background: #8a8a8a; }
+#fp-labelpanel .warn { color: #b3261e; font-weight: 600; }
+#fp-labelpanel input[type=text] { font-size: 12px; padding: 1px 4px; }
+</style>
+
+<div id="fp-app">
+  <div id="fp-labelbar"></div>
+  <div id="fp-labelpanel"></div>
+  <div id="fp-controls">
+    <label>Search <input type="text" id="fp-q" placeholder="taxon, family, ASV id…"></label>
+    <label>Class <select id="fp-class"></select></label>
+    <label>Order <select id="fp-order"></select></label>
+    <label>Family <select id="fp-family"></select></label>
+    <label>Sort <select id="fp-sort">
+      <option value="reads">total reads</option>
+      <option value="detections">detections</option>
+      <option value="systems">systems detected</option>
+      <option value="ext_neg">extraction neg detection rate</option>
+      <option value="field_neg">field neg detection rate</option>
+      <option value="lab_max">max rel. abund. in lab controls</option>
+      <option value="rel_max">max rel. abund.</option>
+      <option value="removed">share removed by 08</option>
+      <option value="taxon">taxon (A–Z)</option>
+    </select></label>
+    <label>Status (any system) <select id="fp-status"><option value="">any</option></select></label>
+    <label>Script 08 <select id="fp-outcome">
+      <option value="">any</option>
+      <option value="none">nothing removed</option>
+      <option value="some">some removed</option>
+      <option value="all">all removed</option>
+    </select></label>
+    <label>Detected in <select id="fp-detin"><option value="">any group</option></select></label>
+    <label>Min detections <input type="number" id="fp-mindet" min="0" value="1"></label>
+    <label><input type="checkbox" id="fp-ref"> reference cases only</label>
+    <label>Colour by <select id="fp-color">
+      <option value="run">sequencing run</option>
+      <option value="outcome">script 08 outcome</option>
+    </select></label>
+    <label><input type="checkbox" id="fp-hide"> hide removed</label>
+    <label>Per page <select id="fp-pagesize">
+      <option>10</option><option selected>25</option><option>50</option><option>100</option>
+    </select></label>
+  </div>
+  <div id="fp-body">
+    <div id="fp-main">
+      <div class="fp-pager" id="fp-pager-top"></div>
+      <div id="fp-header-wrap"><svg id="fp-header"></svg></div>
+      <div id="fp-rows"></div>
+      <div class="fp-pager" id="fp-pager-bottom"></div>
+    </div>
+    <div id="fp-legend"></div>
+  </div>
+  <div id="fp-tooltip"></div>
+</div>
+
+<script>
+// runs after the page (and the embedded data, further down) has loaded
+document.addEventListener("DOMContentLoaded", function () {
+  const D = window.FP_DATA;
+  const A = D.asvs, S = D.samples, det = D.detections;
+  const nA = A.asv_id.length, nD = det.asv.length;
+
+  // ---- groups / geometry ----------------------------------------------------------------------
+  const groups = D.groups.group.map((g, i) => ({
+    id: g, label: D.groups.label[i], sublabel: D.groups.sublabel[i],
+    kind: D.groups.kind[i], system: D.groups.study_system[i], n: 0 }));
+  for (let s = 0; s < S.feature_id.length; s++) groups[S.group[s]].n++;
+  const groupsOfKind = k => groups.map((g, i) => g.kind === k ? i : -1).filter(i => i >= 0);
+  const fieldIdx = groupsOfKind("field_sample"), fieldNegIdx = groupsOfKind("field_negative");
+  const extIdx = groups.findIndex(g => g.id === "extraction_negative");
+  const nFieldNeg = fieldNegIdx.reduce((t, g) => t + groups[g].n, 0);
+
+  const G = { left: 40, right: 6, panelW: 92, gap: 5, groupGap: 14, top: 3, plotH: 104, barGap: 4, barH: 7, countH: 13 };
+  const px = [];
+  { let x = G.left;
+    groups.forEach((g, i) => {
+      if (i > 0) { x += G.gap; if (groups[i - 1].system !== g.system) x += G.groupGap; }
+      px.push(x); x += G.panelW;
+    });
+    G.W = x + G.right; }
+  G.plotTop = G.top; G.plotBottom = G.top + G.plotH;
+  G.barY = G.plotBottom + G.barGap;
+  G.H = G.barY + G.barH + G.countH;
+
+  let minRel = 1;
+  for (let d = 0; d < nD; d++) if (det.rel_abund[d] > 0 && det.rel_abund[d] < minRel) minRel = det.rel_abund[d];
+  const yMinLog = Math.min(-3, Math.floor(Math.log10(minRel)));
+  const y = r => G.plotTop + 3 + (-Math.log10(r) / -yMinLog) * (G.plotH - 6);
+
+  // deterministic jitter per library, so points don't move between redraws
+  const jitter = S.feature_id.map((f, i) => { let h = 2166136261; for (const c of f) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return ((h >>> 0) / 4294967295) - 0.5; });
+
+  // ---- colours --------------------------------------------------------------------------------
+  const runPalette = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7",
+                      "#9c755f", "#17becf", "#7f7f7f", "#bcbd22"];
+  const runColor = D.runs.map((r, i) => runPalette[i % runPalette.length]);
+  const label13Colors = { signal: "#4e79a7", contamination: "#e15759", unassigned: "#f2b134", unstable: "#f28e2b", clamped: "#7f7f7f" };
+  const outcomeColors = { kept: "#4e79a7", short_sequence: "#9c755f", contaminant_library: "#b07aa1",
+                          anthropogenic: "#e15759", positive_control: "#f28e2b", control_threshold: "#59a14f", removed: "#7f7f7f" };
+  const statusColors = { local: "#2e7d32", local_genus_only: "#7cb342", other_system: "#ef6c00", not_in_run: "#c62828",
+                         anthropogenic: "#7b1fa2", unassessable: "#757575" };
+  const keptIdx = D.outcomes.indexOf("kept");
+  const isKept = d => det.outcome[d] === keptIdx;
+
+  // ---- per-ASV detections and stats -----------------------------------------------------------
+  const asvDet = Array.from({ length: nA }, () => []);
+  for (let d = 0; d < nD; d++) asvDet[det.asv[d]].push(d);
+  // within each ASV, draw low-abundance points last so trace detections stay visible
+  asvDet.forEach(ds => ds.sort((a, b) => det.rel_abund[b] - det.rel_abund[a]));
+
+  function computeStats(hide) {
+    return asvDet.map(ds => {
+      const per = new Array(groups.length).fill(0);
+      const reasons = new Set();
+      let n = 0, removed = 0, maxRel = 0, maxLab = 0;
+      for (const d of ds) {
+        const kept = isKept(d);
+        if (!kept) { removed++; reasons.add(det.outcome[d]); }
+        if (hide && !kept) continue;
+        const g = S.group[det.sample[d]], r = det.rel_abund[d];
+        per[g]++; n++;
+        if (r > maxRel) maxRel = r;
+        if (groups[g].kind === "lab_control" && r > maxLab) maxLab = r;
+      }
+      return { per, n, removed, reasons, maxRel, maxLab,
+               removedShare: ds.length ? removed / ds.length : 0,
+               nSystems: fieldIdx.filter(g => per[g] > 0).length,
+               extRate: extIdx >= 0 && groups[extIdx].n ? per[extIdx] / groups[extIdx].n : 0,
+               fieldNegRate: nFieldNeg ? fieldNegIdx.reduce((t, g) => t + per[g], 0) / nFieldNeg : 0 };
+    });
+  }
+  const statsCache = {};
+  const stats = () => (statsCache[state.hide] ??= computeStats(state.hide));
+
+  const statusCols = D.study_systems.map(s => A["status_" + s] || new Array(nA).fill(null));
+  const searchText = A.asv_id.map((id, a) =>
+    [A.label[a], id, A.class[a], A.order[a], A.family[a], A.asv_community[a], A.reference_note[a]]
+      .filter(Boolean).join(" ").toLowerCase());
+
+  // ---- controls -------------------------------------------------------------------------------
+  const state = { q: "", class: "", order: "", family: "", sort: "reads", status: "", outcome: "", detIn: "", minDet: 1, refOnly: false,
+                  color: "run", hide: false, page: 0, pageSize: 25 };
+  const $ = id => document.getElementById(id);
+  if (D.labels13) $("fp-color").insertAdjacentHTML("beforeend", `<option value="label13">script 13 label</option>`);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  const statuses = [...new Set(statusCols.flat().filter(Boolean))].sort();
+  statuses.forEach(s => $("fp-status").insertAdjacentHTML("beforeend", `<option value="${s}">${s}</option>`));
+  D.outcomes.forEach((o, i) => { if (o !== "kept") $("fp-outcome").insertAdjacentHTML("beforeend", `<option value="r:${i}">removed by ${o}</option>`); });
+  groups.forEach((g, i) => $("fp-detin").insertAdjacentHTML("beforeend",
+    `<option value="${i}">${g.label === "Lab" ? "" : g.label + " "}${g.sublabel}</option>`));
+
+  const bind = (id, key, ev, parse) => $(id).addEventListener(ev, e => {
+    state[key] = parse(e.target); if (key !== "color") state.page = 0; render(); });
+  bind("fp-q", "q", "input", t => t.value);
+
+  // taxonomy filters: each list only offers values under the ranks chosen above it, with ASV counts
+  const taxonRanks = ["class", "order", "family"];
+  const NONE = "(unclassified)";
+  const taxonValue = (rank, a) => A[rank][a] || NONE;
+  const taxonMatch = (a, upTo) => taxonRanks.slice(0, upTo).every(r => !state[r] || taxonValue(r, a) === state[r]);
+  function fillTaxonSelects(from) {
+    taxonRanks.forEach((rank, k) => {
+      if (k < from) return;
+      const counts = new Map();
+      for (let a = 0; a < nA; a++) if (taxonMatch(a, k)) counts.set(taxonValue(rank, a), (counts.get(taxonValue(rank, a)) || 0) + 1);
+      const values = [...counts.keys()].sort((x, y) => (x === NONE) - (y === NONE) || x.localeCompare(y));
+      if (!counts.has(state[rank])) state[rank] = "";
+      $("fp-" + rank).innerHTML = `<option value="">any</option>` + values.map(v =>
+        `<option value="${esc(v)}"${v === state[rank] ? " selected" : ""}>${esc(v)} (${counts.get(v)})</option>`).join("");
+    });
+  }
+  taxonRanks.forEach((rank, k) => $("fp-" + rank).addEventListener("change", e => {
+    state[rank] = e.target.value;
+    taxonRanks.slice(k + 1).forEach(r => { state[r] = ""; });
+    fillTaxonSelects(k + 1);
+    state.page = 0;
+    render();
+  }));
+  fillTaxonSelects(0);
+  bind("fp-sort", "sort", "change", t => t.value);
+  bind("fp-status", "status", "change", t => t.value);
+  bind("fp-outcome", "outcome", "change", t => t.value);
+  bind("fp-detin", "detIn", "change", t => t.value);
+  bind("fp-mindet", "minDet", "input", t => +t.value || 0);
+  bind("fp-ref", "refOnly", "change", t => t.checked);
+  bind("fp-color", "color", "change", t => t.value);
+  bind("fp-hide", "hide", "change", t => t.checked);
+  bind("fp-pagesize", "pageSize", "change", t => +t.value);
+
+  // ---- filter / sort --------------------------------------------------------------------------
+  const sorters = {
+    reads: (a, b, st) => A.total_reads[b] - A.total_reads[a],
+    detections: (a, b, st) => st[b].n - st[a].n,
+    systems: (a, b, st) => st[b].nSystems - st[a].nSystems || st[b].n - st[a].n,
+    ext_neg: (a, b, st) => st[b].extRate - st[a].extRate || st[b].n - st[a].n,
+    field_neg: (a, b, st) => st[b].fieldNegRate - st[a].fieldNegRate || st[b].n - st[a].n,
+    lab_max: (a, b, st) => st[b].maxLab - st[a].maxLab,
+    rel_max: (a, b, st) => st[b].maxRel - st[a].maxRel,
+    removed: (a, b, st) => st[b].removedShare - st[a].removedShare || st[b].n - st[a].n,
+    taxon: (a, b, st) => A.label[a].localeCompare(A.label[b]),
+  };
+
+  function selection() {
+    const st = stats(), q = state.q.trim().toLowerCase(), out = [];
+    for (let a = 0; a < nA; a++) {
+      const s = st[a];
+      if (s.n < state.minDet) continue;
+      if (q && !searchText[a].includes(q)) continue;
+      if (!taxonMatch(a, taxonRanks.length)) continue;
+      if (state.status && !statusCols.some(col => col[a] === state.status)) continue;
+      if (state.refOnly && !A.reference_note[a]) continue;
+      if (state.detIn !== "" && !(s.per[+state.detIn] > 0)) continue;
+      const o = state.outcome;
+      if (o === "none" && s.removed > 0) continue;
+      if (o === "some" && s.removed === 0) continue;
+      if (o === "all" && s.removed < asvDet[a].length) continue;
+      if (o.startsWith("r:") && !s.reasons.has(+o.slice(2))) continue;
+      out.push(a);
+    }
+    const f = sorters[state.sort];
+    return out.sort((a, b) => f(a, b, st));
+  }
+
+  // ---- drawing --------------------------------------------------------------------------------
+  const fmtInt = n => n.toLocaleString();
+  const fmtRel = r => r >= 0.01 ? (100 * r).toFixed(1) + "%" : r.toExponential(1);
+  const decLabel = k => k === 0 ? "1" : "1e" + k;
+
+  function panelsBackground() {
+    let s = "";
+    groups.forEach((g, i) => {
+      s += `<rect x="${px[i]}" y="${G.plotTop}" width="${G.panelW}" height="${G.plotH}" fill="${g.kind === "lab_control" ? "#f7f4ef" : g.kind === "field_negative" ? "#f3f5f8" : "#f8f9fa"}"/>`;
+    });
+    for (let k = 0; k >= yMinLog; k--) {
+      const yy = y(Math.pow(10, k));
+      groups.forEach((g, i) => { s += `<line x1="${px[i]}" x2="${px[i] + G.panelW}" y1="${yy}" y2="${yy}" stroke="#e2e4e8" stroke-width="0.6"/>`; });
+      if (k % 2 === 0) s += `<text x="${G.left - 4}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#777">${decLabel(k)}</text>`;
+    }
+    if (D.locality_min_rel_abund) {
+      const yy = y(D.locality_min_rel_abund);
+      groups.forEach((g, i) => { s += `<line x1="${px[i]}" x2="${px[i] + G.panelW}" y1="${yy}" y2="${yy}" stroke="#c9a227" stroke-width="0.7" stroke-dasharray="3 2"/>`; });
+    }
+    s += `<text x="${G.left - 4}" y="${G.barY + G.barH - 1}" text-anchor="end" font-size="9" fill="#777">det.</text>`;
+    return s;
+  }
+  let background = panelsBackground();
+
+  function drawHeader() {
+    const h = 40;
+    let s = "";
+    groups.forEach((g, i) => {
+      const cx = px[i] + G.panelW / 2;
+      const showLabel = i === 0 || groups[i - 1].system !== g.system;
+      if (showLabel) s += `<text x="${px[i]}" y="12" font-size="11" font-weight="600" fill="#333">${esc(g.label)}</text>`;
+      s += `<text x="${cx}" y="25" font-size="10.5" text-anchor="middle" fill="#444">${esc(g.sublabel)}</text>`;
+      s += `<text x="${cx}" y="37" font-size="9.5" text-anchor="middle" fill="#888">n = ${g.n}</text>`;
+    });
+    s += `<text x="${G.left - 4}" y="37" font-size="9" text-anchor="end" fill="#777">rel. ab.</text>`;
+    const svg = $("fp-header");
+    svg.setAttribute("viewBox", `0 0 ${G.W} ${h}`);
+    svg.innerHTML = s;
+  }
+
+  function badge(text, color, title) {
+    return `<span class="fp-badge" style="color:${color};border-color:${color}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)}</span>`;
+  }
+
+  // target: a detection index to highlight, for blind labelling (hides script 08 / 13 information)
+  function rowHtml(a, st, target) {
+    const s = st[a], blind = target !== undefined;
+    let meta = `<span class="fp-taxon">${esc(A.label[a])}</span>`;
+    const lineage = [A.class[a], A.order[a], A.family[a]].filter(Boolean).join(" / ");
+    meta += `<span class="fp-sub">${esc(A.taxonomic_rank[a] || "")}${lineage ? " · " + esc(lineage) : ""}</span>`;
+    meta += `<code class="fp-id" data-id="${A.asv_id[a]}" title="click to copy full ASV id">${A.asv_id[a].slice(0, 8)}</code>`;
+    meta += `<span class="fp-sub">${A.sequence_length[a] ?? "?"} bp · ${fmtInt(A.total_reads[a])} reads · ${asvDet[a].length} detections${s.removed && !blind ? ` (${s.removed} removed by 08)` : ""}</span>`;
+    D.study_systems.forEach((sys, k) => {
+      const v = statusCols[k][a];
+      if (v) meta += badge(`${D.system_codes[sys]}: ${v}`, statusColors[v] || "#555", D.system_labels[sys]);
+    });
+    if (A.short_sequence_flag[a]) meta += badge("short sequence", "#9c755f");
+    if (A.contaminant_flag[a]) meta += badge("contaminant library" + (A.contaminant_id[a] ? ": " + A.contaminant_id[a] : ""), "#b07aa1");
+    if (A.positive_control_component[a]) meta += badge("PCR+ component", "#f28e2b");
+    if (A.asv_community[a]) meta += badge(A.asv_community[a], "#455a64", "script 11 co-occurrence community");
+    if (A.reference_note[a]) meta += badge("ref: " + A.reference_note[a], "#000");
+
+    let svg = background;
+    groups.forEach((g, i) => {
+      const k = s.per[i], rate = g.n ? k / g.n : 0;
+      const bw = k > 0 ? Math.max(1.5, rate * G.panelW) : 0;
+      svg += `<rect x="${px[i]}" y="${G.barY}" width="${G.panelW}" height="${G.barH}" fill="#e6e6e6"/>`;
+      if (bw) svg += `<rect x="${px[i]}" y="${G.barY}" width="${bw}" height="${G.barH}" fill="#37474f"/>`;
+      svg += `<text x="${px[i] + G.panelW / 2}" y="${G.barY + G.barH + 10}" font-size="9.5" text-anchor="middle" fill="${k ? "#333" : "#aaa"}">${k}/${g.n}</text>`;
+    });
+    for (const d of asvDet[a]) {
+      const kept = blind || isKept(d);
+      if (state.hide && !kept) continue;
+      const smp = det.sample[d], g = S.group[smp];
+      const cx = px[g] + G.panelW / 2 + jitter[smp] * G.panelW * 0.8;
+      const col = state.color === "run" ? runColor[S.run[smp]]
+        : state.color === "label13" ? (det.label13[d] != null ? label13Colors[D.labels13[det.label13[d]]] : "#ccc")
+        : outcomeColors[D.outcomes[det.outcome[d]]] || "#555";
+      svg += kept
+        ? `<circle class="pt" data-d="${d}" cx="${cx.toFixed(1)}" cy="${y(det.rel_abund[d]).toFixed(1)}" r="2.6" fill="${col}" fill-opacity="0.8"/>`
+        : `<circle class="pt" data-d="${d}" cx="${cx.toFixed(1)}" cy="${y(det.rel_abund[d]).toFixed(1)}" r="2.4" fill="#fff" fill-opacity="0.01" stroke="${col}" stroke-width="1.1"/>`;
+    }
+    if (blind) {
+      const smp = det.sample[target], g = S.group[smp];
+      const cx = px[g] + G.panelW / 2 + jitter[smp] * G.panelW * 0.8, cy = y(det.rel_abund[target]);
+      svg += `<rect x="${px[g]}" y="${G.plotTop}" width="${G.panelW}" height="${G.plotH}" fill="none" stroke="#000" stroke-width="1"/>`;
+      svg += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="7" fill="none" stroke="#000" stroke-width="1.8" pointer-events="none"/>`;
+    }
+    return `<div class="fp-row"><div class="fp-meta">${meta}</div>
+      <svg viewBox="0 0 ${G.W} ${G.H}">${svg}</svg></div>`;
+  }
+
+  function drawLegend() {
+    let s = "";
+    if (state.labelMode) {
+      s += `<span class="head">Sequencing run</span>`;
+      D.runs.forEach((r, i) => { s += `<span class="lk" data-k="run:${i}"><span class="sw" style="background:${runColor[i]}"></span>${esc(r)}</span>`; });
+      s += `<span class="head">Symbols</span><span><svg width="16" height="16"><circle cx="8" cy="8" r="6" fill="none" stroke="#000" stroke-width="1.8"/></svg> edge to label</span>`;
+      s += `<span><svg width="20" height="8"><line x1="0" x2="20" y1="4" y2="4" stroke="#c9a227" stroke-dasharray="3 2"/></svg> ${D.locality_min_rel_abund} (07 non-trace)</span>`;
+      $("fp-legend").innerHTML = s;
+      return;
+    }
+    if (state.color === "run") {
+      const nRun = D.runs.map(() => 0);
+      S.run.forEach(r => nRun[r]++);
+      s += `<span class="head">Sequencing run</span>`;
+      D.runs.forEach((r, i) => { s += `<span class="lk" data-k="run:${i}"><span class="sw" style="background:${runColor[i]}"></span>${esc(r)} (${nRun[i]})</span>`; });
+    } else if (state.color === "label13") {
+      s += `<span class="head">Script 13 label</span>`;
+      D.labels13.forEach((o, i) => { s += `<span class="lk" data-k="label13:${i}"><span class="sw" style="background:${label13Colors[o]}"></span>${o}</span>`; });
+    } else {
+      s += `<span class="head">Script 08 outcome</span>`;
+      D.outcomes.forEach((o, i) => { s += `<span class="lk" data-k="outcome:${i}"><span class="sw" style="background:${outcomeColors[o]}"></span>${o}</span>`; });
+    }
+    s += `<span class="head">Symbols</span><span class="lk" data-k="kept:1"><span class="sw" style="background:#555"></span>kept</span>`;
+    s += `<span class="lk" data-k="kept:0"><span class="sw hollow"></span>removed by 08</span>`;
+    s += `<span><svg width="20" height="8"><line x1="0" x2="20" y1="4" y2="4" stroke="#c9a227" stroke-dasharray="3 2"/></svg> ${D.locality_min_rel_abund} (07 non-trace)</span>`;
+    $("fp-legend").innerHTML = s;
+  }
+
+  function drawPager(total) {
+    const pages = Math.max(1, Math.ceil(total / state.pageSize));
+    state.page = Math.min(state.page, pages - 1);
+    const html = `<button data-p="prev" ${state.page === 0 ? "disabled" : ""}>‹ prev</button>
+      <span>page ${state.page + 1} of ${pages} · ${fmtInt(total)} ASVs</span>
+      <button data-p="next" ${state.page >= pages - 1 ? "disabled" : ""}>next ›</button>`;
+    $("fp-pager-top").innerHTML = html;
+    $("fp-pager-bottom").innerHTML = html;
+  }
+  document.querySelectorAll(".fp-pager").forEach(el => el.addEventListener("click", e => {
+    const p = e.target.dataset && e.target.dataset.p;
+    if (!p) return;
+    state.page += p === "next" ? 1 : -1;
+    render();
+    if (e.currentTarget.id === "fp-pager-bottom") $("fp-pager-top").scrollIntoView();
+  }));
+
+  function render() {
+    if (state.labelMode) return renderLabelling();
+    const sel = selection(), st = stats();
+    drawPager(sel.length);
+    drawLegend();
+    const page = sel.slice(state.page * state.pageSize, (state.page + 1) * state.pageSize);
+    $("fp-rows").innerHTML = page.length ? page.map(a => rowHtml(a, st)).join("") : `<div id="fp-empty">No ASVs match.</div>`;
+  }
+
+  // ---- interaction ----------------------------------------------------------------------------
+  const tip = $("fp-tooltip");
+  $("fp-rows").addEventListener("mouseover", e => {
+    const c = e.target.closest("circle.pt");
+    if (!c) return;
+    const d = +c.dataset.d, smp = det.sample[d], g = groups[S.group[smp]];
+    const row = c.closest(".fp-row");
+    row.classList.add("hl");
+    row.querySelectorAll("circle.pt").forEach(p => p.classList.toggle("on", S.run[det.sample[+p.dataset.d]] === S.run[smp]));
+    tip.innerHTML = `<b>${esc(S.feature_id[smp])}</b><br>
+      ${esc(g.label === "Lab" ? g.sublabel : g.label + " " + g.sublabel)}${S.site[smp] ? " · " + esc(S.site[smp]) : ""}<br>
+      run ${esc(S.run[smp] != null ? D.runs[S.run[smp]] : "?")} · extracted ${esc(S.extraction_date[smp] || "?")}<br>
+      ${fmtInt(det.reads[d])} / ${fmtInt(S.sample_reads[smp])} reads (${fmtRel(det.rel_abund[d])})<br>
+      ${state.labelMode ? "" : `script 08: ${esc(D.outcomes[det.outcome[d]])}`}${!state.labelMode && D.labels13 && det.label13[d] != null
+        ? `<br>script 13: ${esc(D.labels13[det.label13[d]])}${det.clamp13[d] ? " (" + esc(det.clamp13[d]) + ")" : ""}${det.psig13[d] != null ? ` · Psig ${det.psig13[d].toFixed(2)}` : ""}`
+        : ""}`;
+    tip.style.display = "block";
+  });
+  $("fp-rows").addEventListener("mousemove", e => {
+    if (tip.style.display !== "block") return;
+    const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(e.clientX + pad, window.innerWidth - w - 4) + "px";
+    tip.style.top = (e.clientY + pad + h > window.innerHeight ? e.clientY - h - pad : e.clientY + pad) + "px";
+  });
+  $("fp-rows").addEventListener("mouseout", e => {
+    const c = e.target.closest("circle.pt");
+    if (!c) return;
+    c.closest(".fp-row").classList.remove("hl");
+    tip.style.display = "none";
+  });
+  // hovering a key entry highlights its points in every row on the page
+  const legendMatch = {
+    run: k => d => S.run[det.sample[d]] === k,
+    outcome: k => d => det.outcome[d] === k,
+    label13: k => d => det.label13[d] === k,
+    kept: k => d => isKept(d) === (k === 1),
+  };
+  $("fp-legend").addEventListener("mouseover", e => {
+    const item = e.target.closest(".lk");
+    if (!item) return;
+    const [type, k] = item.dataset.k.split(":");
+    const match = legendMatch[type](+k);
+    document.querySelectorAll("#fp-rows .fp-row").forEach(row => {
+      row.classList.add("hl");
+      row.querySelectorAll("circle.pt").forEach(p => p.classList.toggle("on", match(+p.dataset.d)));
+    });
+  });
+  $("fp-legend").addEventListener("mouseout", e => {
+    if (!e.target.closest(".lk")) return;
+    document.querySelectorAll("#fp-rows .fp-row.hl").forEach(row => row.classList.remove("hl"));
+  });
+  $("fp-rows").addEventListener("click", e => {
+    const el = e.target.closest(".fp-id");
+    if (!el) return;
+    navigator.clipboard?.writeText(el.dataset.id).then(() => {
+      const t = el.textContent; el.textContent = "copied"; setTimeout(() => { el.textContent = t; }, 800);
+    });
+  });
+
+  // ---- blind labelling of the validation sample (script 14) -----------------------------------
+  // Shows one sampled edge at a time, with script 08 / 13 information hidden. Labels autosave in
+  // this browser and are exported as a CSV to the validation folder; a re-render reads them back.
+  const V = D.validation && D.validation.validation_id ? D.validation : null;
+  const labelNames = ["signal", "contamination", "uncertain"];
+  const storeKey = "fp-validation-labels:" + D.run_name;
+  const exportKey = "fp-validation-exported:" + D.run_name;
+  const fileLabels = {};
+  let labels = {};
+  let vi = 0;
+  const store = {
+    get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+    set: (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} },
+  };
+  // keep the most recent label for each edge
+  function mergeLabel(id, rec) {
+    if (!rec || !labelNames.includes(rec.label)) return;
+    const cur = labels[id];
+    if (!cur || (rec.labelled_at || "") > (cur.labelled_at || "")) labels[id] = { label: rec.label, note: rec.note || "", labelled_at: rec.labelled_at || "" };
+  }
+  if (V) {
+    const L = D.validation_labels;
+    if (L && L.validation_id) L.validation_id.forEach((id, i) => {
+      fileLabels[id] = L.labelled_at[i] || "";
+      mergeLabel(id, { label: L.label[i], note: L.note[i], labelled_at: L.labelled_at[i] });
+    });
+    try { Object.entries(JSON.parse(store.get(storeKey) || "{}")).forEach(([id, rec]) => mergeLabel(id, rec)); } catch (e) {}
+    $("fp-labelbar").innerHTML = `<button id="fp-label-start">Label validation sample (blind)</button>`;
+    $("fp-label-start").addEventListener("click", () => {
+      state.saved = { color: state.color, hide: state.hide };
+      state.color = "run"; state.hide = false; state.labelMode = true;
+      const open = V.validation_id.findIndex(id => !labels[id]);
+      vi = open >= 0 ? open : 0;
+      $("fp-app").classList.add("labelling");
+      render();
+    });
+  }
+  const saveLabels = () => store.set(storeKey, JSON.stringify(labels));
+  function unexportedCount() {
+    const exported = store.get(exportKey) || "";
+    return Object.entries(labels).filter(([id, r]) => r.labelled_at > exported && r.labelled_at !== fileLabels[id]).length;
+  }
+
+  function renderLabelling() {
+    const d = V.detection[vi];
+    $("fp-rows").innerHTML = rowHtml(det.asv[d], stats(), d);
+    drawLegend();
+    drawLabelPanel();
+  }
+
+  function drawLabelPanel() {
+    const n = V.validation_id.length, id = V.validation_id[vi], d = V.detection[vi];
+    const smp = det.sample[d], g = groups[S.group[smp]], rec = labels[id];
+    const nDone = V.validation_id.filter(x => labels[x]).length, nOpen = unexportedCount();
+    $("fp-labelpanel").innerHTML = `
+      <div class="lrow"><b>${esc(id)}</b><span>${vi + 1} of ${n}</span><span>${nDone} labelled</span>
+        ${nOpen ? `<span class="warn">${nOpen} not exported</span>` : ""}
+        <span style="flex:1"></span>
+        <button data-v="prev">‹ prev [←]</button><button data-v="next">next [→] ›</button><button data-v="open">next unlabelled »</button></div>
+      <div class="lrow"><span>Edge: <b>${esc(A.label[det.asv[d]])}</b> in <b>${esc(S.feature_id[smp])}</b></span>
+        <span>${esc(g.label + " " + g.sublabel)}${S.site[smp] ? " · " + esc(S.site[smp]) : ""}</span>
+        <span>run ${esc(D.runs[S.run[smp]] ?? "?")} · extracted ${esc(S.extraction_date[smp] || "?")}</span>
+        <span>${fmtInt(det.reads[d])} / ${fmtInt(S.sample_reads[smp])} reads (${fmtRel(det.rel_abund[d])})</span></div>
+      <div class="lrow">${labelNames.map(l => `<button class="lab lab-${l}${rec && rec.label === l ? " on" : ""}" data-label="${l}">${l} [${l[0]}]</button>`).join("")}
+        <input type="text" id="fp-note" size="44" placeholder="note (optional, saved with the label)" value="${esc(rec ? rec.note : "")}">
+        ${rec ? `<span class="fp-sub">saved ${esc(rec.labelled_at.slice(0, 16).replace("T", " "))}</span>` : ""}</div>
+      <div class="lrow"><button data-v="export">export labels CSV</button>
+        <label class="fp-sub">import labels CSV <input type="file" id="fp-import" accept=".csv,text/csv"></label>
+        <span style="flex:1"></span><button data-v="exit">exit labelling</button></div>`;
+  }
+
+  function setLabel(label) {
+    const id = V.validation_id[vi];
+    mergeLabel(id, { label, note: ($("fp-note") || {}).value || "", labelled_at: new Date().toISOString() });
+    saveLabels();
+    if (vi < V.validation_id.length - 1) vi++;
+    render();
+  }
+
+  const csvField = v => /[",\n\r]/.test(v) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  function exportLabels() {
+    const head = ["validation_id", "asv_id", "feature_id", "label", "note", "labelled_at"];
+    const lines = [head.join(",")];
+    V.validation_id.forEach((id, i) => {
+      const r = labels[id];
+      if (!r) return;
+      const d = V.detection[i];
+      lines.push([id, A.asv_id[det.asv[d]], S.feature_id[det.sample[d]], r.label, r.note, r.labelled_at].map(csvField).join(","));
+    });
+    const url = URL.createObjectURL(new Blob([lines.join("\n") + "\n"], { type: "text/csv" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${D.run_name}_validation_labels.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    store.set(exportKey, new Date().toISOString());
+    render();
+  }
+
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], field = "", quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (quoted) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else quoted = false; }
+        else field += c;
+      } else if (c === '"') quoted = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n" || c === "\r") {
+        if (c === "\r" && text[i + 1] === "\n") i++;
+        row.push(field); rows.push(row); row = []; field = "";
+      } else field += c;
+    }
+    if (field !== "" || row.length) { row.push(field); rows.push(row); }
+    const head = rows.shift() || [];
+    return rows.filter(r => r.length > 1).map(r => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ""])));
+  }
+
+  if (V) {
+    $("fp-labelpanel").addEventListener("click", e => {
+      const b = e.target.closest("button");
+      if (!b) return;
+      if (b.dataset.label) return setLabel(b.dataset.label);
+      const v = b.dataset.v, n = V.validation_id.length;
+      if (v === "prev") vi = Math.max(0, vi - 1);
+      else if (v === "next") vi = Math.min(n - 1, vi + 1);
+      else if (v === "open") { const k = V.validation_id.findIndex((id, i) => i > vi && !labels[id]); if (k >= 0) vi = k; }
+      else if (v === "export") return exportLabels();
+      else if (v === "exit") {
+        state.labelMode = false;
+        Object.assign(state, state.saved);
+        $("fp-app").classList.remove("labelling");
+      }
+      render();
+    });
+    $("fp-labelpanel").addEventListener("change", e => {
+      if (e.target.id === "fp-note") {
+        const id = V.validation_id[vi];
+        if (labels[id]) { labels[id].note = e.target.value; labels[id].labelled_at = new Date().toISOString(); saveLabels(); }
+      } else if (e.target.id === "fp-import" && e.target.files[0]) {
+        const reader = new FileReader();
+        reader.onload = () => { parseCsv(reader.result).forEach(r => mergeLabel(r.validation_id, r)); saveLabels(); render(); };
+        reader.readAsText(e.target.files[0]);
+      }
+    });
+    document.addEventListener("keydown", e => {
+      if (!state.labelMode || e.target.tagName === "INPUT" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const n = V.validation_id.length;
+      if (e.key === "s") setLabel("signal");
+      else if (e.key === "c") setLabel("contamination");
+      else if (e.key === "u") setLabel("uncertain");
+      else if (e.key === "ArrowLeft") { vi = Math.max(0, vi - 1); render(); }
+      else if (e.key === "ArrowRight") { vi = Math.min(n - 1, vi + 1); render(); }
+    });
+  }
+
+  drawHeader();
+  render();
+});
+</script>
+```
+
+# Config
+```{r}
+librarian::shelf(tidyverse, yaml, here, jsonlite)
+
+# read shared pipeline config (see 00_pipeline_config.yml / 00_run_pipeline.R)
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
+
+run_dir = here(pipeline_config$run_dir)
+cat(paste0("Run_dir: ", run_dir, "\n"))
+
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+
+# drawn as a reference line on every panel (script 07's non-trace threshold)
+locality_min_rel_abund = pipeline_config$locality_min_rel_abund
+network_reference_cases = pipeline_config$network_reference_cases
+
+possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
+system_labels = c(brazil = "Brazil", panama = "Panama", pennsylvania = "Pennsylvania", sierra_nevada = "Sierra Nevada")
+system_codes = c(brazil = "BR", panama = "PN", pennsylvania = "PA", sierra_nevada = "SN")
+
+# script 08 filter reasons, in its order
+filter_reasons = c("short_sequence", "contaminant_library", "anthropogenic", "positive_control", "control_threshold")
+
+# input files
+sample_map_file = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
+classification_file = here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv"))
+locality_file = here(run_dir, "output", paste0(config$run$name, "_07_asv_locality.csv"))
+controlled_file = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv"))
+sequence_file = Sys.glob(here(run_dir, "analysis", paste0("s06_denoised_", config$taxonomy$gene, "_eDNA"),
+                              "representative_sequences", "*", "data", "dna-sequences.fasta"))[1]
+# optional (script 11, network_input = raw)
+network_metrics_file = here(run_dir, "output", paste0(config$run$name, "_11_raw_asv_network_metrics.csv"))
+# optional (script 13): adds "colour by script 13 label"
+edge_classification_file = here(run_dir, "output", paste0(config$run$name, "_13_edge_classification.csv"))
+# optional (script 14): adds the blind labelling mode for the validation sample, starting from any
+# labels already exported
+validation_dir = here(pipeline_config$validation$dir)
+validation_sample_file = file.path(validation_dir, paste0(config$run$name, "_validation_sample.csv"))
+validation_labels_file = file.path(validation_dir, paste0(config$run$name, "_validation_labels.csv"))
+```
+
+# Load data
+```{r}
+input_files = c(sample_map_file, classification_file, locality_file, controlled_file, sequence_file)
+missing_inputs = input_files[is.na(input_files) | !file.exists(input_files)]
+if (length(missing_inputs) > 0) {
+  stop("Missing input(s):\n\t", paste(missing_inputs, collapse = "\n\t"))
+}
+
+# guess_max = Inf: some sample map columns are NA for most rows, and would otherwise be guessed
+# as logical and their later values dropped
+sample_map = read_csv(sample_map_file, show_col_types = FALSE, guess_max = Inf)
+asv_classification = read_csv(classification_file, show_col_types = FALSE)
+asv_locality = read_csv(locality_file, show_col_types = FALSE)
+asv_controlled = read_csv(controlled_file, show_col_types = FALSE, guess_max = Inf) %>%
+  select(asv_id, feature_id, asv_count_raw, asv_count_controlled, filter_reason, positive_control_component)
+
+stopifnot(!anyDuplicated(sample_map$feature_id))
+
+# ASV sequences (multi-line records allowed)
+fasta_lines = read_lines(sequence_file)
+is_header = str_starts(fasta_lines, ">")
+record = cumsum(is_header)
+sequences = tibble(asv_id = word(str_remove(fasta_lines[is_header], "^>"), 1),
+                   sequence = unname(tapply(fasta_lines[!is_header], record[!is_header], paste, collapse = ""))) %>%
+  transmute(asv_id, sequence_length = nchar(sequence))
+```
+
+# Groups and samples
+```{r}
+study_systems = intersect(possible_study_systems, sample_map$study_system)
+
+# panel columns, in display order
+groups = bind_rows(
+  map_dfr(study_systems, \(s) tibble(group = paste0(s, c("_field", "_field_negative")),
+                                     label = system_labels[[s]],
+                                     sublabel = c("field", "field neg"),
+                                     kind = c("field_sample", "field_negative"),
+                                     study_system = s)),
+  tibble(group = c("extraction_negative", "pcr_negative", "pcr_positive"),
+         label = "Lab",
+         sublabel = c("extraction neg", "PCR neg", "PCR pos"),
+         kind = "lab_control",
+         study_system = NA_character_))
+
+sample_reads = asv_controlled %>%
+  group_by(feature_id) %>%
+  summarise(sample_reads = sum(asv_count_raw), .groups = "drop")
+
+samples_all = sample_map %>%
+  transmute(feature_id,
+            group = case_when(
+              pcr_control_type %in% "pcr_positive_control" ~ "pcr_positive",
+              pcr_control_type %in% "pcr_negative_control" ~ "pcr_negative",
+              extraction_negative_control %in% TRUE ~ "extraction_negative",
+              study_system %in% study_systems & field_negative_control %in% TRUE ~ paste0(study_system, "_field_negative"),
+              study_system %in% study_systems ~ paste0(study_system, "_field"),
+              .default = NA_character_),
+            site,
+            sequencing_date = as.character(sequencing_date),
+            extraction_date = as.character(extraction_date)) %>%
+  inner_join(sample_reads, by = "feature_id")
+
+cat("libraries without a panel group (not shown):", sum(is.na(samples_all$group)), "\n")
+cat("libraries with zero reads (not shown):", sum(samples_all$sample_reads == 0), "\n")
+
+samples = samples_all %>%
+  filter(!is.na(group), sample_reads > 0) %>%
+  arrange(match(group, groups$group), sequencing_date, feature_id)
+
+runs = sort(unique(samples$sequencing_date))
+
+samples %>%
+  count(group) %>%
+  right_join(groups %>% select(group, label, sublabel), by = "group") %>%
+  arrange(match(group, groups$group)) %>%
+  transmute(label, sublabel, n_libraries = replace_na(n, 0)) %>%
+  knitr::kable()
+```
+
+# Detections and ASVs
+```{r}
+outcomes = c("kept", filter_reasons, "removed")
+
+# every non-zero raw count; an outcome other than "kept" means script 08 removes it
+detections = asv_controlled %>%
+  filter(asv_count_raw > 0) %>%
+  inner_join(samples %>% select(feature_id, sample_reads), by = "feature_id") %>%
+  transmute(asv_id, feature_id,
+            reads = as.integer(asv_count_raw),
+            rel_abund = asv_count_raw / sample_reads,
+            outcome = case_when(asv_count_controlled > 0 ~ "kept",
+                                filter_reason %in% filter_reasons ~ filter_reason,
+                                .default = "removed"))
+
+taxonomy = asv_classification %>%
+  transmute(asv_id, taxonomic_rank, class, order, family,
+            taxon_06 = coalesce(if_else(!is.na(species), paste(genus, species), NA_character_),
+                                genus, family, order, class, phylum),
+            short_sequence_flag, contaminant_flag, contaminant_id)
+
+# script 07 status per system, one column per system (status_<system>)
+locality_status = asv_locality %>%
+  select(asv_id, study_system, local_status) %>%
+  pivot_wider(names_from = study_system, values_from = local_status, names_prefix = "status_")
+for (s in study_systems) {
+  if (!(paste0("status_", s) %in% names(locality_status))) locality_status[[paste0("status_", s)]] = NA_character_
+}
+
+reference_notes = map_dfr(network_reference_cases, \(x) tibble(asv_id = x$asv_id,
+                                                                 study_system = x$study_system %||% NA_character_,
+                                                                 expected = x$expected,
+                                                                 note = x$note %||% NA_character_)) %>%
+  mutate(reference_note = paste0(expected,
+                                 if_else(is.na(study_system), "", paste0(" (", study_system, ")")),
+                                 if_else(is.na(note), "", paste0(": ", note)))) %>%
+  group_by(asv_id) %>%
+  summarise(reference_note = paste(unique(reference_note), collapse = " | "), .groups = "drop")
+
+positive_control_components = asv_controlled %>%
+  group_by(asv_id) %>%
+  summarise(positive_control_component = any(positive_control_component %in% TRUE), .groups = "drop")
+
+asv_community = if (file.exists(network_metrics_file)) {
+  read_csv(network_metrics_file, show_col_types = FALSE) %>% select(asv_id, asv_community)
+} else {
+  tibble(asv_id = character(), asv_community = character())
+}
+
+asvs = detections %>%
+  group_by(asv_id) %>%
+  summarise(total_reads = as.integer(sum(reads)), .groups = "drop") %>%
+  left_join(asv_locality %>% distinct(asv_id, taxon_label), by = "asv_id") %>%
+  left_join(taxonomy, by = "asv_id") %>%
+  left_join(sequences, by = "asv_id") %>%
+  left_join(locality_status, by = "asv_id") %>%
+  left_join(positive_control_components, by = "asv_id") %>%
+  left_join(reference_notes, by = "asv_id") %>%
+  left_join(asv_community, by = "asv_id") %>%
+  mutate(label = coalesce(taxon_label, taxon_06, "unclassified"),
+         sequence_length = as.integer(sequence_length)) %>%
+  select(asv_id, label, taxonomic_rank, class, order, family, sequence_length, total_reads,
+         short_sequence_flag, contaminant_flag, contaminant_id, positive_control_component,
+         reference_note, asv_community, all_of(paste0("status_", study_systems))) %>%
+  arrange(desc(total_reads))
+
+# script 13 labels: clamped detections (controls, hard flags, clamped ASVs) are one class, with the
+# clamp as the reason
+labels13 = c("signal", "contamination", "unassigned", "unstable", "clamped")
+if (file.exists(edge_classification_file)) {
+  detections = detections %>%
+    left_join(read_csv(edge_classification_file, show_col_types = FALSE, guess_max = Inf) %>%
+                transmute(asv_id, feature_id,
+                          label13 = if_else(role == "free", label, "clamped"),
+                          clamp13 = clamp_reason,
+                          psig13 = psig),
+              by = c("asv_id", "feature_id"))
+} else {
+  detections = detections %>% mutate(label13 = NA_character_, clamp13 = NA_character_, psig13 = NA_real_)
+}
+
+# validation sample, as 0-based detection indices in labelling order (split and strata are left out:
+# labelling is blind to them)
+validation = NULL
+validation_labels = NULL
+if (file.exists(validation_sample_file)) {
+  validation_sample = read_csv(validation_sample_file, show_col_types = FALSE) %>%
+    arrange(labelling_order) %>%
+    mutate(detection = match(paste(asv_id, feature_id), paste(detections$asv_id, detections$feature_id)) - 1L)
+  if (anyNA(validation_sample$detection)) {
+    warning(sum(is.na(validation_sample$detection)), " validation edges are not among the detections and are left out")
+  }
+  validation = validation_sample %>%
+    filter(!is.na(detection)) %>%
+    select(validation_id, detection)
+  if (file.exists(validation_labels_file)) {
+    validation_labels = read_csv(validation_labels_file, col_types = cols(.default = col_character())) %>%
+      select(validation_id, label, note, labelled_at)
+  }
+  cat("validation sample:", nrow(validation), "edges,", if (is.null(validation_labels)) 0 else nrow(validation_labels), "labelled\n")
+}
+
+cat("ASVs:", nrow(asvs), "\n")
+cat("detections:", nrow(detections), "(", sum(detections$outcome != "kept"), "removed by script 08 )\n")
+```
+
+# Embed data
+```{r}
+#| output: asis
+fp_data = list(
+  run_name = unbox(config$run$name),
+  locality_min_rel_abund = unbox(locality_min_rel_abund),
+  study_systems = study_systems,
+  system_labels = map(as.list(system_labels[study_systems]), unbox),
+  system_codes = map(as.list(system_codes[study_systems]), unbox),
+  groups = groups,
+  runs = runs,
+  outcomes = outcomes,
+  labels13 = if (all(is.na(detections$label13))) NULL else labels13,
+  validation = validation,
+  validation_labels = validation_labels,
+  samples = samples %>%
+    transmute(feature_id,
+              group = match(group, groups$group) - 1L,
+              site,
+              run = match(sequencing_date, runs) - 1L,
+              extraction_date,
+              sample_reads = as.integer(sample_reads)),
+  asvs = asvs,
+  # indices are 0-based, into asvs / samples / outcomes
+  detections = detections %>%
+    transmute(asv = match(asv_id, asvs$asv_id) - 1L,
+              sample = match(feature_id, samples$feature_id) - 1L,
+              reads,
+              rel_abund,
+              outcome = match(outcome, outcomes) - 1L,
+              label13 = match(label13, labels13) - 1L,
+              clamp13,
+              psig13))
+
+fp_json = toJSON(fp_data, dataframe = "columns", na = "null", digits = I(4)) %>%
+  str_replace_all(fixed("</"), "<\\/")
+
+cat("```{=html}\n<script>window.FP_DATA = ", fp_json, ";</script>\n```\n", sep = "")
+```
