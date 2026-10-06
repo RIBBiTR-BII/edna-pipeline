@@ -90,3 +90,15 @@ asv_out = asv_controlled %>%
 
 write_csv(asv_out, results_out)
 ```
+
+# clamitans/catesbeiana FASTA out
+```{r}
+raca_out = asv_classification %>%
+  filter(grepl("clamitans|catesbeiana", species)) %>%
+  left_join(asv_seq, by = "asv_id")
+
+library(Biostrings)
+seqs = DNAStringSet(setNames(raca_out$asv_sequence, raca_out$asv_id))   # AAStringSet() for protein
+writeXStringSet(seqs, here(run_dir, "output", paste0(config$run$name, "_09_catesbeiana_clamitans_seq.fasta")))
+
+```
