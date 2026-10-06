@@ -76,13 +76,13 @@ local_overrides:
 network_input: filtered
 # ASV-ASV co-occurrence edges are kept when a pair shares at least this many samples and its
 # Jaccard similarity (shared / either) is at least this
-network_min_shared_samples: 3
+network_min_shared_samples: 2
 network_min_jaccard: 0.2
 # sample-sample similarity edges link each sample to its k most similar samples; only samples with
 # at least network_knn_min_asvs non-anthropogenic ASVs get edges (with one or two ASVs, any two
 # samples sharing them look identical)
-network_knn_k: 5
-network_knn_min_asvs: 3
+network_knn_k: 10
+network_knn_min_asvs: 1
 # random seed for Leiden community detection, so communities are reproducible
 network_seed: 20261001
 # Leiden modularity resolution (higher -> more, smaller communities)
