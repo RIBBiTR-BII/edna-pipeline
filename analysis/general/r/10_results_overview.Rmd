@@ -12,7 +12,7 @@ This script provides a first look at the processed and analyzed results, includi
 librarian::shelf(tidyverse, yaml, here, phylotools, dbplyr, RPostgres, DBI, ribbitrrr, vegan, janitor)
 
 # import run config file
-run_dir = here("16S_sequence_processing", "runs", "pennsylvania_16s_2026-09-16")
+run_dir = here("16S_sequence_processing", "runs", "all_systems_16s_2026-09-17")
 
 # read in config file
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
