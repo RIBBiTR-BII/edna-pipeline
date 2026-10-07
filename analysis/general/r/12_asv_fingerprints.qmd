@@ -107,6 +107,8 @@ Patterns to look for:
       <option value="rel_max">max rel. abund.</option>
       <option value="removed">share removed by 08</option>
       <option value="taxon">taxon (A–Z)</option>
+      <option value="length_asc">sequence length (short first)</option>
+      <option value="length_desc">sequence length (long first)</option>
     </select></label>
     <label>Status (any system) <select id="fp-status"><option value="">any</option></select></label>
     <label>Script 08 <select id="fp-outcome">
@@ -275,6 +277,12 @@ document.addEventListener("DOMContentLoaded", function () {
   bind("fp-pagesize", "pageSize", "change", t => +t.value);
 
   // ---- filter / sort --------------------------------------------------------------------------
+  // by sequence length (dir 1: short first, -1: long first), unknown lengths last, ties by total reads
+  const byLength = dir => (a, b) => {
+    const la = A.sequence_length[a], lb = A.sequence_length[b];
+    if (la == null || lb == null) return (la == null) - (lb == null);
+    return dir * (la - lb) || A.total_reads[b] - A.total_reads[a];
+  };
   const sorters = {
     reads: (a, b, st) => A.total_reads[b] - A.total_reads[a],
     detections: (a, b, st) => st[b].n - st[a].n,
@@ -285,6 +293,8 @@ document.addEventListener("DOMContentLoaded", function () {
     rel_max: (a, b, st) => st[b].maxRel - st[a].maxRel,
     removed: (a, b, st) => st[b].removedShare - st[a].removedShare || st[b].n - st[a].n,
     taxon: (a, b, st) => A.label[a].localeCompare(A.label[b]),
+    length_asc: byLength(1),
+    length_desc: byLength(-1),
   };
 
   function selection() {
