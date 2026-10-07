@@ -1,10 +1,12 @@
-# Config for the 03-09 classification/export pipeline (see 00_run_pipeline.R).
+# Config for the 03-09 classification/export pipeline (see 00_run_pipeline.R) and the exploratory
+# contamination-classification scripts 11-14 (see analysis/README.md).
 # Edit this file per run, then source 00_run_pipeline.R.
 
 # path to the run directory, relative to the repo root
 run_dir: "16S_sequence_processing/runs/all_systems_16s_2026-09-17"
 
-# Genbank Web BLAST results file (single-file JSON), relative to run_dir/output (script 04) or a dedicated folder in run_dir/output containing several single-file JSON Web BLAST results to be combined
+# Genbank Web BLAST results (script 04), relative to run_dir/output: a single-file JSON, or a folder
+# of several single-file JSON results to be combined
 json_blast_results_file: "web_blast_results"
 
 # run the GBIF local-taxa query (script 05) and use it in classification (script 06)?
@@ -91,42 +93,6 @@ network_leiden_resolution: 1
 network_n_permutations: 999
 # communities smaller than this (ASVs or samples) are not tested
 network_min_community_size: 3
-# cases whose status is already understood, printed side by side as a sanity check on the network
-# metrics. asv_id, expected (signal / contamination), optional study_system (summarize that
-# system's detections only), optional note.
-network_reference_cases:
-  - asv_id: 9ce84b93987bc3cd642c2cd4c01024d5
-    expected: contamination
-    note: Homo sapiens ubiquitous ASV
-  - asv_id: 0ca92cd74aec45312e94be27f0486885
-    expected: contamination
-    note: Lithobates clamitans/sylvaticus
-  - asv_id: 94358ea91140062b7847b1a495ec9880
-    expected: contamination
-    note: 32 bp synthetic-like amplicon between the primers, in ~82% of samples
-  - asv_id: 0ca92cd74aec45312e94be27f0486885
-    expected: contamination
-    note: Lithobates clamitans/sylvaticus, PCR positive-control component
-  - asv_id: ae575500c68f3266278fde3b7a12ad29
-    study_system: panama
-    expected: contamination
-    note: Agelaius phoeniceus, 6 reads in one field negative, same run as a 15% Pennsylvania sample
-  - asv_id: 9a6ed181d8f869f1f90b22c035701efa
-    study_system: pennsylvania
-    expected: signal
-    note: Ambystoma maculatum
-  - asv_id: 00dd2bb29513471ce62c573f03653dc6
-    study_system: panama
-    expected: signal
-    note: Colostethus panamansis
-  - asv_id: 7b429759bc40725e7818a4e831173606
-    study_system: brazil
-    expected: signal
-    note: Aplastodiscus leucopygius
-  - asv_id: b4a4bf200c318d20152cd25195c61f13
-    study_system: sierra_nevada
-    expected: signal
-    note: Rana muscosa/sierrae
 
 # contamination filtering (script 08) -- the only step that removes reads. A removed detection
 # gets a clean count of 0 and a filter_reason; a filter switched off here removes nothing
@@ -150,20 +116,99 @@ positive_control_min_rel_abund: 0.01
 # far more than the positive controls hold, so most of it is real local DNA (script 08)
 positive_control_remove_local: false
 
-# edge classification (script 13) -- exploratory, nothing downstream reads it. Classifies every
-# (ASV, field library) detection as signal / contamination by iterated log-odds scoring. GBIF
-# locality (script 07) is deliberately not used, so it can serve as validation.
+# known contaminants: ASVs that are contamination wherever they appear, by knowledge from outside
+# this data (lab stocks, positive-control constructs). An explicit, hand-reviewed list -- no taxon or
+# length rules -- so a genuine field taxon is never swept up (e.g. human DNA may be real signal in
+# field water). Used by script 13 (clamped as contamination) and script 14 (left out of the
+# validation population). Reviewed 2026-10-07 from a candidate table (identity to the construct or
+# Oophaga; amphibian ASVs < 120 bp). The marker's natural amplicon is ~225-267 bp for these taxa, so
+# the 92 and 105 bp construct-like ASVs cannot be wild DNA.
+known_contaminants:
+  - asv_id: 1cfd05fdaa0032684318d9ec69101c9d
+    note: "known presence in lab, not found at eDNA field sites (Oophaga pumilio)"
+  - asv_id: 0ca92cd74aec45312e94be27f0486885
+    note: "positive control spike (Lithobates clamitans/sylvaticus)"
+  - asv_id: 06849d9c5734686b2a8c55e30bacf229
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: bea1e8bc9e1f355d1cc093f3e2eb6d64
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: b26eec7bb2ef557282714a54b0edb45c
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: c1540bf93a8f05b9b397e90b512acfff
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 4857b47527c2342011934efdb90d3ba8
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: bdf66ddde39215fce42b31491d49f0a1
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 2de77f6672156535319e77719175479d
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 3b33a680f5c609383a070b25bffc0186
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 27b94751cd89bdb88cb2c55cc665cd0f
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 5c4f993c7972f895724a84945fa2b091
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 643f40355832473c5c73ed38f62d3dac
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 2bcab48ccdcdb2911bc71f71d6ef491e
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 38000fa789735950c29f518bdbb864cc
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 3de2fd091e20497a47f3f9a2765b709c
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: a113d26633b183d0916a24e394361879
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: a7b8a8add68ee8ea505700e5b0f5952b
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 94620b201d4a35d50dae76407617165a
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 5f3e63bce11bea87da6fabf7b46cabd9
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 68b6dd3fd0d9ae73f6783ad5ebd23c55
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: b959eb36e11c9bd33b7eeab39df8abc0
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: b2fa11571942033bcf363542f4229662
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 4c3d22ef20a5d12841ee7ceb43f64ca6
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: 9cb5b83f6e9cc543c3a8f1fa28f57bc4
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  - asv_id: a3e1d255a02ca76ca8422fdd8dbfc1a8
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates maculatus/sylvaticus)"
+  - asv_id: 2a949440a78cb0b31ee8ea18ef10f57b
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Hylidae)"
+  - asv_id: 77a742d6dc2531eb1401052be49cbb2b
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Anura)"
+  - asv_id: e577baaea2315d543ba5407228a639af
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Anura)"
+  - asv_id: eb2c198bb7469a24c11a54bfefa514a7
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris)"
+  - asv_id: cdc21b17ca01799788a0f9444b7c5007
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Dryophytes)"
+  - asv_id: d02be8413dd413414009fbdc54b6dcaf
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris crucifer)"
+  - asv_id: f22472b1bcfa5fa6aa137c05a943431f
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris crucifer)"
+  - asv_id: 864b64a5f89d77d1c73f13c097fe3592
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Odorrana)"
+  - asv_id: 2c9d8826156de5413bfbd6eb6c731133
+    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Dryophytes chrysoscelis/versicolor)"
+  - asv_id: 35aa52333efd554b3496004143329844
+    note: "Second PC construct: 105 bp, natural amplicon ~265 bp; in all 4 PCR+ (Dryophytes versicolor)"
+
+# edge classification (script 13) -- exploratory, nothing downstream reads it. These settings are
+# for the legacy iterated log-odds model (v0-v2.1), kept as a baseline while script 13 is rebuilt
+# around the model ladder in analysis/README.md.
 edge_classification:
   # recorded in script 13's outputs; bump it with every model change (see the change log in
   # analysis/README.md)
-  model_version: v2
+  model_version: v2.1
   # manual labels (ASV x system, optional feature_id override and x limits), relative to the repo
   # root; used for evaluation only
   labels_file: "analysis/general/r/13_edge_labels.csv"
-  # ASVs clamped as contamination in every library
-  clamp_contamination_asvs:
-    - 9ce84b93987bc3cd642c2cd4c01024d5   # ubiquitous Homo sapiens
-  # also clamp every detection of a PCR positive-control component ASV (script 08), local or not
+  # ASVs in known_contaminants (above) are clamped as contamination in every library. Also clamp
+  # every detection of a PCR positive-control component ASV (script 08), local or not?
   clamp_positive_control_components: true
   # pseudo relative abundance added in log ratios (U1, U4): detections near this level carry
   # little evidence either way
@@ -212,6 +257,7 @@ edge_classification:
 # draws a seeded, stratified random sample of field detections; script 12 labels it blind; script
 # 13 scores model versions against the labels.
 validation:
+  # the population is every field detection except hard-flagged ASVs and known_contaminants (above)
   # where the sample and labels files live, relative to the repo root
   dir: "analysis/general/r/validation"
   seed: 20261005
@@ -221,13 +267,6 @@ validation:
   n_per_stratum:
     amphibian: 20
     other: 10
-  # ASVs left out of the validation population: contamination by definition, so labelling them
-  # tells us nothing. A fixed list, never derived from script 13's clamps, so the population does
-  # not move with the model
-  exclude_asvs:
-    - 9ce84b93987bc3cd642c2cd4c01024d5   # ubiquitous Homo sapiens (clamp_contamination_asvs)
-    - 7821d9f2a247418d9f8953a48521c3f0   # Homo sapiens, PCR positive-control component
-    - f0d001ff33cd465eb1ab7d117be8dd87   # Homo sapiens, PCR positive-control component
   # abundance bands: x = reads / library reads excluding hard-flagged ASVs
   abundance_breaks: [0.001, 0.1]
   # share of each stratum's draw assigned to the development set; the rest is the test set
@@ -237,6 +276,6 @@ validation:
     false_signal: 2
     false_contamination: 1
     unassigned: 0.25
-  # the test set is sealed: score it only for a final comparison of candidate versions
+  # the test set is sealed: score it only for the final comparison of candidate models
   evaluate_test_set: false
   bootstrap_reps: 1000

@@ -47,8 +47,6 @@ The guiding question is whether an ASV's presence is better explained by **ecolo
 
 `*_excess` is the observed mutual information minus its permutation mean (a chance-corrected effect size, comparable across labels with different numbers of categories), and `*_p` the permutation p-value.
 
-**Reference cases.** `network_reference_cases` (config) lists ASVs and (ASV, system) pairs whose status is already understood. Their metrics are printed side by side as a sanity check: a metric that does not separate the known cases should not be used for filtering.
-
 # Config
 ```{r}
 librarian::shelf(tidyverse, yaml, here, igraph, plotly)
@@ -79,7 +77,6 @@ network_seed = pipeline_config$network_seed
 network_leiden_resolution = pipeline_config$network_leiden_resolution
 network_n_permutations = pipeline_config$network_n_permutations
 network_min_community_size = pipeline_config$network_min_community_size
-network_reference_cases = pipeline_config$network_reference_cases
 
 possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
 
@@ -654,37 +651,6 @@ write_csv(detection_features, detection_features_out)
 write_csv(asv_metrics, asv_metrics_out)
 write_csv(sample_metrics, sample_metrics_out)
 write_csv(community_association, community_association_out)
-```
-
-# Reference cases
-
-Known cases from `network_reference_cases`. Cases with a `study_system` are summarized over that system's detections only.
-```{r}
-reference_cases = map_dfr(network_reference_cases, \(x) tibble(asv_id = x$asv_id,
-                                                                study_system = x$study_system %||% NA_character_,
-                                                                expected = x$expected,
-                                                                note = x$note %||% NA_character_))
-
-reference_check = reference_cases %>%
-  mutate(features = map2(asv_id, study_system, \(a, s) {
-    detection_features %>%
-      filter(asv_id == a, is.na(s) | study_system == s) %>%
-      summarise(n_detections = n(),
-                median_rel_abund = median(rel_abund),
-                median_log10_run_ratio = median(log10_run_ratio_to_max),
-                share_in_own_negatives = mean(in_own_negatives),
-                replicated = sum(n_replicates_detected > 1, na.rm = TRUE))
-  })) %>%
-  unnest(features) %>%
-  left_join(asv_metrics %>% select(asv_id, Label, n_samples_detected, n_runs_detected, n_systems_detected,
-                                   lab_control_share, asv_community, short_sequence_flag),
-            by = "asv_id") %>%
-  select(expected, Label, study_system, n_detections, median_rel_abund, median_log10_run_ratio,
-         share_in_own_negatives, replicated, n_samples_detected, n_runs_detected, n_systems_detected,
-         lab_control_share, asv_community, short_sequence_flag, note) %>%
-  arrange(expected)
-
-reference_check
 ```
 
 # Visualize

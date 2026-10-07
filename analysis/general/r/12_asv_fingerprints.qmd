@@ -119,7 +119,7 @@ Patterns to look for:
     </select></label>
     <label>Detected in <select id="fp-detin"><option value="">any group</option></select></label>
     <label>Min detections <input type="number" id="fp-mindet" min="0" value="1"></label>
-    <label><input type="checkbox" id="fp-ref"> reference cases only</label>
+    <label><input type="checkbox" id="fp-known"> known contaminants only</label>
     <label>Colour by <select id="fp-color">
       <option value="run">sequencing run</option>
       <option value="outcome">script 08 outcome</option>
@@ -222,11 +222,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const statusCols = D.study_systems.map(s => A["status_" + s] || new Array(nA).fill(null));
   const searchText = A.asv_id.map((id, a) =>
-    [A.label[a], id, A.class[a], A.order[a], A.family[a], A.asv_community[a], A.reference_note[a]]
+    [A.label[a], id, A.class[a], A.order[a], A.family[a], A.asv_community[a], A.known_contaminant[a]]
       .filter(Boolean).join(" ").toLowerCase());
 
   // ---- controls -------------------------------------------------------------------------------
-  const state = { q: "", class: "", order: "", family: "", sort: "reads", status: "", outcome: "", detIn: "", minDet: 1, refOnly: false,
+  const state = { q: "", class: "", order: "", family: "", sort: "reads", status: "", outcome: "", detIn: "", minDet: 1, knownOnly: false,
                   color: "run", hide: false, page: 0, pageSize: 25 };
   const $ = id => document.getElementById(id);
   if (D.labels13) $("fp-color").insertAdjacentHTML("beforeend", `<option value="label13">script 13 label</option>`);
@@ -271,7 +271,7 @@ document.addEventListener("DOMContentLoaded", function () {
   bind("fp-outcome", "outcome", "change", t => t.value);
   bind("fp-detin", "detIn", "change", t => t.value);
   bind("fp-mindet", "minDet", "input", t => +t.value || 0);
-  bind("fp-ref", "refOnly", "change", t => t.checked);
+  bind("fp-known", "knownOnly", "change", t => t.checked);
   bind("fp-color", "color", "change", t => t.value);
   bind("fp-hide", "hide", "change", t => t.checked);
   bind("fp-pagesize", "pageSize", "change", t => +t.value);
@@ -305,7 +305,7 @@ document.addEventListener("DOMContentLoaded", function () {
       if (q && !searchText[a].includes(q)) continue;
       if (!taxonMatch(a, taxonRanks.length)) continue;
       if (state.status && !statusCols.some(col => col[a] === state.status)) continue;
-      if (state.refOnly && !A.reference_note[a]) continue;
+      if (state.knownOnly && !A.known_contaminant[a]) continue;
       if (state.detIn !== "" && !(s.per[+state.detIn] > 0)) continue;
       const o = state.outcome;
       if (o === "none" && s.removed > 0) continue;
@@ -378,7 +378,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (A.contaminant_flag[a]) meta += badge("contaminant library" + (A.contaminant_id[a] ? ": " + A.contaminant_id[a] : ""), "#b07aa1");
     if (A.positive_control_component[a]) meta += badge("PCR+ component", "#f28e2b");
     if (A.asv_community[a]) meta += badge(A.asv_community[a], "#455a64", "script 11 co-occurrence community");
-    if (A.reference_note[a]) meta += badge("ref: " + A.reference_note[a], "#000");
+    if (A.known_contaminant[a]) meta += badge("known contaminant", "#000", A.known_contaminant[a]);
 
     let svg = background;
     groups.forEach((g, i) => {
@@ -702,7 +702,8 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 # drawn as a reference line on every panel (script 07's non-trace threshold)
 locality_min_rel_abund = pipeline_config$locality_min_rel_abund
-network_reference_cases = pipeline_config$network_reference_cases
+# hand-reviewed known contaminants (scripts 13 and 14), shown as a badge with their reason
+known_contaminants = pipeline_config$known_contaminants
 
 possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
 system_labels = c(brazil = "Brazil", panama = "Panama", pennsylvania = "Pennsylvania", sierra_nevada = "Sierra Nevada")
@@ -837,15 +838,7 @@ for (s in study_systems) {
   if (!(paste0("status_", s) %in% names(locality_status))) locality_status[[paste0("status_", s)]] = NA_character_
 }
 
-reference_notes = map_dfr(network_reference_cases, \(x) tibble(asv_id = x$asv_id,
-                                                                 study_system = x$study_system %||% NA_character_,
-                                                                 expected = x$expected,
-                                                                 note = x$note %||% NA_character_)) %>%
-  mutate(reference_note = paste0(expected,
-                                 if_else(is.na(study_system), "", paste0(" (", study_system, ")")),
-                                 if_else(is.na(note), "", paste0(": ", note)))) %>%
-  group_by(asv_id) %>%
-  summarise(reference_note = paste(unique(reference_note), collapse = " | "), .groups = "drop")
+known_contaminant_notes = map_dfr(known_contaminants, \(x) tibble(asv_id = x$asv_id, known_contaminant = x$note %||% "known contaminant"))
 
 positive_control_components = asv_controlled %>%
   group_by(asv_id) %>%
@@ -865,13 +858,13 @@ asvs = detections %>%
   left_join(sequences, by = "asv_id") %>%
   left_join(locality_status, by = "asv_id") %>%
   left_join(positive_control_components, by = "asv_id") %>%
-  left_join(reference_notes, by = "asv_id") %>%
+  left_join(known_contaminant_notes, by = "asv_id") %>%
   left_join(asv_community, by = "asv_id") %>%
   mutate(label = coalesce(taxon_label, taxon_06, "unclassified"),
          sequence_length = as.integer(sequence_length)) %>%
   select(asv_id, label, taxonomic_rank, class, order, family, sequence_length, total_reads,
          short_sequence_flag, contaminant_flag, contaminant_id, positive_control_component,
-         reference_note, asv_community, all_of(paste0("status_", study_systems))) %>%
+         known_contaminant, asv_community, all_of(paste0("status_", study_systems))) %>%
   arrange(desc(total_reads))
 
 # script 13 labels: clamped detections (controls, hard flags, clamped ASVs) are one class, with the

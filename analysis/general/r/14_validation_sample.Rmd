@@ -8,7 +8,7 @@ output: html_document
 
 This script draws the **validation sample** for the edge classification (script 13): a seeded, stratified random sample of field detections, to be labelled blind by hand (script 12's labelling mode) and used to score model versions. See "Validation protocol" in `analysis/README.md`.
 
-- **Population**: every detection (raw count > 0) in a field library, excluding ASVs hard-flagged in script 06 (`short_sequence`, `contaminant_library`) and the ASVs in `validation$exclude_asvs` (human ASVs: contamination by definition). Other edges clamped by script 13 are included, so the clamps are validated too. The exclusion list is fixed in the config, never taken from script 13, so the population does not move with the model.
+- **Population**: every detection (raw count > 0) in a field library, excluding ASVs hard-flagged in script 06 (`short_sequence`, `contaminant_library`) and the ASVs in `known_contaminants` (a hand-reviewed list of lab stocks and positive-control constructs: contamination by definition). Other edges clamped by script 13 are included, so the clamps are validated too. The list is fixed in the config, never taken from any model's output, so the population does not move with the model.
 - **Strata**: group (`amphibian` = script 06 class Amphibia, `other`) x study system x abundance band, with x = reads / library reads excluding hard-flagged ASVs and bands split at `abundance_breaks`. Strata are defined from the data alone, never from any model's output.
 - **Draw**: `n_per_stratum` edges per stratum without replacement (all of them if the stratum is smaller), and within each stratum a random `development_share` assigned to the `development` set, the rest to the sealed `test` set (a fractional edge is assigned at random, so small strata reach the development set in proportion). A random `labelling_order` mixes strata, so they are not labelled in blocks.
 - **Waves**: the sample file is never overwritten. Raising `wave` draws a further `n_per_stratum` per stratum from the edges not yet sampled, and appends them. Each stratum's population size `N_h` is stored, so script 13 can weight every labelled edge by `N_h` / (labelled edges of the stratum).
@@ -32,7 +32,7 @@ wave = as.integer(vc$wave)
 n_per_stratum = map_int(vc$n_per_stratum, as.integer)
 abundance_breaks = as.numeric(unlist(vc$abundance_breaks))
 development_share = as.numeric(vc$development_share)
-exclude_asvs = as.character(unlist(vc$exclude_asvs))
+known_contaminants = map_chr(pipeline_config$known_contaminants, "asv_id")
 
 possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
 
@@ -89,8 +89,8 @@ population = asv_controlled %>%
   group_by(feature_id) %>%
   mutate(library_reads = sum(asv_count_raw)) %>%
   ungroup() %>%
-  # excluded ASVs leave the population, but stay in library_reads so strata do not depend on the list
-  filter(!(asv_id %in% exclude_asvs)) %>%
+  # known contaminants leave the population, but stay in library_reads so strata do not depend on the list
+  filter(!(asv_id %in% known_contaminants)) %>%
   inner_join(field_libraries, by = "feature_id") %>%
   left_join(asv_classification %>% select(asv_id, class_06 = class), by = "asv_id") %>%
   transmute(asv_id, feature_id, study_system,
@@ -106,7 +106,7 @@ population = asv_controlled %>%
   add_count(stratum, name = "N_h") %>%
   arrange(stratum, asv_id, feature_id)
 
-cat("population (field detections, hard flags and", length(exclude_asvs), "excluded ASVs left out):", nrow(population), "\n")
+cat("population (field detections, hard flags and", length(known_contaminants), "known contaminants left out):", nrow(population), "\n")
 population %>% count(group, study_system, band) %>%
   pivot_wider(names_from = band, values_from = n, values_fill = 0) %>%
   knitr::kable(caption = "population by stratum")

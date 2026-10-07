@@ -87,32 +87,79 @@ You then have two options for running the scripts:
   b. field samples (collection site, date, filter method, etc.)
   
 ## Exploratory: Contamination Classification (steps 11-14)
-These scripts develop a classification of every detection as signal or contamination, as a possible successor to step 8's filters. They are not run by `00_run_pipeline.R`, and nothing downstream reads their outputs. Their settings are under `network_*`, `edge_classification` and `validation` in `00_pipeline_config.yml`.
+These scripts develop a classification of every detection as signal or contamination, as a possible successor to step 8's filters. They are not run by `00_run_pipeline.R`, and nothing downstream reads their outputs. Their settings are under `network_*`, `known_contaminants`, `edge_classification` and `validation` in `00_pipeline_config.yml`.
 
 11. **Network Analysis** *(11_network_analysis.Rmd)*: builds the sample--ASV network, exports it for Gephi / Cytoscape, and tests ASV and sample communities for association with lab batches vs. ecology.
 12. **ASV Fingerprints** *(12_asv_fingerprints.qmd)*: an interactive viewer (one row of panels per ASV: field samples and field negatives per system, then lab controls) for spotting contamination patterns by eye. It also holds the blind labelling mode for the validation sample. Render it with `quarto render` (or the Render button in RStudio).
-13. **Edge Classification** *(13_edge_classification.Rmd)*: classifies every detection in a field library by an iterated log-odds score (the model is written out in the script's Description), and scores the model against the validation labels.
-14. **Validation Sample** *(14_validation_sample.Rmd)*: draws the seeded, stratified random sample of detections that is labelled by hand and used to score model versions.
+13. **Edge Classification** *(13_edge_classification.Rmd)*: classifies every detection in a field library and scores models against the validation labels. It currently runs the legacy iterated log-odds model (v2.1, written out in the script's Description); it is being rebuilt around the model ladder below.
+14. **Validation Sample** *(14_validation_sample.Rmd)*: draws the seeded, stratified random sample of detections that is labelled by hand and used to score models.
 
 ### Validation protocol
-*Agreed 2026-10-05. Follow it for every model change, so that versions are compared scientifically rather than tuned to individual cases.*
+*Agreed 2026-10-05, revised 2026-10-07 before any labelling. Follow it for every model change, so that models are compared scientifically rather than tuned to individual cases.*
 
-1. **Reference standard.** A random sample of detections, labelled by hand as `signal`, `contamination` or `uncertain`. These labels are the reference standard. Hand-picked reference cases (`13_edge_labels.csv`) and GBIF locality (script 07) are sanity checks and secondary evidence only, and are never used to score or tune the model.
-2. **Population.** Every detection (raw count > 0) in a field library, excluding ASVs hard-flagged in step 6 (short sequence, contaminant library) and the ASVs listed in `validation$exclude_asvs` (the human ASVs, contamination by definition, so labelling them tells us nothing). The list is fixed in the config, never derived from script 13's clamps, so the population does not move with the model; metrics hold for the population without these ASVs. Other detections that script 13 clamps (e.g. PCR positive-control components) are included, so the clamp decisions are validated too. Control libraries are not sampled: their detections are contamination by definition.
-3. **Strata.** Group (`amphibian` = step 6 class Amphibia, `other`) x study system x abundance band (x = reads / library reads excluding hard flags; bands < 1e-3, 1e-3 to 1e-1, >= 1e-1). Strata are defined from the data alone, never from any model's output, so the same sample is fair to every model version.
-4. **Allocation.** 20 detections per amphibian stratum and 10 per other stratum (360 in total for four systems), drawn with a fixed seed. Amphibians are oversampled because they are the research target; weighting keeps estimates unbiased for both domains.
-5. **Development / test split.** Within each stratum, 2/3 of the draw goes to the **development** set and 1/3 to the **test** set, before any labelling. The development set may be looked at while improving the model. The test set stays **sealed** (`validation$evaluate_test_set: false`) and is scored only for a final comparison of candidate versions; record each test-set scoring in the change log below.
-6. **Blind labelling.** Label in script 12's labelling mode, which shows one sampled detection at a time with step 8 and script 13 information hidden. Use everything an expert would: the fingerprint pattern, taxonomy, GBIF, lab knowledge (e.g. species worked on in the lab). Do not browse script 13's labels for sampled ASVs before labelling them. Add a short note for the reason where useful. Labels autosave in the browser; export them with "export labels CSV" to the validation folder as `<run>_validation_labels.csv`, then re-render scripts 12 and 13.
-7. **Metrics.** Each labelled detection is weighted by its stratum's population over the number of labelled detections of that stratum in the split. Detections labelled `uncertain` are not scored. **Primary metric: cost per detection**, where a false signal (contamination called signal) costs **2**, a false contamination (signal called contamination) costs **1**, and leaving a detection unassigned costs **0.25**. Reported for the **amphibian** domain (primary, the research objective) and **all eDNA** (secondary), alongside coverage, false-signal rate, false-contamination rate and accuracy among assigned detections. Clamped detections count as contamination. Baselines: step 8 (removed = contamination) and "everything is signal".
-8. **Comparing versions.** Every version is scored on the same detections, so differences are paired. A stratified bootstrap (resampling within strata) gives 95% intervals for each version's cost and for its difference from step 8. A version counts as better only if its interval for the difference clearly excludes 0.
-9. **Rules for changing the model.**
+1. **Reference standard.** A random sample of detections, labelled by hand as `signal`, `contamination` or `uncertain`. These labels are the reference standard. Hand-picked reference cases (`13_edge_labels.csv`) are sanity checks only, and are never used to score or tune a model.
+2. **Label definitions.**
+    - **Signal**: DNA that was in the environment at the sampled site when the sample was taken.
+    - **Contamination**: DNA introduced at any later step -- field handling and gear carryover between sites, extraction, PCR, or sequencing (cross-talk). DNA carried on gear from another site was in the sample tube, but is contamination.
+    - The label is about where the DNA came from, not which ASV it is: the same ASV can be signal in one library and contamination in another.
+    - Controls (never sampled, conventions for the models): every detection in a negative control is contamination; in a positive control the spiked DNA is the expected content and everything else is contamination.
+3. **Known contaminants.** ASVs that are contamination wherever they appear, by knowledge from outside this data (lab stocks, positive-control constructs), are listed explicitly in `known_contaminants`, each with a reason. The list is hand-reviewed, with no taxon or length rules, so a genuine field taxon is never swept up (human DNA, for example, may be real signal in field water). Known contaminants are clamped as contamination in every model and left out of the validation population: they cannot be validated, so the bar for listing an ASV is high. The 2026-10-07 list (36 ASVs: the Oophaga lab stock and two positive-control constructs with their error variants) was reviewed from a candidate table of ASVs similar to the construct or Oophaga and amphibian ASVs < 120 bp; the marker's natural amplicon is ~225-267 bp for these taxa.
+4. **Population.** Every detection (raw count > 0) in a field library, excluding ASVs hard-flagged in step 6 (short sequence, contaminant library) and the known contaminants. The population is fixed by the config, never by a model's output, so it does not move with the model; metrics hold for this population. Control libraries are not sampled.
+5. **Strata.** Group (`amphibian` = step 6 class Amphibia, `other`) x study system x abundance band (x = reads / library reads excluding hard flags; bands < 1e-3, 1e-3 to 1e-1, >= 1e-1). Strata are defined from the data alone, never from any model's output, so the same sample is fair to every model.
+6. **Allocation.** 20 detections per amphibian stratum and 10 per other stratum, drawn with a fixed seed; a stratum smaller than that is taken whole. Amphibians are oversampled because they are the research target; weighting keeps estimates unbiased for both domains.
+7. **Development / test split.** Within each stratum, 2/3 of the draw goes to the **development** set and 1/3 to the **test** set (a fractional detection is assigned at random), before any labelling. Models are fitted and compared on the development set. The test set stays **sealed** (`validation$evaluate_test_set: false`) and is scored only once, for the final comparison of 1-3 candidate models; record that scoring in the change log.
+8. **Blind labelling.** Label in script 12's labelling mode, which shows one sampled detection at a time with step 8 and script 13 information hidden. Use everything an expert would: the fingerprint pattern, taxonomy, GBIF, lab knowledge (e.g. species and constructs worked with in the lab). Do not browse model output for sampled ASVs before labelling them. Add a short note for the reason where useful, and use `uncertain` when the pattern cannot tell. Labels autosave in the browser; export them with "export labels CSV" to the validation folder as `<run>_validation_labels.csv`, then re-render scripts 12 and 13. GBIF is shown while labelling and is also a model feature, so its contribution to the models may be somewhat overstated; this is accepted, since an expert would use it.
+9. **Costs and decisions.** A false signal (contamination called signal) costs **2**, a false contamination (signal called contamination) costs **1**, and leaving a detection unassigned (for manual review) costs **0.25**. The costs are not used to fit models; they turn a model's probability of signal p into a decision, by choosing the decision of least expected cost: contamination if p < 0.25, signal if p > 0.875, unassigned in between. Changing the costs moves the thresholds and the scores, without refitting.
+10. **Metrics.** Each labelled detection is weighted by its stratum's population over the number of labelled detections of that stratum in the split. Detections labelled `uncertain` are neither fitted nor scored. **Primary metric: weighted cost per detection**, reported for the **amphibian** domain (primary, the research objective) and **all eDNA** (secondary), alongside coverage, false-signal rate, false-contamination rate and accuracy among assigned detections.
+11. **Fitting and model selection.**
+    - Models are logistic regressions on the development labels (`signal` vs `contamination`), with each coefficient's sign fixed in advance from its mechanism and light ridge shrinkage; fitted unweighted, scored weighted.
+    - Models are compared by repeated (20 x) 5-fold cross-validation within the development set, with folds **grouped by ASV x study system**, since detections of the same ASV in a system share most features. Baselines and the legacy model are scored on the same folds, so differences are paired.
+    - Choose the **simplest rung within one standard error** of the best rung's cross-validated cost. Check it with a drop-one analysis (remove each mechanism from the top model in turn), so a weak early rung cannot hide a useful later one.
+    - Final candidates are scored on the test set, with 95% stratified bootstrap intervals for each model's cost and for paired differences from the baselines.
+12. **Rules for changing the model.**
     - Every change is motivated by a contamination mechanism, written as a general rule. No case-by-case adjustments.
     - Write the change and its rationale in the change log **before** seeing its effect on the development set.
     - Development-set errors suggest mechanisms to examine; they are not targets to tune away.
-    - Prefer fewer terms and parameters: a change that does not clearly improve the development-set cost is not kept.
+    - Prefer fewer terms and parameters: a change that does not clearly improve the cross-validated cost is not kept.
     - Bump `edge_classification$model_version` with every change.
-10. **More labels.** If intervals are too wide, raise `validation$wave` and re-run step 14 to draw more detections from the same strata. The sample file is never redrawn or overwritten.
-11. **Files.** The sample and labels live in `analysis/general/r/validation/`. They are exempt from the repository's `*.csv` gitignore rule, so commit them: the labels are hand work that cannot be regenerated.
+13. **More labels.** If intervals are too wide, raise `validation$wave` and re-run step 14 to draw more detections from the same strata. A sample with labels is never redrawn or overwritten.
+14. **Files.** The sample and labels live in `analysis/general/r/validation/`. They are exempt from the repository's `*.csv` gitignore rule, so commit them: the labels are hand work that cannot be regenerated.
+
+### Model ladder
+*Planned 2026-10-07, before labelling.* Each rung adds one contamination mechanism. Most features are properties of an ASV in a study system; the edge itself adds its abundance and its library.
+
+**Shared quantities.**
+- x: an edge's reads over its library's reads, excluding hard-flagged and known-contaminant reads.
+- mu(a, g): the mean x of ASV a over the libraries of group g, zeros included (detection rate x mean abundance when detected). Groups: each system's field samples, and the lab negatives (extraction and PCR negatives).
+- **Home share** = mu(a, this system) / (mu(a, this system) + max over other systems of mu(a, other system)): 1 when the ASV is found only here, 0.5 when as much elsewhere, near 0 for a faint copy of another system's taxon.
+- **Kit share** = mu(a, this system) / (mu(a, this system) + mu(a, lab negatives)).
+- **Human share**: the share of a library's reads from ASVs classified as *Homo sapiens*, as an indicator of low target biomass. It does not claim the human reads are contamination.
+
+**Baselines** (fixed rules, no fitting):
+
+| baseline | rule |
+|---|---|
+| `all_signal` | everything is signal |
+| `script_08` | removed by step 8 = contamination |
+| `neg_presence` | contamination if the ASV is detected in any of the library's linked negatives (field, extraction, PCR) -- common eDNA practice |
+| `neg_subtract` | subtract the ASV's largest read count in the library's linked negatives; contamination if nothing is left -- common eDNA practice |
+| `legacy` | the iterated log-odds model, v2.1 |
+
+**Rungs** (each adds to the one above):
+
+| rung | mechanism | feature | sign |
+|---|---|---|---|
+| B1 | abundance | log10(x) | + |
+| M1 | home system: a dense cloud in one system is signal there and cross-talk / lab carryover elsewhere | home share | + |
+| M1b | positive-control source | the ASV is a step 8 positive-control component (replaces clamping them) | - |
+| M2 | GBIF locality | local (incl. genus only); not local (other system, not in run); anthropogenic and unassessable are neutral | + / - |
+| M3 | kitome: as abundant in lab negatives as in field samples | kit share | + |
+| M4 | contaminated library: faint detections in low-biomass libraries are suspect, and clean libraries do not vouch for anything | the library's human share | - |
+| M5 | ASV found mostly in dirty samples | the ASV's mean library human share within the system, minus the system mean | - |
+
+The top model has about 9 fitted parameters. Labels of neighbouring edges are not used as features (no iterative propagation): the neighbour information enters through M4 and M5, from data alone.
+
+**Refinements**, only if the chosen rung leaves errors they would explain, logged first: run-aware home share (other systems sharing a sequencing run only, separating tag-jumping from lab carryover); within-system trace (log10 of x over the ASV's largest x in the system); field negatives (field or gear carryover); detection rate and abundance as separate features; an amphibian intercept.
 
 ### Model change log
 | version | date | change | rationale | development cost (amphibian / all eDNA) |
@@ -120,8 +167,9 @@ These scripts develop a classification of every detection as signal or contamina
 | v0 | 2026-10-03 | Initial model: U1 own negatives, U2 cross-talk, U3 replicates, U4 control share, R1-R3 neighbour votes; clamps for hard flags, control libraries and the ubiquitous human ASV; dynamic denominator. | Design discussion. | not scored |
 | v1 | 2026-10-03 | Clamp every detection of PCR positive-control component ASVs; cap U1's evidence for signal at +1 decade. | Gross positive-control contamination (e.g. *Lithobates* at high abundance in Brazil and Sierra Nevada) cannot be told from signal by read structure; absence from a few negatives is weak evidence. | not scored |
 | v2 | before 2026-10-05 | Cap U4's evidence for signal (logit 1); add 2,000 pseudo reads to field-library denominators; make R3 one-sided (sink evidence only). | Absence from negatives is weak evidence; a high x resting on few remaining reads is weak evidence; the library vote was snowballing towards signal. | not scored |
+| v2.1 | 2026-10-07 | Clamp the reviewed `known_contaminants` list instead of the ubiquitous human ASV. | Human DNA may be real signal in field water; lab stocks and positive-control constructs are contamination everywhere. | not scored |
 
-v0-v2 were made before this protocol: they were motivated partly by inspecting individual cases, some judged with GBIF locality, which the protocol now rules out. They are the starting point, to be scored once the development set is labelled.
+v0-v2.1 were made before this protocol: they were motivated partly by inspecting individual cases, some judged with GBIF locality. They are kept as the `legacy` baseline. The ladder above replaces them as the main line of development; its rungs are logged here as they are fitted.
 
 ## After Preliminary Analysis
 

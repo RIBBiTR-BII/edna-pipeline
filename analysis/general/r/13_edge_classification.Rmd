@@ -29,7 +29,7 @@ Relational terms, from the labels of neighbouring edges (S signal votes, C conta
 
 - hard flags from script 06 (`short_sequence`, `contaminant_library`): left out of everything, denominators included
 - every edge in a negative control (PCR, extraction, field) and in a PCR positive control: they inform U1, U2 (positive controls as sources) and U4, but do not vote in R1-R3
-- ASVs in `clamp_contamination_asvs` (the ubiquitous human ASV), and PCR positive-control component ASVs (script 08) when `clamp_positive_control_components`: every detection, local or not; removed from denominators from the start, do not vote
+- ASVs in `known_contaminants` (a hand-reviewed list shared with script 14: lab stocks and positive-control constructs), and PCR positive-control component ASVs (script 08) when `clamp_positive_control_components`: every detection, local or not; removed from denominators from the start, do not vote
 
 Anthropogenic ASVs are **not** clamped: they are classified like any other ASV, and vote in R3.
 
@@ -139,7 +139,7 @@ config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 ec = pipeline_config$edge_classification
 model_version = ec$model_version
 edge_labels_file = here(ec$labels_file)
-clamp_contamination_asvs = as.character(unlist(ec$clamp_contamination_asvs))
+known_contaminants = map_chr(pipeline_config$known_contaminants, "asv_id")
 clamp_positive_control_components = isTRUE(ec$clamp_positive_control_components)
 epsilon = as.numeric(ec$epsilon)
 own_negatives_max_decades_above = as.numeric(ec$own_negatives_max_decades_above)
@@ -261,7 +261,7 @@ edges = detections %>%
   filter(is.na(hard_flag)) %>%
   mutate(role = case_when(library_class %in% negative_classes ~ "negative_control",
                           library_class == "pcr_positive" ~ "positive_control",
-                          asv_id %in% clamp_contamination_asvs ~ "manual_clamp",
+                          asv_id %in% known_contaminants ~ "known_contaminant",
                           asv_id %in% positive_control_component_asvs ~ "positive_control_component",
                           .default = "free"))
 
@@ -270,7 +270,7 @@ edges = detections %>%
 library_reads = edges %>%
   group_by(feature_id) %>%
   summarise(N = sum(reads),
-            clamp_reads = sum(reads[role %in% c("manual_clamp", "positive_control_component")]),
+            clamp_reads = sum(reads[role %in% c("known_contaminant", "positive_control_component")]),
             .groups = "drop")
 
 libraries = libraries %>%
