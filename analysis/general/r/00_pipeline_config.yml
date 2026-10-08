@@ -197,69 +197,78 @@ known_contaminants:
   - asv_id: 35aa52333efd554b3496004143329844
     note: "Second PC construct: 105 bp, natural amplicon ~265 bp; in all 4 PCR+ (Dryophytes versicolor)"
 
-# edge classification (script 13) -- exploratory, nothing downstream reads it. These settings are
-# for the legacy iterated log-odds model (v0-v2.1), kept as a baseline while script 13 is rebuilt
-# around the model ladder in analysis/README.md.
+# edge classification (script 13) -- exploratory, nothing downstream reads it. Fits the model ladder
+# in analysis/README.md (sign-constrained logistic regressions on the development labels) and scores
+# models against the validation labels.
 edge_classification:
   # recorded in script 13's outputs; bump it with every model change (see the change log in
   # analysis/README.md)
-  model_version: v2.1
-  # manual labels (ASV x system, optional feature_id override and x limits), relative to the repo
-  # root; used for evaluation only
-  labels_file: "analysis/general/r/13_edge_labels.csv"
-  # ASVs in known_contaminants (above) are clamped as contamination in every library. Also clamp
-  # every detection of a PCR positive-control component ASV (script 08), local or not?
-  clamp_positive_control_components: true
-  # pseudo relative abundance added in log ratios (U1, U4): detections near this level carry
-  # little evidence either way
-  epsilon: 0.00001
-  # U1 caps evidence *for* signal at this many decades above the own negatives (evidence against
-  # signal goes to -3 decades): absence from a few negatives is weak evidence
-  own_negatives_max_decades_above: 1
-  # U4 caps evidence *for* signal at this logit (evidence against goes to -4.6): absence from
-  # negatives is weak evidence
-  control_share_max_logit: 1
-  # damping of neighbour votes, (S - C) / (S + C + kappa): a few votes count for little
-  kappa: 2
-  # the dynamic denominator never drops below this share of the library's reads
-  denominator_floor: 0.1
-  # reads added to field libraries' denominators, so a high x resting on few remaining reads carries
-  # less evidence (negligible for libraries with many more reads than this)
-  denominator_pseudo_reads: 2000
-  # cross-talk (U2): no evidence while x / (run source) is above crosstalk_cutoff, full evidence
-  # for contamination at or below crosstalk_full
-  crosstalk_cutoff: 0.01
-  crosstalk_full: 0.0001
-  # replicates (U3): term value when no other library of the eDNA sample detects the ASV
-  replicate_miss_penalty: -0.2
-  # maximum log-odds contribution of each term (each term is scaled to [-1, 1] first)
-  weights:
-    own_negatives: 3       # U1
-    crosstalk: 3           # U2
-    replicates: 2          # U3
-    control_share: 2       # U4
-    asv_system: 1.5        # R1
-    asv_other_systems: 1   # R2
-    library: 1.5           # R3 (one-sided: sink evidence only)
-  # hard mode: edges are assigned at each confidence threshold in turn; the last is where it stops
-  tau_schedule: [0.99, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5]
-  # an assigned edge whose confidence drops below this, or whose direction flips, is unassigned
-  tau_drop: 0.3
-  # an edge unassigned this many times stays unassigned ("unstable")
-  max_flips: 3
-  max_steps_per_tau: 50
-  # soft mode: damped simultaneous updates until the largest change in Psig is below the tolerance
-  soft_damping: 0.5
-  soft_tolerance: 0.0001
-  soft_max_iterations: 1000
+  model_version: ladder-1
+  # Normal(0, prior_sd) prior on each coefficient of the standardised (z-scored) features: light
+  # ridge shrinkage, so a 1-SD change in a feature rarely moves the log-odds by more than ~2 x prior_sd
+  prior_sd: 2.5
+  # cross-validation within the development set: folds grouped by ASV x study system
+  cv_folds: 5
+  cv_repeats: 20
+  cv_seed: 20261008
+  # legacy iterated log-odds model (v0-v2.1, script 13_legacy_edge_classification.Rmd), kept as the
+  # `legacy` baseline
+  legacy:
+    model_version: v2.1
+    # ASVs in known_contaminants (above) are clamped as contamination in every library. Also clamp
+    # every detection of a PCR positive-control component ASV (script 08), local or not?
+    clamp_positive_control_components: true
+    # pseudo relative abundance added in log ratios (U1, U4): detections near this level carry
+    # little evidence either way
+    epsilon: 0.00001
+    # U1 caps evidence *for* signal at this many decades above the own negatives (evidence against
+    # signal goes to -3 decades): absence from a few negatives is weak evidence
+    own_negatives_max_decades_above: 1
+    # U4 caps evidence *for* signal at this logit (evidence against goes to -4.6): absence from
+    # negatives is weak evidence
+    control_share_max_logit: 1
+    # damping of neighbour votes, (S - C) / (S + C + kappa): a few votes count for little
+    kappa: 2
+    # the dynamic denominator never drops below this share of the library's reads
+    denominator_floor: 0.1
+    # reads added to field libraries' denominators, so a high x resting on few remaining reads carries
+    # less evidence (negligible for libraries with many more reads than this)
+    denominator_pseudo_reads: 2000
+    # cross-talk (U2): no evidence while x / (run source) is above crosstalk_cutoff, full evidence
+    # for contamination at or below crosstalk_full
+    crosstalk_cutoff: 0.01
+    crosstalk_full: 0.0001
+    # replicates (U3): term value when no other library of the eDNA sample detects the ASV
+    replicate_miss_penalty: -0.2
+    # maximum log-odds contribution of each term (each term is scaled to [-1, 1] first)
+    weights:
+      own_negatives: 3       # U1
+      crosstalk: 3           # U2
+      replicates: 2          # U3
+      control_share: 2       # U4
+      asv_system: 1.5        # R1
+      asv_other_systems: 1   # R2
+      library: 1.5           # R3 (one-sided: sink evidence only)
+    # hard mode: edges are assigned at each confidence threshold in turn; the last is where it stops
+    tau_schedule: [0.99, 0.95, 0.9, 0.8, 0.7, 0.6, 0.5]
+    # an assigned edge whose confidence drops below this, or whose direction flips, is unassigned
+    tau_drop: 0.3
+    # an edge unassigned this many times stays unassigned ("unstable")
+    max_flips: 3
+    max_steps_per_tau: 50
+    # soft mode: damped simultaneous updates until the largest change in Psig is below the tolerance
+    soft_damping: 0.5
+    soft_tolerance: 0.0001
+    soft_max_iterations: 1000
 
 # validation (scripts 14, 12 and 13) -- see "Validation protocol" in analysis/README.md. Script 14
 # draws a seeded, stratified random sample of field detections; script 12 labels it blind; script
 # 13 scores model versions against the labels.
 validation:
   # the population is every field detection except hard-flagged ASVs and known_contaminants (above)
-  # where the sample and labels files live, relative to the repo root
-  dir: "analysis/general/r/validation"
+  # where the sample and labels files live, relative to run_dir (so each run has its own). Run
+  # outputs are not tracked by git: back the labels up, they cannot be regenerated
+  dir: "output/validation"
   seed: 20261005
   # a new wave draws more edges from the same strata, excluding those already sampled
   wave: 1
@@ -276,6 +285,11 @@ validation:
     false_signal: 2
     false_contamination: 1
     unassigned: 0.25
-  # the test set is sealed: score it only for the final comparison of candidate models
+  # performance on the development set (cross-validated costs, model selection) is only shown when
+  # true, so models can be trained without seeing how they do
+  report_performance: false
+  # the test set is sealed: score it only for the final comparison of candidate models (listed in
+  # final_candidates: rung or baseline names)
   evaluate_test_set: false
+  final_candidates: []
   bootstrap_reps: 1000

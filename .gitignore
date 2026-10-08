@@ -20,5 +20,3 @@
 .Rproj.user
 .positai
 
-# validation sample and hand labels (scripts 12-14): hand work that cannot be regenerated
-!analysis/general/r/validation/*.csv

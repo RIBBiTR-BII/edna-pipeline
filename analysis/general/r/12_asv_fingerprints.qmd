@@ -229,7 +229,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const state = { q: "", class: "", order: "", family: "", sort: "reads", status: "", outcome: "", detIn: "", minDet: 1, knownOnly: false,
                   color: "run", hide: false, page: 0, pageSize: 25 };
   const $ = id => document.getElementById(id);
-  if (D.labels13) $("fp-color").insertAdjacentHTML("beforeend", `<option value="label13">script 13 label</option>`);
+  if (D.labels13) $("fp-color").insertAdjacentHTML("beforeend", `<option value="label13">legacy model label</option>`);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
   const statuses = [...new Set(statusCols.flat().filter(Boolean))].sort();
@@ -426,7 +426,7 @@ document.addEventListener("DOMContentLoaded", function () {
       s += `<span class="head">Sequencing run</span>`;
       D.runs.forEach((r, i) => { s += `<span class="lk" data-k="run:${i}"><span class="sw" style="background:${runColor[i]}"></span>${esc(r)} (${nRun[i]})</span>`; });
     } else if (state.color === "label13") {
-      s += `<span class="head">Script 13 label</span>`;
+      s += `<span class="head">Legacy model label</span>`;
       D.labels13.forEach((o, i) => { s += `<span class="lk" data-k="label13:${i}"><span class="sw" style="background:${label13Colors[o]}"></span>${o}</span>`; });
     } else {
       s += `<span class="head">Script 08 outcome</span>`;
@@ -478,7 +478,7 @@ document.addEventListener("DOMContentLoaded", function () {
       run ${esc(S.run[smp] != null ? D.runs[S.run[smp]] : "?")} · extracted ${esc(S.extraction_date[smp] || "?")}<br>
       ${fmtInt(det.reads[d])} / ${fmtInt(S.sample_reads[smp])} reads (${fmtRel(det.rel_abund[d])})<br>
       ${state.labelMode ? "" : `script 08: ${esc(D.outcomes[det.outcome[d]])}`}${!state.labelMode && D.labels13 && det.label13[d] != null
-        ? `<br>script 13: ${esc(D.labels13[det.label13[d]])}${det.clamp13[d] ? " (" + esc(det.clamp13[d]) + ")" : ""}${det.psig13[d] != null ? ` · Psig ${det.psig13[d].toFixed(2)}` : ""}`
+        ? `<br>legacy model: ${esc(D.labels13[det.label13[d]])}${det.clamp13[d] ? " (" + esc(det.clamp13[d]) + ")" : ""}${det.psig13[d] != null ? ` · Psig ${det.psig13[d].toFixed(2)}` : ""}`
         : ""}`;
     tip.style.display = "block";
   });
@@ -721,11 +721,11 @@ sequence_file = Sys.glob(here(run_dir, "analysis", paste0("s06_denoised_", confi
                               "representative_sequences", "*", "data", "dna-sequences.fasta"))[1]
 # optional (script 11, network_input = raw)
 network_metrics_file = here(run_dir, "output", paste0(config$run$name, "_11_raw_asv_network_metrics.csv"))
-# optional (script 13): adds "colour by script 13 label"
-edge_classification_file = here(run_dir, "output", paste0(config$run$name, "_13_edge_classification.csv"))
+# optional (13_legacy_edge_classification.Rmd): adds "colour by legacy model label"
+edge_classification_file = here(run_dir, "output", paste0(config$run$name, "_13_legacy_edge_classification.csv"))
 # optional (script 14): adds the blind labelling mode for the validation sample, starting from any
 # labels already exported
-validation_dir = here(pipeline_config$validation$dir)
+validation_dir = here(run_dir, pipeline_config$validation$dir)
 validation_sample_file = file.path(validation_dir, paste0(config$run$name, "_validation_sample.csv"))
 validation_labels_file = file.path(validation_dir, paste0(config$run$name, "_validation_labels.csv"))
 ```
@@ -867,7 +867,7 @@ asvs = detections %>%
          known_contaminant, asv_community, all_of(paste0("status_", study_systems))) %>%
   arrange(desc(total_reads))
 
-# script 13 labels: clamped detections (controls, hard flags, clamped ASVs) are one class, with the
+# legacy model labels: clamped detections (controls, hard flags, clamped ASVs) are one class, with the
 # clamp as the reason
 labels13 = c("signal", "contamination", "unassigned", "unstable", "clamped")
 if (file.exists(edge_classification_file)) {

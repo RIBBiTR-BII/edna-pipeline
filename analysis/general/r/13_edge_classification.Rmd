@@ -6,123 +6,25 @@ output: html_document
 
 # Description
 
-This script classifies every **edge** of the sample--ASV network -- a detection of an ASV in a field library -- as `signal` or `contamination`. A library is one sequenced unit (`feature_id`); an eDNA sample may have several. It **only classifies, it drops nothing**, and nothing downstream reads its outputs: it is a test bed for the classification scheme, to be compared with script 08's filters.
+This script classifies every **edge** of the sample--ASV network -- a detection of an ASV in a field library -- as `signal` or `contamination`, by the **model ladder** and **validation protocol** in `analysis/README.md`. It **only classifies, it drops nothing**, and nothing downstream reads its outputs.
 
-**Evidence.** Each edge gets a log-odds score L, the sum of terms each scaled to [-1, 1] and multiplied by a weight (`edge_classification$weights`, the term's maximum contribution). Positive is evidence for signal. Psig = 1 / (1 + exp(-L)), and confidence = |2 Psig - 1|.
+**Edges.** Hard-flagged ASVs (script 06) are left out. ASVs in `known_contaminants` are contamination in every model (role `known_contaminant`). Every other field detection is a **free** edge, scored by each model.
 
-Fixed terms, from the data alone:
+**Features** (one row per free edge; data only, never labels):
 
-- **U1 own negatives**: log10((x + eps) / (m + eps)), where m is the ASV's maximum x in the library's *own* linked negatives (same field negative, extraction negative or PCR control group), clipped to -3 decades below and `own_negatives_max_decades_above` above, then divided by 3 -- absence from a few negatives is weak evidence for signal, while sitting at or below them is strong evidence against. 0 when the library has no linked negatives -- missing controls are not evidence.
-- **U2 cross-talk** (one-sided, towards contamination only): k = log10(x / s), where s is the ASV's maximum x in any *other* library of the same sequencing run, negatives excluded (negatives are sinks, never sources; positive controls are sources). No evidence while k is above log10(`crosstalk_cutoff`), full evidence at or below log10(`crosstalk_full`).
-- **U3 replicates** (mostly one-sided, towards signal): the share of the eDNA sample's other field libraries that also detect the ASV; `replicate_miss_penalty` when none do; 0 without other libraries.
-- **U4 control share**, per ASV x system: logit((mean x in the system's field libraries + eps) / (that + mean x in lab negatives and the system's field negatives + 2 eps)), clipped to -4.6 below and `control_share_max_logit` above, then divided by 4.6 -- like U1, absence from negatives is weak evidence. Means are per library, zeros included; positive controls are excluded.
+- `log10_x`: x = the edge's reads over its library's reads, excluding hard-flagged and known-contaminant reads.
+- `home_share` = mu(a, this system) / (mu(a, this system) + max over other systems of mu(a, other system)), where mu(a, g) is the mean x of ASV a over the libraries of group g, zeros included.
+- `pc_component`: the ASV is a PCR positive-control component (script 08).
+- `gbif_local` (local, local genus only) and `gbif_not_local` (other system, not in run), from script 07; anthropogenic and unassessable are neither.
+- `kit_share` = mu(a, this system) / (mu(a, this system) + mu(a, lab negatives)); lab negatives are extraction and PCR negatives.
+- `human_share`: the share of the rest of the library's reads (the edge's own reads left out) from ASVs of genus *Homo* -- an indicator of low target biomass.
+- `dirty_asv`: the mean `human_share` of the ASV's other edges in the system, minus the mean over all free edges of the system (0 when the ASV has no other edge there).
 
-Relational terms, from the labels of neighbouring edges (S signal votes, C contamination votes, the edge itself excluded; `kappa` damps small counts):
+**Models.** Baselines are fixed rules: `all_signal`; `script_08` (removed by step 8 = contamination); `neg_presence` (contamination if the ASV is in any of the library's linked negatives); `neg_subtract` (contamination if the edge's reads minus the ASV's largest read count in a linked negative is <= 0); `legacy` (the v2.1 labels from `13_legacy_edge_classification.Rmd`, when its output exists). The **ladder** rungs B1, M1, M1b, M2, M3, M4, M5 are logistic regressions, each adding one mechanism's features to the rung below, with each coefficient's sign fixed in advance and a Normal(0, `prior_sd`) prior on the coefficients of the standardised features. They are fitted on the **development** labels only (`signal` vs `contamination`; `uncertain` left out), unweighted.
 
-- **R1 same ASV, same system**: (S - C) / (S + C + kappa) -- real taxa are consistent within a system.
-- **R2 same ASV, other systems** (towards contamination only): -C / (C + kappa) -- contamination elsewhere suggests a common contaminant; signal elsewhere is a potential source, not evidence of signal here.
-- **R3 same library, other ASVs** (towards contamination only): -C / (S + C + kappa) -- the library's sink score. A library's signal edges do not vouch for its other edges.
+**Decisions.** A model's probability of signal p becomes the decision of least expected cost under `validation$costs`: with costs 2 / 1 / 0.25, contamination if p < 0.25, signal if p > 0.875, unassigned in between.
 
-**Relative abundance x** is the edge's reads over the library's reads, excluding hard-flagged ASVs and reads already labelled contamination (the *dynamic* denominator), never below `denominator_floor` of the library's reads, plus `denominator_pseudo_reads` -- so a high x resting on few remaining reads (e.g. a library that is mostly clamped human DNA) carries less evidence. The edge's own reads always stay in its own denominator, so labelling an edge cannot inflate its own x. Control libraries keep a fixed denominator.
-
-**Clamps** (fixed contamination, never re-scored):
-
-- hard flags from script 06 (`short_sequence`, `contaminant_library`): left out of everything, denominators included
-- every edge in a negative control (PCR, extraction, field) and in a PCR positive control: they inform U1, U2 (positive controls as sources) and U4, but do not vote in R1-R3
-- ASVs in `known_contaminants` (a hand-reviewed list shared with script 14: lab stocks and positive-control constructs), and PCR positive-control component ASVs (script 08) when `clamp_positive_control_components`: every detection, local or not; removed from denominators from the start, do not vote
-
-Anthropogenic ASVs are **not** clamped: they are classified like any other ASV, and vote in R3.
-
-**Iteration.** Three variants are run with the same scoring:
-
-- `hard` (primary): edges start unassigned. At each threshold in `tau_schedule`, every unassigned edge with confidence >= tau is assigned by the direction of Psig, scores are recomputed, and this repeats until nothing changes; then the next (lower) threshold. An assigned edge whose confidence drops below `tau_drop`, or whose direction flips, is unassigned again; after `max_flips` it stays unassigned (`unstable`). Edges still below the last threshold stay `unassigned`, for manual review.
-- `soft`: all edges are updated together, each vote weighted by its confidence (2 Psig - 1), damped, until Psig stops changing; labelled at the last threshold.
-- `hard_fixed`: as `hard`, but x keeps a fixed denominator (sensitivity check on the dynamic denominator).
-
-**Evaluation.** Model versions are scored against the **validation sample** (script 14), labelled blind in script 12, following the validation protocol in `analysis/README.md`: weighted by stratum, on the development set only unless `validation$evaluate_test_set` is set, with error costs from `validation$costs`. The **reference cases** (`labels_file`: hand-picked ASV x system labels, with an optional `feature_id` override and `min_x` / `max_x` limits) are a sanity check only and are never scored. GBIF locality (script 07) is not used to classify, and is shown as a secondary check.
-
-## Model formulation
-
-**Notation.** An edge $e = (a, \ell)$ is a detection of ASV $a$ in field library $\ell$, with $n_e$ reads. Library $\ell$ belongs to study system $\sigma(\ell)$ and sequencing run $r(\ell)$, and has $N_\ell$ reads excluding hard-flagged ASVs. $F$ is the set of free (unclamped) edges. Each free edge carries a label $y_e \in \{+1, 0, -1\}$ (signal, unassigned, contamination) and a signal / contamination vote
-
-$$
-s_e = \mathbb{1}[y_e = +1], \quad c_e = \mathbb{1}[y_e = -1] \qquad \text{(hard)}, \qquad\qquad
-s_e = \max(0,\, 2p_e - 1), \quad c_e = \max(0,\, 1 - 2p_e) \qquad \text{(soft)},
-$$
-
-where $p_e$ is the edge's current $P_{sig}$.
-
-**Relative abundance.** With $K_\ell$ the reads of clamped ASVs in $\ell$, $\phi$ = `denominator_floor` and $n_0$ = `denominator_pseudo_reads`:
-
-$$
-x_e = \frac{n_e}{\max\!\left(N_\ell - K_\ell - \sum_{e' \in F_\ell \setminus \{e\}} n_{e'}\, c_{e'},\;\; \phi N_\ell\right) + n_0}
-$$
-
-where $F_\ell$ are the free edges of library $\ell$. The sum is dropped in the `hard_fixed` variant. Control libraries use $x = n_e / N_\ell$.
-
-**Fixed terms.** With $\epsilon$ = `epsilon`, $\mathrm{clip}(z; lo, hi) = \min(\max(z, lo), hi)$, $d$ = `own_negatives_max_decades_above`, $\lambda$ = `control_share_max_logit`, $\gamma_1$ = `crosstalk_cutoff`, $\gamma_2$ = `crosstalk_full`, and $\pi$ = `replicate_miss_penalty`:
-
-$$
-U_1(e) = \mathbb{1}[\ell \text{ has linked negatives}] \cdot \frac{1}{3}\,\mathrm{clip}\!\left(\log_{10}\frac{x_e + \epsilon}{m_e + \epsilon};\; -3,\; d\right),
-\qquad m_e = \max_{\ell' \in \mathrm{neg}(\ell)} x_{a\ell'}
-$$
-
-$$
-U_2(e) = -\,\mathrm{clip}\!\left(\frac{\log_{10}\gamma_1 - \log_{10}(x_e / q_e)}{\log_{10}\gamma_1 - \log_{10}\gamma_2};\; 0,\; 1\right),
-\qquad q_e = \max_{\substack{\ell' \neq \ell,\; r(\ell') = r(\ell) \\ \ell' \notin \text{negatives}}} x_{a\ell'}
-\quad (U_2 = 0 \text{ if no such } \ell')
-$$
-
-$$
-U_3(e) = \begin{cases} 0 & R_e = 0 \\ k_e / R_e & k_e > 0 \\ \pi & \text{otherwise} \end{cases}
-\qquad R_e, k_e = \text{other field libraries of the eDNA sample, and how many detect } a
-$$
-
-$$
-U_4(e) = \frac{1}{4.6}\,\mathrm{clip}\!\left(\mathrm{logit}\,\frac{\mu^{f}_{a\sigma} + \epsilon}{\mu^{f}_{a\sigma} + \mu^{n}_{a\sigma} + 2\epsilon};\; -4.6,\; \lambda\right)
-$$
-
-where $\mu^f_{a\sigma}$ is the mean $x$ of $a$ over all field libraries of system $\sigma$ (zeros included, fixed denominator), and $\mu^n_{a\sigma}$ the same over lab negatives and the field negatives of $\sigma$.
-
-**Relational terms.** With $\kappa$ = `kappa`, and the edge itself always excluded:
-
-$$
-S_1, C_1 = \sum_{e' \in F_{a\sigma} \setminus \{e\}} s_{e'},\; c_{e'}
-\qquad
-C_2 = \sum_{e' \in F_{a} \setminus F_{a\sigma}} c_{e'}
-\qquad
-S_3, C_3 = \sum_{e' \in F_{\ell} \setminus \{e\}} s_{e'},\; c_{e'}
-$$
-
-$$
-R_1(e) = \frac{S_1 - C_1}{S_1 + C_1 + \kappa},
-\qquad
-R_2(e) = -\frac{C_2}{C_2 + \kappa},
-\qquad
-R_3(e) = -\frac{C_3}{S_3 + C_3 + \kappa}
-$$
-
-where $F_{a\sigma}$ are the free edges of ASV $a$ in system $\sigma$, $F_a$ all free edges of $a$, and $F_\ell$ the free edges of library $\ell$.
-
-**Score.** Every term lies in $[-1, 1]$ and is scaled by its weight $w$ (`weights`, the term's maximum contribution in log-odds):
-
-$$
-L_e = \sum_{k=1}^{4} w_{U_k}\, U_k(e) + \sum_{j=1}^{3} w_{R_j}\, R_j(e),
-\qquad
-P_{sig}(e) = \frac{1}{1 + e^{-L_e}},
-\qquad
-\mathrm{conf}(e) = \left|2P_{sig}(e) - 1\right|
-$$
-
-**Hard iteration.** For thresholds $\tau_1 > \tau_2 > \dots > \tau_K$ (`tau_schedule`), repeat at each $\tau_k$ until nothing changes (at most `max_steps_per_tau` steps): recompute $L$ for all free edges; unassign every assigned edge with $\mathrm{conf}(e) < \tau_{drop}$ or $\mathrm{sign}(L_e) \neq y_e$ (counting a flip); then set $y_e = \mathrm{sign}(L_e)$ for every unassigned edge with $\mathrm{conf}(e) \ge \tau_k$ and fewer than `max_flips` flips. Edges still unassigned after $\tau_K$ are left for review.
-
-**Soft iteration.** Starting from $p_e = 0.5$, with damping $\eta$ = `soft_damping`, until $\max_e |\Delta p_e|$ < `soft_tolerance`:
-
-$$
-p_e \leftarrow p_e + \eta\left(\frac{1}{1 + e^{-L_e(p)}} - p_e\right)
-$$
-
-then $y_e = \mathrm{sign}(2p_e - 1)$ where $|2p_e - 1| \ge \tau_K$, otherwise unassigned.
+**Performance** is not shown unless `validation$report_performance` is true: then models are compared by repeated cross-validation within the development set, with folds grouped by ASV x study system (weighted cost per edge, amphibian and all eDNA), the simplest rung within one standard error of the best is marked, and a drop-one analysis removes each mechanism from the top rung. The sealed **test** set is read only when `validation$evaluate_test_set` is true, for the models in `validation$final_candidates`.
 
 # Config
 ```{r}
@@ -136,38 +38,22 @@ cat(paste0("Run_dir: ", run_dir, "\n"))
 
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
+known_contaminants = map_chr(pipeline_config$known_contaminants, "asv_id")
+
 ec = pipeline_config$edge_classification
 model_version = ec$model_version
-edge_labels_file = here(ec$labels_file)
-known_contaminants = map_chr(pipeline_config$known_contaminants, "asv_id")
-clamp_positive_control_components = isTRUE(ec$clamp_positive_control_components)
-epsilon = as.numeric(ec$epsilon)
-own_negatives_max_decades_above = as.numeric(ec$own_negatives_max_decades_above)
-kappa = as.numeric(ec$kappa)
-denominator_floor = as.numeric(ec$denominator_floor)
-denominator_pseudo_reads = as.numeric(ec$denominator_pseudo_reads)
-control_share_max_logit = as.numeric(ec$control_share_max_logit)
-crosstalk_cutoff = as.numeric(ec$crosstalk_cutoff)
-crosstalk_full = as.numeric(ec$crosstalk_full)
-replicate_miss_penalty = as.numeric(ec$replicate_miss_penalty)
-weights = map_dbl(ec$weights, as.numeric)
-tau_schedule = sort(as.numeric(unlist(ec$tau_schedule)), decreasing = TRUE)
-tau_drop = as.numeric(ec$tau_drop)
-max_flips = as.integer(ec$max_flips)
-max_steps_per_tau = as.integer(ec$max_steps_per_tau)
-soft_damping = as.numeric(ec$soft_damping)
-soft_tolerance = as.numeric(ec$soft_tolerance)
-soft_max_iterations = as.integer(ec$soft_max_iterations)
-
-term_names = c("own_negatives", "crosstalk", "replicates", "control_share", "asv_system", "asv_other_systems", "library")
-stopifnot(all(term_names %in% names(weights)))
-weights = weights[term_names]
+prior_sd = as.numeric(ec$prior_sd)
+cv_folds = as.integer(ec$cv_folds)
+cv_repeats = as.integer(ec$cv_repeats)
+cv_seed = as.integer(ec$cv_seed)
 
 # validation (see the validation protocol in analysis/README.md)
 vc = pipeline_config$validation
-validation_dir = here(vc$dir)
-validation_costs = map_dbl(vc$costs, as.numeric)
+validation_dir = here(run_dir, vc$dir)
+costs = map_dbl(vc$costs, as.numeric)
+report_performance = isTRUE(vc$report_performance)
 evaluate_test_set = isTRUE(vc$evaluate_test_set)
+final_candidates = as.character(unlist(vc$final_candidates))
 bootstrap_reps = as.integer(vc$bootstrap_reps)
 validation_sample_file = file.path(validation_dir, paste0(config$run$name, "_validation_sample.csv"))
 validation_labels_file = file.path(validation_dir, paste0(config$run$name, "_validation_labels.csv"))
@@ -175,18 +61,33 @@ validation_labels_file = file.path(validation_dir, paste0(config$run$name, "_val
 possible_study_systems = c("brazil", "panama", "pennsylvania", "sierra_nevada")
 negative_classes = c("field_negative", "extraction_negative", "pcr_negative")
 
+# the ladder: each rung adds one mechanism's features to the rung below; signs fixed in advance
+# (+1: evidence for signal, -1: evidence for contamination)
+feature_signs = c(log10_x = 1, home_share = 1, pc_component = -1, gbif_local = 1, gbif_not_local = -1,
+                  kit_share = 1, human_share = -1, dirty_asv = -1)
+mechanisms = list(abundance = "log10_x", home = "home_share", positive_control = "pc_component",
+                  gbif = c("gbif_local", "gbif_not_local"), kitome = "kit_share", library_human = "human_share",
+                  asv_dirty = "dirty_asv")
+rungs = list(B1 = "abundance", M1 = "home", M1b = "positive_control", M2 = "gbif", M3 = "kitome",
+             M4 = "library_human", M5 = "asv_dirty") %>%
+  accumulate(c) %>%
+  map(\(m) unname(unlist(mechanisms[m])))
+baseline_names = c("all_signal", "script_08", "neg_presence", "neg_subtract", "legacy")
+
 # input files
 sample_map_file = here(run_dir, "output", paste0(config$run$name, "_03_sample_id_map.csv"))
 classification_file = here(run_dir, "output", paste0(config$run$name, "_06_asv_classification.csv"))
 locality_file = here(run_dir, "output", paste0(config$run$name, "_07_asv_locality.csv"))
 controlled_file = here(run_dir, "output", paste0(config$run$name, "_08_asv_controlled.csv"))
+# optional: the legacy model's labels (13_legacy_edge_classification.Rmd)
+legacy_file = here(run_dir, "output", paste0(config$run$name, "_13_legacy_edge_classification.csv"))
 
 # output files
 edges_out = here(run_dir, "output", paste0(config$run$name, "_13_edge_classification.csv"))
-libraries_out = here(run_dir, "output", paste0(config$run$name, "_13_library_sink_scores.csv"))
-asv_system_out = here(run_dir, "output", paste0(config$run$name, "_13_asv_system_summary.csv"))
-iteration_log_out = here(run_dir, "output", paste0(config$run$name, "_13_iteration_log.csv"))
-validation_metrics_out = here(run_dir, "output", paste0(config$run$name, "_13_validation_metrics.csv"))
+coefficients_out = here(run_dir, "output", paste0(config$run$name, "_13_ladder_coefficients.csv"))
+cv_metrics_out = here(run_dir, "output", paste0(config$run$name, "_13_cv_metrics.csv"))
+drop_one_out = here(run_dir, "output", paste0(config$run$name, "_13_drop_one.csv"))
+test_metrics_out = here(run_dir, "output", paste0(config$run$name, "_13_test_metrics.csv"))
 ```
 
 # Load data
@@ -206,17 +107,6 @@ asv_controlled = read_csv(controlled_file, show_col_types = FALSE, guess_max = I
   select(asv_id, feature_id, asv_count_raw, asv_count_controlled, positive_control_component)
 
 stopifnot(!anyDuplicated(sample_map$feature_id))
-
-edge_labels = if (file.exists(edge_labels_file)) {
-  read_csv(edge_labels_file, col_types = cols(.default = col_character())) %>%
-    mutate(min_x = as.numeric(min_x), max_x = as.numeric(max_x),
-           feature_id = na_if(feature_id, ""))
-} else {
-  warning("No labels file at ", edge_labels_file, ": evaluation against manual labels is skipped")
-  tibble(asv_id = character(), study_system = character(), feature_id = character(), label = character(),
-         min_x = numeric(), max_x = numeric(), note = character())
-}
-stopifnot(all(edge_labels$label %in% c("signal", "contamination")))
 ```
 
 # Libraries and edges
@@ -233,70 +123,116 @@ libraries = sample_map %>%
               study_system %in% study_systems ~ "field_sample",
               .default = NA_character_),
             study_system = if_else(library_class %in% c("field_sample", "field_negative"), study_system, NA_character_),
-            sequencing_date = as.character(sequencing_date),
-            edna_sample_id)
+            sequencing_date = as.character(sequencing_date))
 
 cat("libraries without a class (left out):", sum(is.na(libraries$library_class)), "\n")
 libraries = libraries %>% filter(!is.na(library_class))
 
-# hard flags (script 06): left out of everything
-hard_flags = asv_classification %>%
+hard_flagged = asv_classification %>%
   filter(short_sequence_flag %in% TRUE | contaminant_flag %in% TRUE) %>%
-  transmute(asv_id, hard_flag = if_else(short_sequence_flag %in% TRUE, "short_sequence", "contaminant_library"))
+  pull(asv_id)
+human_asvs = asv_classification %>% filter(genus %in% "Homo") %>% pull(asv_id)
 
+# every detection in a classified library; hard-flagged ASVs are left out of everything
 detections = asv_controlled %>%
   filter(asv_count_raw > 0) %>%
   inner_join(libraries, by = "feature_id") %>%
-  left_join(hard_flags, by = "asv_id") %>%
-  rename(reads = asv_count_raw)
-
-positive_control_component_asvs = if (clamp_positive_control_components) {
-  unique(asv_controlled$asv_id[asv_controlled$positive_control_component %in% TRUE])
-} else {
-  character()
-}
-cat("positive-control component ASVs clamped:", length(positive_control_component_asvs), "\n")
-
-edges = detections %>%
-  filter(is.na(hard_flag)) %>%
-  mutate(role = case_when(library_class %in% negative_classes ~ "negative_control",
-                          library_class == "pcr_positive" ~ "positive_control",
+  rename(reads = asv_count_raw) %>%
+  mutate(role = case_when(asv_id %in% hard_flagged ~ "hard_flag",
                           asv_id %in% known_contaminants ~ "known_contaminant",
-                          asv_id %in% positive_control_component_asvs ~ "positive_control_component",
-                          .default = "free"))
+                          library_class == "field_sample" ~ "free",
+                          .default = "control"))
 
-# library reads excluding hard flags (N), and reads of clamped ASVs (removed from field libraries'
-# denominators from the start)
-library_reads = edges %>%
+# library reads excluding hard-flagged and known-contaminant reads (the denominator of x), and the
+# human reads among them
+library_reads = detections %>%
+  filter(role %in% c("free", "control")) %>%
   group_by(feature_id) %>%
-  summarise(N = sum(reads),
-            clamp_reads = sum(reads[role %in% c("known_contaminant", "positive_control_component")]),
-            .groups = "drop")
+  summarise(N = sum(reads), human_reads = sum(reads[asv_id %in% human_asvs]), .groups = "drop")
 
 libraries = libraries %>%
   left_join(library_reads, by = "feature_id") %>%
-  mutate(N = replace_na(N, 0), clamp_reads = replace_na(clamp_reads, 0))
+  mutate(N = replace_na(N, 0), human_reads = replace_na(human_reads, 0))
 
-# x with a fixed denominator: control libraries over N; field libraries over N less clamped reads,
-# plus the pseudo reads
-edges = edges %>%
-  left_join(libraries %>% select(feature_id, N, clamp_reads), by = "feature_id") %>%
-  mutate(x_fixed = if_else(library_class == "field_sample",
-                           reads / (pmax(N - clamp_reads, denominator_floor * N) + denominator_pseudo_reads),
-                           reads / N))
+counted = detections %>%
+  filter(role %in% c("free", "control")) %>%
+  left_join(libraries %>% select(feature_id, N, human_reads), by = "feature_id") %>%
+  mutate(x = reads / N)
 
-edges %>% count(role, library_class) %>% knitr::kable()
-cat("hard-flagged detections (left out):", sum(!is.na(detections$hard_flag)), "\n")
+detections %>% count(role, library_class) %>% knitr::kable()
 ```
 
-# Fixed terms
+# Features
 ```{r}
-# free edges: field-library detections to classify
-fe = edges %>%
-  filter(role == "free") %>%
-  arrange(asv_id, feature_id)
+# mu(a, g): mean x of ASV a over the libraries of group g, zeros included
+n_field = libraries %>% filter(library_class == "field_sample", N > 0) %>% count(study_system, name = "n")
+mu_system = counted %>%
+  filter(library_class == "field_sample") %>%
+  group_by(asv_id, study_system) %>%
+  summarise(x_sum = sum(x), .groups = "drop") %>%
+  left_join(n_field, by = "study_system") %>%
+  transmute(asv_id, study_system, mu = x_sum / n)
 
-# U1: each library's own linked negatives, via the control-group ids shared with them
+n_lab = sum(libraries$library_class %in% c("extraction_negative", "pcr_negative") & libraries$N > 0)
+mu_lab = counted %>%
+  filter(library_class %in% c("extraction_negative", "pcr_negative")) %>%
+  group_by(asv_id) %>%
+  summarise(mu_lab = sum(x) / n_lab, .groups = "drop")
+
+# home share: this system against the strongest other system
+asv_system = mu_system %>%
+  group_by(asv_id) %>%
+  mutate(mu_other_max = map_dbl(seq_along(mu), \(i) max(c(0, mu[-i])))) %>%
+  ungroup() %>%
+  left_join(mu_lab, by = "asv_id") %>%
+  mutate(mu_lab = replace_na(mu_lab, 0),
+         home_share = mu / (mu + mu_other_max),
+         kit_share = mu / (mu + mu_lab))
+
+gbif = asv_locality %>%
+  transmute(asv_id, study_system, local_status,
+            gbif_local = as.numeric(local_status %in% c("local", "local_genus_only")),
+            gbif_not_local = as.numeric(local_status %in% c("other_system", "not_in_run")))
+
+pc_components = asv_controlled %>%
+  group_by(asv_id) %>%
+  summarise(pc_component = as.numeric(any(positive_control_component %in% TRUE)), .groups = "drop")
+
+fe = counted %>%
+  filter(role == "free") %>%
+  left_join(asv_system %>% select(asv_id, study_system, mu, home_share, kit_share), by = c("asv_id", "study_system")) %>%
+  left_join(gbif, by = c("asv_id", "study_system")) %>%
+  left_join(pc_components, by = "asv_id") %>%
+  mutate(across(c(gbif_local, gbif_not_local, pc_component), \(v) replace_na(v, 0)),
+         log10_x = log10(x),
+         # human share of the rest of the library: the edge's own reads left out, so a human edge
+         # does not count itself
+         own_human = if_else(asv_id %in% human_asvs, reads, 0),
+         human_share = if_else(N - reads > 0, (human_reads - own_human) / (N - reads), 0))
+
+# dirty ASV: mean human share of the ASV's other edges in the system, against the system mean
+fe = fe %>%
+  group_by(study_system) %>%
+  mutate(system_mean_human = mean(human_share)) %>%
+  group_by(asv_id, study_system) %>%
+  mutate(n_other = n() - 1L,
+         dirty_asv = if_else(n_other > 0, (sum(human_share) - human_share) / n_other - system_mean_human, 0)) %>%
+  ungroup() %>%
+  select(-own_human, -n_other, -system_mean_human)
+
+stopifnot(!anyNA(fe[names(feature_signs)]))
+
+fe %>%
+  select(all_of(names(feature_signs))) %>%
+  pivot_longer(everything(), names_to = "feature") %>%
+  group_by(feature = factor(feature, names(feature_signs))) %>%
+  summarise(mean = mean(value), sd = sd(value), min = min(value), max = max(value)) %>%
+  knitr::kable(digits = 3, caption = paste(nrow(fe), "free edges"))
+```
+
+# Baselines
+```{r}
+# each library's linked negatives, via the control-group ids shared with them
 link_controls = function(group_col, control_class) {
   groups = sample_map %>%
     select(feature_id, group = all_of(group_col)) %>%
@@ -314,541 +250,335 @@ control_links = bind_rows(link_controls("field_negative_control_group", "field_n
                           link_controls("pcr_control_group", "pcr_negative")) %>%
   distinct()
 
-own_negative_max = control_links %>%
-  inner_join(edges %>% filter(role == "negative_control") %>% select(control_id = feature_id, asv_id, x_fixed),
+own_negative_reads = control_links %>%
+  inner_join(counted %>% filter(library_class %in% negative_classes) %>% select(control_id = feature_id, asv_id, reads),
              by = "control_id", relationship = "many-to-many") %>%
   group_by(feature_id, asv_id) %>%
-  summarise(own_negative_max = max(x_fixed), .groups = "drop")
+  summarise(own_negative_max_reads = max(reads), .groups = "drop")
+
+legacy = if (file.exists(legacy_file)) {
+  read_csv(legacy_file, show_col_types = FALSE, guess_max = Inf) %>%
+    transmute(asv_id, feature_id, legacy = if_else(label == "unstable", "unassigned", label))
+} else {
+  cat("No legacy output (", legacy_file, "): the legacy baseline is left out\n")
+  NULL
+}
 
 fe = fe %>%
-  mutate(has_negatives = feature_id %in% control_links$feature_id) %>%
-  left_join(own_negative_max, by = c("feature_id", "asv_id")) %>%
-  mutate(own_negative_max = replace_na(own_negative_max, 0))
+  left_join(own_negative_reads, by = c("feature_id", "asv_id")) %>%
+  mutate(own_negative_max_reads = replace_na(own_negative_max_reads, 0),
+         all_signal = "signal",
+         script_08 = if_else(asv_count_controlled == 0, "contamination", "signal"),
+         neg_presence = if_else(own_negative_max_reads > 0, "contamination", "signal"),
+         neg_subtract = if_else(reads - own_negative_max_reads <= 0, "contamination", "signal"))
+if (!is.null(legacy)) fe = fe %>% left_join(legacy, by = c("asv_id", "feature_id"))
+baselines = intersect(baseline_names, names(fe))
 
-# U3: other field libraries of the same eDNA sample
-replicate_libraries = libraries %>%
-  filter(library_class == "field_sample", !is.na(edna_sample_id), N > 0) %>%
-  select(feature_id, edna_sample_id)
-
-replicate_counts = replicate_libraries %>% count(edna_sample_id, name = "n_libraries")
-replicate_detections = edges %>%
-  filter(library_class == "field_sample") %>%
-  inner_join(replicate_libraries %>% select(feature_id), by = "feature_id") %>%
-  count(edna_sample_id, asv_id, name = "n_detected")
-
-fe = fe %>%
-  left_join(replicate_counts, by = "edna_sample_id") %>%
-  left_join(replicate_detections, by = c("edna_sample_id", "asv_id")) %>%
-  mutate(n_other_replicates = replace_na(n_libraries - 1L, 0L),
-         n_other_replicates_detected = replace_na(n_detected - 1L, 0L),
-         u_replicates = case_when(n_other_replicates == 0 ~ 0,
-                                  n_other_replicates_detected > 0 ~ n_other_replicates_detected / n_other_replicates,
-                                  .default = replicate_miss_penalty)) %>%
-  select(-n_libraries, -n_detected)
-
-# U4: per ASV x system, mean x over the system's field libraries vs. over lab negatives and the
-# system's field negatives (per library, zeros included)
-n_field_libraries = libraries %>%
-  filter(library_class == "field_sample", N > 0) %>%
-  count(study_system, name = "n_field")
-
-lab_negatives = libraries %>% filter(library_class %in% c("extraction_negative", "pcr_negative"), N > 0)
-n_negative_libraries = libraries %>%
-  filter(library_class == "field_negative", N > 0) %>%
-  count(study_system, name = "n_field_negative") %>%
-  mutate(n_negative = n_field_negative + nrow(lab_negatives))
-
-field_mean = fe %>%
-  group_by(asv_id, study_system) %>%
-  summarise(x_sum = sum(x_fixed), .groups = "drop") %>%
-  left_join(n_field_libraries, by = "study_system") %>%
-  transmute(asv_id, study_system, field_mean = x_sum / n_field)
-
-lab_negative_sum = edges %>%
-  filter(feature_id %in% lab_negatives$feature_id) %>%
-  group_by(asv_id) %>%
-  summarise(lab_sum = sum(x_fixed), .groups = "drop")
-
-field_negative_sum = edges %>%
-  filter(library_class == "field_negative") %>%
-  group_by(asv_id, study_system) %>%
-  summarise(field_negative_sum = sum(x_fixed), .groups = "drop")
-
-control_share = field_mean %>%
-  left_join(lab_negative_sum, by = "asv_id") %>%
-  left_join(field_negative_sum, by = c("asv_id", "study_system")) %>%
-  left_join(n_negative_libraries, by = "study_system") %>%
-  mutate(negative_mean = (replace_na(lab_sum, 0) + replace_na(field_negative_sum, 0)) / n_negative,
-         control_share_a = (field_mean + epsilon) / (field_mean + negative_mean + 2 * epsilon),
-         u_control_share = pmin(pmax(qlogis(control_share_a), -4.6), control_share_max_logit) / 4.6) %>%
-  select(asv_id, study_system, field_mean, negative_mean, control_share_a, u_control_share)
-
-fe = fe %>% left_join(control_share, by = c("asv_id", "study_system"))
-
-cat("free edges:", nrow(fe), "\n")
-cat("  in libraries with linked negatives:", sum(fe$has_negatives), "\n")
-cat("  also in own negatives:", sum(fe$own_negative_max > 0), "\n")
-cat("  with other replicate libraries:", sum(fe$n_other_replicates > 0), "\n")
+fe %>%
+  select(all_of(baselines)) %>%
+  pivot_longer(everything(), names_to = "model", values_to = "label") %>%
+  count(model = factor(model, baselines), label) %>%
+  pivot_wider(names_from = label, values_from = n, values_fill = 0) %>%
+  knitr::kable(caption = "free edges by baseline label")
 ```
 
-# Scoring
+# Fitting
 ```{r}
-# group codes for the free edges
-n_fe = nrow(fe)
-lib_g = as.integer(factor(fe$feature_id))
-asv_g = as.integer(factor(fe$asv_id))
-asv_system_g = as.integer(factor(paste(fe$asv_id, fe$study_system)))
-
-# U2 source pool: free edges (dynamic x) and positive-control edges (fixed x), by ASV x run
-positive_edges = edges %>% filter(role == "positive_control")
-asv_run_levels = unique(c(paste(fe$asv_id, fe$sequencing_date), paste(positive_edges$asv_id, positive_edges$sequencing_date)))
-pool_g = c(match(paste(fe$asv_id, fe$sequencing_date), asv_run_levels),
-           match(paste(positive_edges$asv_id, positive_edges$sequencing_date), asv_run_levels))
-
-# per-element sum of v over its group, with groups coded 1..n
-group_sum = function(v, g) {
-  r = rowsum(v, g)
-  out = numeric(max(g))
-  out[as.integer(rownames(r))] = r[, 1]
-  out[g]
+# the decision of least expected cost for probability of signal p
+decide = function(p) {
+  expected = cbind(signal = costs[["false_signal"]] * (1 - p),
+                   contamination = costs[["false_contamination"]] * p,
+                   unassigned = rep(costs[["unassigned"]], length(p)))
+  colnames(expected)[max.col(-expected, ties.method = "last")]
 }
 
-# per-element maximum of x over the *other* elements of its group (0 if none)
-leave_one_out_max = function(g, x) {
-  o = order(g, -x)
-  gs = g[o]
-  xs = x[o]
-  first = which(!duplicated(gs))
-  second = first + 1L
-  has_second = second <= length(gs) & gs[pmin(second, length(gs))] == gs[first]
-  top1 = xs[first]
-  top2 = if_else(has_second, xs[pmin(second, length(gs))], 0)
-  gi = match(g, gs[first])
-  is_top = seq_along(x) == o[first][gi]
-  if_else(is_top, top2[gi], top1[gi])
-}
-
-# term contributions and log odds for every free edge, given signal / contamination votes
-# (hard: 0/1 labels; soft: max(0, 2 Psig - 1) and max(0, 1 - 2 Psig))
-score_edges = function(v_signal, v_contamination, dynamic) {
-  # dynamic denominator: reads labelled contamination drop out, except the edge's own
-  removed = fe$clamp_reads
-  if (dynamic) {
-    contamination_reads = fe$reads * v_contamination
-    removed = removed + group_sum(contamination_reads, lib_g) - contamination_reads
+# sign-constrained logistic regression with a Normal(0, prior_sd) prior on the coefficients of the
+# z-scored features (intercept unpenalised). A feature constant in the training rows gets coefficient 0.
+fit_logistic = function(X, y) {
+  center = colMeans(X)
+  scale = apply(X, 2, sd)
+  usable = scale > 0
+  Z = sweep(sweep(X, 2, center), 2, ifelse(usable, scale, 1), "/")
+  Z1 = cbind(1, Z)
+  signs = feature_signs[colnames(X)]
+  objective = function(b) {
+    eta = drop(Z1 %*% b)
+    sum(log1p(exp(-abs(eta))) + pmax(eta, 0) - y * eta) + sum(b[-1]^2) / (2 * prior_sd^2)
   }
-  x = fe$reads / (pmax(fe$N - removed, denominator_floor * fe$N) + denominator_pseudo_reads)
-
-  u_own_negatives = if_else(fe$has_negatives,
-                            pmin(pmax(log10((x + epsilon) / (fe$own_negative_max + epsilon)), -3), own_negatives_max_decades_above) / 3,
-                            0)
-
-  source_x = leave_one_out_max(pool_g, c(x, positive_edges$x_fixed))[seq_len(n_fe)]
-  k = if_else(source_x > 0, log10(x / source_x), 0)
-  u_crosstalk = -pmin(pmax((log10(crosstalk_cutoff) - k) / (log10(crosstalk_cutoff) - log10(crosstalk_full)), 0), 1)
-
-  s_same = group_sum(v_signal, asv_system_g) - v_signal
-  c_same = group_sum(v_contamination, asv_system_g) - v_contamination
-  u_asv_system = (s_same - c_same) / (s_same + c_same + kappa)
-
-  c_other = group_sum(v_contamination, asv_g) - group_sum(v_contamination, asv_system_g)
-  u_asv_other_systems = -c_other / (c_other + kappa)
-
-  s_lib = group_sum(v_signal, lib_g) - v_signal
-  c_lib = group_sum(v_contamination, lib_g) - v_contamination
-  u_library = -c_lib / (s_lib + c_lib + kappa)
-
-  contributions = cbind(own_negatives = u_own_negatives,
-                        crosstalk = u_crosstalk,
-                        replicates = fe$u_replicates,
-                        control_share = fe$u_control_share,
-                        asv_system = u_asv_system,
-                        asv_other_systems = u_asv_other_systems,
-                        library = u_library) %*% diag(weights)
-  colnames(contributions) = term_names
-  list(x = x, source_x = source_x, contributions = contributions, log_odds = rowSums(contributions))
+  gradient = function(b) {
+    p = plogis(drop(Z1 %*% b))
+    drop(crossprod(Z1, p - y)) + c(0, b[-1] / prior_sd^2)
+  }
+  lower = c(-Inf, ifelse(usable & signs > 0, 0, ifelse(usable, -Inf, 0)))
+  upper = c(Inf, ifelse(usable & signs < 0, 0, ifelse(usable, Inf, 0)))
+  start = c(qlogis(min(max(mean(y), 0.01), 0.99)), rep(0, ncol(X)))
+  opt = optim(start, objective, gradient, method = "L-BFGS-B", lower = lower, upper = upper)
+  if (opt$convergence != 0) warning("fit did not converge: ", opt$message)
+  list(intercept = opt$par[1], beta = setNames(opt$par[-1], colnames(X)), center = center,
+       scale = ifelse(usable, scale, 1))
 }
+
+predict_logistic = function(fit, X) {
+  Z = sweep(sweep(X[, names(fit$beta), drop = FALSE], 2, fit$center), 2, fit$scale, "/")
+  plogis(fit$intercept + drop(Z %*% fit$beta))
+}
+
+# training data: labelled development edges only. The test split is dropped before any label is
+# joined, so its labels are never read here.
+if (!file.exists(validation_sample_file) || !file.exists(validation_labels_file)) {
+  stop("No validation sample / labels in ", validation_dir, ": draw (script 14) and label (script 12) first")
+}
+validation_sample = read_csv(validation_sample_file, show_col_types = FALSE)
+development = validation_sample %>% filter(split == "development")
+development_labels = read_csv(validation_labels_file, col_types = cols(.default = col_character())) %>%
+  filter(validation_id %in% development$validation_id) %>%
+  select(validation_id, truth = label)
+stopifnot(!anyDuplicated(development_labels$validation_id),
+          all(development_labels$truth %in% c("signal", "contamination", "uncertain")))
+
+labelled = development %>%
+  inner_join(development_labels, by = "validation_id") %>%
+  # weight: the stratum's population over its labelled development edges (uncertain included)
+  group_by(stratum) %>%
+  mutate(weight = N_h / n()) %>%
+  ungroup() %>%
+  left_join(fe %>% select(asv_id, feature_id, all_of(names(feature_signs)), all_of(baselines)),
+            by = c("asv_id", "feature_id"))
+
+# every sampled edge must be a free edge here (the same population as script 14)
+unmatched = labelled %>% filter(is.na(log10_x))
+if (nrow(unmatched) > 0) {
+  stop(nrow(unmatched), " labelled development edge(s) are not free edges here (population mismatch with script 14?): ",
+       paste(head(unmatched$validation_id, 10), collapse = ", "))
+}
+
+training = labelled %>% filter(truth != "uncertain") %>% mutate(y = as.numeric(truth == "signal"))
+cat(nrow(development), "development edges,", nrow(labelled), "labelled,", nrow(training), "used for fitting (",
+    sum(training$y), "signal,", sum(1 - training$y), "contamination ),", n_distinct(paste(training$asv_id, training$study_system)),
+    "ASV x system groups\n")
+
+fits = map(rungs, \(features) fit_logistic(as.matrix(training[features]), training$y))
+
+coefficients = imap_dfr(fits, \(fit, rung) tibble(
+  model_version = model_version,
+  rung = rung,
+  term = c("(intercept)", names(fit$beta)),
+  sign = c(NA, feature_signs[names(fit$beta)]),
+  estimate_standardised = c(fit$intercept, fit$beta),
+  # per unit of the raw feature (intercept at the raw features' zero)
+  estimate = c(fit$intercept - sum(fit$beta * fit$center / fit$scale), fit$beta / fit$scale),
+  feature_mean = c(NA, fit$center),
+  feature_sd = c(NA, fit$scale),
+  n_train = nrow(training),
+  fitted_on = as.character(Sys.Date())))
+
+coefficients %>%
+  select(rung, term, estimate_standardised) %>%
+  mutate(rung = factor(rung, names(rungs)), term = factor(term, c("(intercept)", names(feature_signs)))) %>%
+  pivot_wider(names_from = rung, values_from = estimate_standardised) %>%
+  arrange(term) %>%
+  knitr::kable(digits = 2, caption = "coefficients per rung, on the standardised features (log-odds per SD); 0 = held at its sign bound")
+
+write_csv(coefficients, coefficients_out)
 ```
 
 # Classify
 ```{r}
-label_names = c("contamination", "unassigned", "signal")  # label codes -1, 0, 1
-
-classify_hard = function(dynamic) {
-  label = integer(n_fe)
-  flips = integer(n_fe)
-  assigned_step = rep(NA_integer_, n_fe)
-  assigned_tau = rep(NA_real_, n_fe)
-  psig_at_assignment = rep(NA_real_, n_fe)
-  x_at_assignment = rep(NA_real_, n_fe)
-  log = list()
-  step = 0L
-  for (tau in tau_schedule) {
-    for (i in seq_len(max_steps_per_tau)) {
-      step = step + 1L
-      sc = score_edges(as.numeric(label == 1L), as.numeric(label == -1L), dynamic)
-      psig = plogis(sc$log_odds)
-      confidence = abs(2 * psig - 1)
-      direction = if_else(psig >= 0.5, 1L, -1L)
-
-      dropped = label != 0L & (confidence < tau_drop | direction != label)
-      flips[dropped] = flips[dropped] + 1L
-      label[dropped] = 0L
-      assigned_step[dropped] = NA_integer_
-      assigned_tau[dropped] = NA_real_
-      psig_at_assignment[dropped] = NA_real_
-      x_at_assignment[dropped] = NA_real_
-
-      added = label == 0L & flips < max_flips & confidence >= tau
-      label[added] = direction[added]
-      assigned_step[added] = step
-      assigned_tau[added] = tau
-      psig_at_assignment[added] = psig[added]
-      x_at_assignment[added] = sc$x[added]
-
-      log[[step]] = tibble(step = step, tau = tau, n_added = sum(added), n_dropped = sum(dropped),
-                           signal = sum(label == 1L), contamination = sum(label == -1L), unassigned = sum(label == 0L))
-      if (!any(added) && !any(dropped)) break
-    }
-  }
-  sc = score_edges(as.numeric(label == 1L), as.numeric(label == -1L), dynamic)
-  label_text = label_names[label + 2L]
-  label_text[label == 0L & flips >= max_flips] = "unstable"
-  list(label = label_text, psig = plogis(sc$log_odds), score = sc, flips = flips,
-       assigned_step = assigned_step, assigned_tau = assigned_tau,
-       psig_at_assignment = psig_at_assignment, x_at_assignment = x_at_assignment,
-       log = bind_rows(log))
+X_all = as.matrix(fe[names(feature_signs)])
+for (rung in names(rungs)) {
+  p = predict_logistic(fits[[rung]], X_all)
+  fe[[paste0("p_", rung)]] = p
+  fe[[rung]] = decide(p)
 }
+models = c(baselines, names(rungs))
 
-classify_soft = function(dynamic) {
-  psig = rep(0.5, n_fe)
-  for (iteration in seq_len(soft_max_iterations)) {
-    sc = score_edges(pmax(0, 2 * psig - 1), pmax(0, 1 - 2 * psig), dynamic)
-    psig_new = plogis(sc$log_odds)
-    change = max(abs(psig_new - psig))
-    psig = psig + soft_damping * (psig_new - psig)
-    if (change < soft_tolerance) break
-  }
-  cat("soft:", iteration, "iterations, last change", signif(change, 2), "\n")
-  confidence = abs(2 * psig - 1)
-  label = if_else(confidence >= min(tau_schedule), if_else(psig >= 0.5, "signal", "contamination"), "unassigned")
-  list(label = label, psig = psig, iterations = iteration)
-}
+# label counts over all free edges (no labels involved)
+fe %>%
+  select(all_of(models)) %>%
+  pivot_longer(everything(), names_to = "model", values_to = "label") %>%
+  count(model = factor(model, models), label) %>%
+  pivot_wider(names_from = label, values_from = n, values_fill = 0) %>%
+  knitr::kable(caption = "free edges by model decision")
 
-hard = classify_hard(dynamic = TRUE)
-soft = classify_soft(dynamic = TRUE)
-hard_fixed = classify_hard(dynamic = FALSE)
-
-iteration_log = bind_rows(hard$log %>% mutate(variant = "hard"),
-                          hard_fixed$log %>% mutate(variant = "hard_fixed"))
-
-tibble(variant = c("hard", "soft", "hard_fixed"),
-       result = list(hard$label, soft$label, hard_fixed$label)) %>%
-  mutate(result = map(result, \(l) as_tibble(as.list(table(factor(l, levels = c("signal", "contamination", "unassigned", "unstable"))))))) %>%
-  unnest(result) %>%
-  knitr::kable()
-```
-
-# Outputs
-```{r}
-contribution_cols = as_tibble(hard$score$contributions) %>% rename_with(~ paste0("c_", .x))
-
-fe_result = fe %>%
-  select(asv_id, feature_id) %>%
-  mutate(label = hard$label,
-         psig = hard$psig,
-         confidence = abs(2 * psig - 1),
-         log_odds = hard$score$log_odds,
-         x = hard$score$x,
-         run_source_x = hard$score$source_x,
-         assigned_step = hard$assigned_step,
-         assigned_tau = hard$assigned_tau,
-         psig_at_assignment = hard$psig_at_assignment,
-         x_at_assignment = hard$x_at_assignment,
-         n_flips = hard$flips,
-         label_soft = soft$label,
-         psig_soft = soft$psig,
-         label_fixed_denominator = hard_fixed$label,
-         psig_fixed_denominator = hard_fixed$psig) %>%
-  bind_cols(contribution_cols)
-
-# every detection, clamped ones included (labelled contamination, with the clamp as the reason)
+# every detection, clamped ones included (contamination in every model, with the reason)
 edge_classification = detections %>%
-  left_join(edges %>% select(asv_id, feature_id, role, x_fixed), by = c("asv_id", "feature_id")) %>%
-  left_join(fe %>% select(asv_id, feature_id, own_negative_max, n_other_replicates, n_other_replicates_detected,
-                          control_share_a),
+  select(asv_id, feature_id, library_class, study_system, sequencing_date, reads, role) %>%
+  filter(library_class == "field_sample") %>%
+  left_join(fe %>% select(asv_id, feature_id, x, all_of(names(feature_signs)), local_status,
+                          own_negative_max_reads, starts_with("p_"), all_of(models)),
             by = c("asv_id", "feature_id")) %>%
-  left_join(fe_result, by = c("asv_id", "feature_id")) %>%
-  mutate(role = coalesce(role, "hard_flag"),
-         clamp_reason = case_when(role == "hard_flag" ~ hard_flag,
-                                  role == "free" ~ NA_character_,
-                                  .default = role),
-         across(c(label, label_soft, label_fixed_denominator), ~ if_else(role == "free", .x, "contamination")),
-         removed_by_08 = asv_count_controlled == 0) %>%
-  left_join(asv_locality %>% select(asv_id, study_system, local_status), by = c("asv_id", "study_system")) %>%
-  mutate(model_version = model_version) %>%
-  select(model_version, asv_id, feature_id, library_class, study_system, sequencing_date, edna_sample_id, reads,
-         role, clamp_reason, label, psig, confidence, log_odds, x_fixed, x, run_source_x,
-         starts_with("c_"), own_negative_max, n_other_replicates, n_other_replicates_detected, control_share_a,
-         assigned_step, assigned_tau, psig_at_assignment, x_at_assignment, n_flips,
-         label_soft, psig_soft, label_fixed_denominator, psig_fixed_denominator,
-         removed_by_08, local_status)
-
-library_sink_scores = edge_classification %>%
-  filter(role == "free") %>%
-  group_by(feature_id, study_system, sequencing_date) %>%
-  summarise(n_edges = n(),
-            n_signal = sum(label == "signal"),
-            n_contamination = sum(label == "contamination"),
-            n_unassigned = sum(label %in% c("unassigned", "unstable")),
-            sink_score = n_contamination / pmax(n_signal + n_contamination, 1),
-            contamination_read_share = sum(reads[label == "contamination"]) / sum(reads),
-            .groups = "drop")
-
-asv_system_summary = edge_classification %>%
-  filter(role == "free") %>%
-  group_by(asv_id, study_system) %>%
-  summarise(n_edges = n(),
-            n_signal = sum(label == "signal"),
-            n_contamination = sum(label == "contamination"),
-            n_unassigned = sum(label %in% c("unassigned", "unstable")),
-            n_disagree_soft = sum(label != label_soft),
-            n_disagree_fixed_denominator = sum(label != label_fixed_denominator),
-            max_x_signal = suppressWarnings(max(x_fixed[label == "signal"])),
-            max_x_contamination = suppressWarnings(max(x_fixed[label == "contamination"])),
-            local_status = first(local_status),
-            .groups = "drop") %>%
-  mutate(across(starts_with("max_x"), ~ if_else(is.finite(.x), .x, NA_real_))) %>%
-  left_join(asv_locality %>% distinct(asv_id, taxon_label), by = "asv_id")
+  mutate(across(all_of(models), \(v) if_else(role == "free", v, "contamination")),
+         model_version = model_version, .before = 1)
 
 write_csv(edge_classification, edges_out)
-write_csv(library_sink_scores, libraries_out)
-write_csv(asv_system_summary, asv_system_out)
-write_csv(iteration_log, iteration_log_out)
 ```
 
-# Iteration
+# Performance (development set, cross-validated)
+
+Shown only when `validation$report_performance` is true. Each rung is refitted on the training folds and scored on the held-out fold; folds are groups of ASV x study system, so an ASV's detections in a system are never split between fitting and scoring. Baselines need no fitting and are scored on the same folds, so differences are paired. Costs are weighted per edge (stratum population over its labelled development edges); `uncertain` edges are not scored.
 ```{r}
-iteration_log %>%
-  pivot_longer(c(signal, contamination, unassigned), names_to = "label", values_to = "n_edges") %>%
-  ggplot(aes(step, n_edges, colour = label)) +
-  geom_step() +
-  facet_wrap(~ variant) +
-  scale_colour_manual(values = c(signal = "#4e79a7", contamination = "#e15759", unassigned = "#999999")) +
-  labs(x = "step", y = "free edges", title = "Hard assignment by step") +
-  theme_minimal()
-
-iteration_log %>%
-  group_by(variant, tau) %>%
-  summarise(steps = n(), added = sum(n_added), dropped = sum(n_dropped), .groups = "drop") %>%
-  arrange(variant, desc(tau)) %>%
-  knitr::kable()
-```
-
-# Agreement between variants
-```{r}
-free_edges = edge_classification %>% filter(role == "free")
-
-free_edges %>% count(hard = label, soft = label_soft) %>%
-  pivot_wider(names_from = soft, values_from = n, values_fill = 0, names_prefix = "soft_") %>%
-  knitr::kable(caption = "hard (rows) vs soft (columns)")
-
-free_edges %>% count(hard = label, fixed = label_fixed_denominator) %>%
-  pivot_wider(names_from = fixed, values_from = n, values_fill = 0, names_prefix = "fixed_") %>%
-  knitr::kable(caption = "hard, dynamic denominator (rows) vs fixed denominator (columns)")
-```
-
-# Reference cases
-
-Hand-picked cases, a sanity check only -- never scored, since they are not a random sample. Each label is expanded to the free edges it covers (`feature_id` rows override their ASV x system row). x limits use x with the fixed denominator.
-```{r}
-asv_system_labels = edge_labels %>% filter(is.na(feature_id)) %>% mutate(label_row = row_number())
-edge_level_labels = edge_labels %>% filter(!is.na(feature_id))
-
-labelled_edges = bind_rows(
-  free_edges %>%
-    inner_join(asv_system_labels %>% select(asv_id, study_system, expected = label, min_x, max_x, note, label_row),
-               by = c("asv_id", "study_system"), relationship = "many-to-many") %>%
-    filter(is.na(min_x) | x_fixed >= min_x, is.na(max_x) | x_fixed <= max_x) %>%
-    anti_join(edge_level_labels, by = c("asv_id", "feature_id")),
-  free_edges %>%
-    inner_join(edge_level_labels %>% select(asv_id, feature_id, expected = label, note), by = c("asv_id", "feature_id")))
-
-label_evaluation = labelled_edges %>%
-  pivot_longer(c(label, label_soft, label_fixed_denominator), names_to = "variant", values_to = "result") %>%
-  mutate(variant = recode(variant, label = "hard", label_soft = "soft", label_fixed_denominator = "hard_fixed"),
-         outcome = case_when(result %in% c("unassigned", "unstable") ~ "unassigned",
-                             result == expected ~ "agree",
-                             .default = "disagree"))
-
-label_evaluation %>%
-  count(variant, expected, outcome) %>%
-  pivot_wider(names_from = outcome, values_from = n, values_fill = 0) %>%
-  knitr::kable(caption = "edges under manual labels")
-
-label_evaluation %>%
-  filter(variant == "hard") %>%
-  group_by(asv_id, study_system, expected, note) %>%
-  summarise(n_edges = n(), agree = sum(outcome == "agree"), disagree = sum(outcome == "disagree"),
-            unassigned = sum(outcome == "unassigned"), .groups = "drop") %>%
-  knitr::kable(caption = "hard, per label")
-```
-
-# Validation
-
-Scored against the blind-labelled validation sample (script 14), following the validation protocol in `analysis/README.md`. Each labelled edge is weighted by its stratum's population over the number of labelled edges of that stratum in the evaluated split, so the estimates hold for the whole population (all eDNA) or for its amphibian strata. Edges labelled `uncertain` are not scored. Cost per edge: `false_signal` for a contamination edge called signal, `false_contamination` for a signal edge called contamination, `unassigned` for an edge left unassigned. Clamped edges count as contamination; `script_08` (removed = contamination, kept = signal) and `all_signal` are baselines. Confidence intervals are from a stratified bootstrap, resampling edges within strata; differences are paired (the same resamples for every model).
-```{r}
-evaluated_split = if (evaluate_test_set) "test" else "development"
-if (evaluate_test_set) {
-  cat("NOTE: scoring the sealed TEST set -- only for a final comparison of candidate versions\n")
+# per-edge cost of a decision (NA for uncertain truth)
+edge_cost = function(truth, decision) {
+  case_when(truth == "uncertain" ~ NA_real_,
+            decision %in% c("unassigned", "unstable") ~ costs[["unassigned"]],
+            truth == "contamination" & decision == "signal" ~ costs[["false_signal"]],
+            truth == "signal" & decision == "contamination" ~ costs[["false_contamination"]],
+            .default = 0)
 }
 
-model_names = c("hard", "soft", "hard_fixed", "script_08", "all_signal")
-domains = c("amphibian", "all eDNA")
+# repeated grouped cross-validation: decisions for every scored edge, model and repeat
+cross_validate = function(data, model_features, seed) {
+  set.seed(seed)
+  groups = paste(data$asv_id, data$study_system)
+  unique_groups = unique(groups)
+  map_dfr(seq_len(cv_repeats), \(r) {
+    fold_of_group = setNames(sample(rep(seq_len(cv_folds), length.out = length(unique_groups))), unique_groups)
+    fold = unname(fold_of_group[groups])
+    map_dfr(seq_len(cv_folds), \(k) {
+      train = data[fold != k, ]
+      test = data[fold == k, ]
+      fitted = map(model_features, \(features) {
+        fit = fit_logistic(as.matrix(train[features]), train$y)
+        decide(predict_logistic(fit, as.matrix(test[features])))
+      })
+      as_tibble(fitted) %>% mutate(row = which(fold == k), repeat_id = r, fold = k)
+    })
+  })
+}
 
-validation_metrics = tibble()
-if (!file.exists(validation_sample_file) || !file.exists(validation_labels_file)) {
-  cat("No validation labels yet (", validation_labels_file, "): label the sample in script 12, export, and re-run.\n")
+# weighted cost per model: the mean over repeats of the pooled cost, and the standard error from
+# the spread over folds (mean over repeats of sd(fold costs) / sqrt(folds))
+summarise_cv = function(cv_decisions, data, model_names, in_domain) {
+  long = cv_decisions %>%
+    pivot_longer(all_of(model_names), names_to = "model", values_to = "decision") %>%
+    mutate(truth = data$truth[row], weight = data$weight[row], cost = edge_cost(truth, decision)) %>%
+    filter(in_domain[row])
+  folds = long %>%
+    group_by(model, repeat_id, fold) %>%
+    summarise(fold_cost = sum(weight * cost) / sum(weight), .groups = "drop")
+  pooled = long %>%
+    group_by(model, repeat_id) %>%
+    summarise(cost = sum(weight * cost) / sum(weight),
+              coverage = sum(weight[decision != "unassigned"]) / sum(weight),
+              false_signal_rate = sum(weight[truth == "contamination" & decision == "signal"]) / sum(weight[truth == "contamination"]),
+              false_contamination_rate = sum(weight[truth == "signal" & decision == "contamination"]) / sum(weight[truth == "signal"]),
+              .groups = "drop") %>%
+    group_by(model) %>%
+    summarise(across(c(cost, coverage, false_signal_rate, false_contamination_rate), mean), .groups = "drop")
+  se = folds %>%
+    group_by(model, repeat_id) %>%
+    summarise(se = sd(fold_cost) / sqrt(n()), .groups = "drop") %>%
+    group_by(model) %>%
+    summarise(se = mean(se), .groups = "drop")
+  pooled %>% left_join(se, by = "model")
+}
+
+if (!report_performance) {
+  cat("Performance reporting is off (validation$report_performance: false): models are trained, not scored.\n")
 } else {
-  validation_sample = read_csv(validation_sample_file, show_col_types = FALSE)
-  validation_labels = read_csv(validation_labels_file, col_types = cols(.default = col_character())) %>%
+  scored = training
+  # baselines as fixed decisions, repeated on the same rows and folds as the rungs
+  cv_decisions = cross_validate(scored, rungs, cv_seed)
+  for (b in baselines) cv_decisions[[b]] = scored[[b]][cv_decisions$row]
+
+  domains = list(amphibian = scored$group == "amphibian", `all eDNA` = rep(TRUE, nrow(scored)))
+  cv_metrics = imap_dfr(domains, \(in_domain, domain) {
+    summarise_cv(cv_decisions, scored, models, in_domain) %>% mutate(domain = domain, .before = 1)
+  }) %>%
+    mutate(model = factor(model, models)) %>%
+    arrange(domain, model)
+
+  # the simplest rung within one standard error of the best rung (per domain)
+  cv_metrics = cv_metrics %>%
+    group_by(domain) %>%
+    mutate(is_rung = model %in% names(rungs),
+           best_rung_cost = min(cost[is_rung]),
+           best_rung_se = se[is_rung][which.min(cost[is_rung])],
+           within_1se = is_rung & cost <= best_rung_cost + best_rung_se,
+           selected = within_1se & as.integer(model) == min(as.integer(model)[within_1se])) %>%
+    ungroup() %>%
+    select(-is_rung, -best_rung_cost, -best_rung_se) %>%
+    mutate(model_version = model_version, scored_on = as.character(Sys.Date()), .before = 1)
+
+  cv_metrics %>%
+    select(domain, model, cost, se, coverage, false_signal_rate, false_contamination_rate, within_1se, selected) %>%
+    knitr::kable(digits = 3, caption = paste0("development set, ", cv_repeats, " x ", cv_folds, "-fold grouped cross-validation (weighted)")) %>%
+    print()
+
+  # drop-one: remove each mechanism from the top rung, on the same folds
+  top = names(rungs)[length(rungs)]
+  drop_features = map(set_names(names(mechanisms)), \(m) setdiff(rungs[[top]], mechanisms[[m]]))
+  drop_features = c(set_names(list(rungs[[top]]), top), drop_features[lengths(drop_features) > 0])
+  drop_decisions = cross_validate(scored, drop_features, cv_seed)
+  drop_one = imap_dfr(domains, \(in_domain, domain) {
+    summarise_cv(drop_decisions, scored, names(drop_features), in_domain) %>% mutate(domain = domain, .before = 1)
+  }) %>%
+    group_by(domain) %>%
+    mutate(change_vs_top = cost - cost[model == top]) %>%
+    ungroup() %>%
+    mutate(dropped = if_else(model == top, "(none)", model), .after = domain) %>%
+    select(-model)
+
+  drop_one %>%
+    select(domain, dropped, cost, se, change_vs_top) %>%
+    knitr::kable(digits = 3, caption = paste("drop-one from", top, "(a positive change means the mechanism helps)")) %>%
+    print()
+
+  write_csv(cv_metrics, cv_metrics_out)
+  write_csv(drop_one, drop_one_out)
+}
+```
+
+# Test set
+
+Read only when `validation$evaluate_test_set` is true: the models in `validation$final_candidates` are fitted on all labelled development edges (as above) and scored once on the sealed test set, with 95% stratified bootstrap intervals for each model's cost and for paired differences from the standard-practice baselines. Record the scoring in the change log.
+```{r}
+if (!evaluate_test_set) {
+  cat("The test set is sealed (validation$evaluate_test_set: false).\n")
+} else {
+  stopifnot(length(final_candidates) > 0, all(final_candidates %in% models))
+  cat("NOTE: scoring the sealed TEST set -- only for the final comparison of candidate models\n")
+  test = validation_sample %>% filter(split == "test")
+  test_labels = read_csv(validation_labels_file, col_types = cols(.default = col_character())) %>%
+    filter(validation_id %in% test$validation_id) %>%
     select(validation_id, truth = label)
-  stopifnot(all(validation_labels$truth %in% c("signal", "contamination", "uncertain")))
-
-  predictions = edge_classification %>%
-    transmute(asv_id, feature_id,
-              hard = label, soft = label_soft, hard_fixed = label_fixed_denominator,
-              script_08 = if_else(removed_by_08, "contamination", "signal"),
-              all_signal = "signal")
-
-  scored = validation_sample %>%
-    filter(split == evaluated_split) %>%
-    inner_join(validation_labels, by = "validation_id") %>%
-    left_join(predictions, by = c("asv_id", "feature_id")) %>%
+  test_scored = test %>%
+    inner_join(test_labels, by = "validation_id") %>%
     group_by(stratum) %>%
     mutate(weight = N_h / n()) %>%
-    ungroup()
+    ungroup() %>%
+    left_join(fe %>% select(asv_id, feature_id, all_of(models)), by = c("asv_id", "feature_id"))
+  stopifnot(!anyNA(test_scored[final_candidates]))
 
-  # every sampled edge must have a prediction: an NA prediction would otherwise score as cost 0
-  unmatched = scored %>% filter(is.na(hard))
-  if (nrow(unmatched) > 0) {
-    stop(nrow(unmatched), " labelled validation edge(s) have no prediction (population mismatch with script 14?): ",
-         paste(head(unmatched$validation_id, 10), collapse = ", "))
-  }
-
-  cat(nrow(scored), "labelled", evaluated_split, "edges (of", sum(validation_sample$split == evaluated_split), "in the split),",
-      sum(scored$truth == "uncertain"), "uncertain;", n_distinct(scored$stratum), "of", n_distinct(validation_sample$stratum), "strata covered\n")
-
-  # per-edge cost for each model (NA for edges labelled uncertain)
-  edge_cost = function(truth, prediction) {
-    prediction = if_else(prediction %in% c("unassigned", "unstable"), "unassigned", prediction)
-    case_when(truth == "uncertain" ~ NA_real_,
-              prediction == "unassigned" ~ validation_costs[["unassigned"]],
-              truth == "contamination" & prediction == "signal" ~ validation_costs[["false_signal"]],
-              truth == "signal" & prediction == "contamination" ~ validation_costs[["false_contamination"]],
-              .default = 0)
-  }
-  cost_matrix = sapply(model_names, \(m) edge_cost(scored$truth, scored[[m]]))
-
-  weighted_share = function(w, hit, among) if (sum(w[among]) > 0) sum(w[among & hit]) / sum(w[among]) else NA_real_
-
-  metrics = expand_grid(domain = domains, model = model_names) %>%
-    mutate(m = pmap(list(domain, model), \(dom, m) {
-      in_domain = if (dom == "amphibian") scored$group == "amphibian" else rep(TRUE, nrow(scored))
-      truth = scored$truth[in_domain]
-      pred = if_else(scored[[m]][in_domain] %in% c("unassigned", "unstable"), "unassigned", scored[[m]][in_domain])
-      w = scored$weight[in_domain]
-      decided = truth != "uncertain"
-      assigned = pred != "unassigned"
-      tibble(n_labelled = sum(in_domain), n_uncertain = sum(!decided),
-             cost = sum(w[decided] * cost_matrix[in_domain, m][decided]) / sum(w[decided]),
-             coverage = weighted_share(w, assigned, decided),
-             false_signal_rate = weighted_share(w, pred == "signal", decided & truth == "contamination"),
-             false_contamination_rate = weighted_share(w, pred == "contamination", decided & truth == "signal"),
-             accuracy_assigned = weighted_share(w, pred == truth, decided & assigned))
-    })) %>%
-    unnest(m)
-
-  # stratified bootstrap: resample edges within strata, the same resamples for every model
+  comparison = unique(c(final_candidates, intersect(c("script_08", "neg_presence", "neg_subtract"), models)))
+  cost_matrix = sapply(comparison, \(m) edge_cost(test_scored$truth, test_scored[[m]]))
   set.seed(1)
-  strata_rows = split(seq_len(nrow(scored)), scored$stratum)
-  boot_costs = map(domains, \(dom) {
-    in_domain = if (dom == "amphibian") scored$group == "amphibian" else rep(TRUE, nrow(scored))
-    rows_by_stratum = keep(map(strata_rows, \(r) r[in_domain[r]]), \(r) length(r) > 0)
-    t(replicate(bootstrap_reps, {
+  domains = list(amphibian = test_scored$group == "amphibian", `all eDNA` = rep(TRUE, nrow(test_scored)))
+  test_metrics = imap_dfr(domains, \(in_domain, domain) {
+    rows_by_stratum = keep(map(split(which(in_domain), test_scored$stratum[in_domain]), identity), \(r) length(r) > 0)
+    decided = !is.na(cost_matrix[, 1])
+    point = colSums(test_scored$weight[in_domain & decided] * cost_matrix[in_domain & decided, , drop = FALSE]) /
+      sum(test_scored$weight[in_domain & decided])
+    boot = t(replicate(bootstrap_reps, {
       rows = unlist(map(rows_by_stratum, \(r) r[sample.int(length(r), length(r), replace = TRUE)]))
-      w = scored$weight[rows]
-      decided = scored$truth[rows] != "uncertain"
-      colSums(w[decided] * cost_matrix[rows, , drop = FALSE][decided, , drop = FALSE]) / sum(w[decided])
+      rows = rows[decided[rows]]
+      colSums(test_scored$weight[rows] * cost_matrix[rows, , drop = FALSE]) / sum(test_scored$weight[rows])
     }))
-  }) %>% set_names(domains)
+    tibble(domain = domain, model = comparison, n_scored = sum(in_domain & decided), cost = point,
+           cost_lo = apply(boot, 2, quantile, 0.025), cost_hi = apply(boot, 2, quantile, 0.975),
+           diff_vs_08 = point - point[["script_08"]],
+           diff_vs_08_lo = apply(boot - boot[, "script_08"], 2, quantile, 0.025),
+           diff_vs_08_hi = apply(boot - boot[, "script_08"], 2, quantile, 0.975),
+           diff_vs_neg_presence = point - point[["neg_presence"]],
+           diff_vs_neg_presence_lo = apply(boot - boot[, "neg_presence"], 2, quantile, 0.025),
+           diff_vs_neg_presence_hi = apply(boot - boot[, "neg_presence"], 2, quantile, 0.975))
+  }) %>%
+    mutate(model_version = model_version, scored_on = as.character(Sys.Date()), .before = 1)
 
-  cost_ci = imap_dfr(boot_costs, \(b, dom) tibble(domain = dom, model = colnames(b),
-                                                  cost_lo = apply(b, 2, quantile, 0.025, na.rm = TRUE),
-                                                  cost_hi = apply(b, 2, quantile, 0.975, na.rm = TRUE),
-                                                  diff_vs_08 = colMeans(b - b[, "script_08"], na.rm = TRUE),
-                                                  diff_vs_08_lo = apply(b - b[, "script_08"], 2, quantile, 0.025, na.rm = TRUE),
-                                                  diff_vs_08_hi = apply(b - b[, "script_08"], 2, quantile, 0.975, na.rm = TRUE)))
-
-  validation_metrics = metrics %>%
-    left_join(cost_ci, by = c("domain", "model")) %>%
-    mutate(model_version = model_version, split = evaluated_split, scored_on = as.character(Sys.Date()), .before = 1)
-
-  validation_metrics %>%
-    transmute(domain, model, n_labelled, n_uncertain,
-              cost = sprintf("%.3f [%.3f, %.3f]", cost, cost_lo, cost_hi),
-              `cost - script 08` = sprintf("%+.3f [%+.3f, %+.3f]", diff_vs_08, diff_vs_08_lo, diff_vs_08_hi),
-              coverage = round(coverage, 3), false_signal_rate = round(false_signal_rate, 3),
-              false_contamination_rate = round(false_contamination_rate, 3), accuracy_assigned = round(accuracy_assigned, 3)) %>%
-    knitr::kable(caption = paste0("model ", model_version, ", ", evaluated_split, " set (weighted; 95% bootstrap intervals)")) %>%
+  test_metrics %>%
+    select(domain, model, n_scored, cost, cost_lo, cost_hi, diff_vs_08, diff_vs_neg_presence) %>%
+    knitr::kable(digits = 3, caption = "TEST set (weighted; 95% stratified bootstrap intervals in the csv)") %>%
     print()
-
-  scored %>%
-    mutate(prediction = if_else(hard %in% c("unassigned", "unstable"), "unassigned", hard)) %>%
-    count(group, truth, prediction) %>%
-    pivot_wider(names_from = prediction, values_from = n, values_fill = 0) %>%
-    knitr::kable(caption = "hard: labelled edges, truth (rows) vs prediction (columns), unweighted counts") %>%
-    print()
-
-  write_csv(validation_metrics, validation_metrics_out)
+  write_csv(test_metrics, test_metrics_out)
 }
-```
-
-# Comparison with script 08
-```{r}
-free_edges %>%
-  count(script_08 = if_else(removed_by_08, "removed", "kept"), label) %>%
-  pivot_wider(names_from = label, values_from = n, values_fill = 0) %>%
-  knitr::kable(caption = "free edges: script 08 (rows) vs hard label (columns)")
-```
-
-# Validation against GBIF locality
-
-Script 07's `local_status` was not used to classify. `other_system` and `not_in_run` edges should mostly be contamination (barring GBIF gaps); `local` edges mostly, but not all, signal (within-system cross-talk is invisible to GBIF).
-```{r}
-free_edges %>%
-  mutate(local_status = replace_na(local_status, "(none)")) %>%
-  count(local_status, label) %>%
-  group_by(local_status) %>%
-  mutate(share = n / sum(n)) %>%
-  ungroup() %>%
-  ggplot(aes(share, local_status, fill = label)) +
-  geom_col() +
-  geom_text(aes(label = n), position = position_stack(vjust = 0.5), size = 3, colour = "white") +
-  scale_fill_manual(values = c(signal = "#4e79a7", contamination = "#e15759", unassigned = "#999999", unstable = "#f28e2b")) +
-  labs(x = "share of free edges", y = "script 07 local_status", title = "Hard labels by GBIF locality") +
-  theme_minimal()
-```
-
-# Term contributions
-```{r}
-free_edges %>%
-  select(label, starts_with("c_")) %>%
-  pivot_longer(-label, names_to = "term", values_to = "contribution") %>%
-  mutate(term = factor(str_remove(term, "^c_"), levels = term_names)) %>%
-  ggplot(aes(contribution, term, fill = label)) +
-  geom_boxplot(outlier.size = 0.4, linewidth = 0.3) +
-  scale_fill_manual(values = c(signal = "#4e79a7", contamination = "#e15759", unassigned = "#999999", unstable = "#f28e2b")) +
-  labs(x = "log-odds contribution (final state)", y = NULL, title = "Term contributions by hard label") +
-  theme_minimal()
 ```

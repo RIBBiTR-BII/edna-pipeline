@@ -26,7 +26,7 @@ cat(paste0("Run_dir: ", run_dir, "\n"))
 config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
 
 vc = pipeline_config$validation
-validation_dir = here(vc$dir)
+validation_dir = here(run_dir, vc$dir)
 seed = as.integer(vc$seed)
 wave = as.integer(vc$wave)
 n_per_stratum = map_int(vc$n_per_stratum, as.integer)
