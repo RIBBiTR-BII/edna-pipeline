@@ -85,6 +85,7 @@ legacy_file = here(run_dir, "output", paste0(config$run$name, "_13_legacy_edge_c
 # output files
 edges_out = here(run_dir, "output", paste0(config$run$name, "_13_edge_classification.csv"))
 coefficients_out = here(run_dir, "output", paste0(config$run$name, "_13_ladder_coefficients.csv"))
+network_edges_out = here(run_dir, "output", paste0(config$run$name, "_13_network_edges_detection.csv"))
 cv_metrics_out = here(run_dir, "output", paste0(config$run$name, "_13_cv_metrics.csv"))
 drop_one_out = here(run_dir, "output", paste0(config$run$name, "_13_drop_one.csv"))
 test_metrics_out = here(run_dir, "output", paste0(config$run$name, "_13_test_metrics.csv"))
@@ -411,6 +412,27 @@ edge_classification = detections %>%
          model_version = model_version, .before = 1)
 
 write_csv(edge_classification, edges_out)
+```
+
+# Network export
+
+A detection edge table (sample -- ASV) for Gephi / Cytoscape with every model's decision, to colour or filter the network by model. It covers every detection in every classified library, with the same `Source` / `Target` ids as script 11: import script 11's nodes table (`<run>_11_raw_network_nodes.csv`) first, then this edges table. Each model column holds the model's decision for free edges, `contamination` for known contaminants and hard-flagged ASVs, and `control` for detections in control libraries; `p_<rung>` is a rung's probability of signal. `Weight` is the within-library relative abundance over all raw reads, as in script 11.
+```{r}
+raw_library_reads = detections %>% group_by(feature_id) %>% summarise(raw_reads = sum(reads), .groups = "drop")
+
+network_edges = detections %>%
+  left_join(raw_library_reads, by = "feature_id") %>%
+  left_join(fe %>% select(asv_id, feature_id, starts_with("p_"), all_of(models)), by = c("asv_id", "feature_id")) %>%
+  transmute(Source = feature_id, Target = asv_id, Type = "Undirected", Weight = reads / raw_reads,
+            reads, library_class, study_system, sequencing_date, role,
+            across(all_of(models), \(v) case_when(role == "free" ~ v,
+                                                  role %in% c("known_contaminant", "hard_flag") ~ "contamination",
+                                                  .default = "control")),
+            across(starts_with("p_")))
+
+# empty strings (not "NA") so Gephi reads missing values as missing
+write_csv(network_edges, network_edges_out, na = "")
+cat(nrow(network_edges), "detection edges ->", network_edges_out, "\n")
 ```
 
 # Performance (development set, cross-validated)

@@ -287,7 +287,7 @@ validation:
     unassigned: 0.25
   # performance on the development set (cross-validated costs, model selection) is only shown when
   # true, so models can be trained without seeing how they do
-  report_performance: false
+  report_performance: true
   # the test set is sealed: score it only for the final comparison of candidate models (listed in
   # final_candidates: rung or baseline names)
   evaluate_test_set: false
