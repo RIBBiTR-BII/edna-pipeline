@@ -78,8 +78,13 @@ Patterns to look for:
   border-radius: 4px; padding: 5px 8px; font-size: 12px; line-height: 1.35; box-shadow: 0 2px 6px rgba(0,0,0,0.15); display: none; max-width: 340px; }
 #fp-tooltip b { font-weight: 600; }
 #fp-empty { padding: 20px; color: #666; }
-#fp-labelbar { margin-bottom: 6px; }
-#fp-labelbar button { font-size: 12px; padding: 1px 10px; }
+#fp-labelbar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e3e6ea; }
+#fp-labelbar label { display: flex; gap: 4px; align-items: center; margin: 0; font-weight: 600; }
+#fp-labelbar select { font-size: 12px; padding: 1px 4px; }
+#fp-label-start { font-size: 12.5px; font-weight: 600; padding: 3px 12px; border: 1.5px solid #37474f; border-radius: 4px;
+  background: #37474f; color: #fff; cursor: pointer; }
+#fp-label-start:hover { background: #263238; }
+#fp-label-start .sub { font-weight: 400; opacity: 0.8; margin-left: 4px; }
 #fp-labelpanel { display: none; border: 1px solid #c9d1dc; border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; background: #f8fafc; }
 #fp-app.labelling #fp-labelpanel { display: block; }
 #fp-app.labelling #fp-controls, #fp-app.labelling #fp-sortbar, #fp-app.labelling .fp-pager, #fp-app.labelling #fp-labelbar { display: none; }
@@ -98,7 +103,12 @@ Patterns to look for:
 </style>
 
 <div id="fp-app">
-  <div id="fp-labelbar"></div>
+  <div id="fp-labelbar">
+    <label>View <select id="fp-view">
+      <option value="group">by group</option>
+      <option value="run">by run</option>
+    </select></label>
+  </div>
   <div id="fp-labelpanel"></div>
   <div id="fp-controls">
     <label>Search <input type="text" id="fp-q" placeholder="taxon, family, ASV id…"></label>
@@ -111,10 +121,6 @@ Patterns to look for:
     <label><input type="checkbox" id="fp-known"> known contaminants only</label>
   </div>
   <div id="fp-sortbar">
-    <label>View <select id="fp-view">
-      <option value="group">by group</option>
-      <option value="run">by run</option>
-    </select></label>
     <label>Sort <select id="fp-sort">
       <option value="reads">total reads</option>
       <option value="detections">detections</option>
@@ -650,16 +656,34 @@ document.addEventListener("DOMContentLoaded", function () {
       mergeLabel(id, { label: L.label[i], note: L.note[i], labelled_at: L.labelled_at[i] });
     });
     try { Object.entries(JSON.parse(store.get(storeKey) || "{}")).forEach(([id, rec]) => mergeLabel(id, rec)); } catch (e) {}
-    $("fp-labelbar").innerHTML = `<button id="fp-label-start">Label validation sample (blind)</button>`;
+    $("fp-labelbar").insertAdjacentHTML("beforeend",
+      `<button id="fp-label-start">✎ Label validation sample<span class="sub">(blind)</span></button>`);
     $("fp-label-start").addEventListener("click", () => {
       state.labelMode = true;
-      const open = V.validation_id.findIndex(id => !labels[id]);
-      vi = open >= 0 ? open : 0;
+      gotoOpen(-1);
       $("fp-app").classList.add("labelling");
       render();
     });
   }
   const saveLabels = () => store.set(storeKey, JSON.stringify(labels));
+
+  // waves (script 14): the wave drop-down only narrows navigation and the counts; export always
+  // writes every wave's labels
+  const waveOf = i => V.wave ? V.wave[i] : 1;
+  const waves = V ? [...new Set(V.validation_id.map((id, i) => waveOf(i)))].sort((x, y) => x - y) : [];
+  state.labelWave = "";
+  const queue = () => V.validation_id.map((id, i) => i).filter(i => state.labelWave === "" || waveOf(i) === +state.labelWave);
+  // move within the queue; from an edge outside it (after switching waves), start at its beginning
+  function step(delta) {
+    const q = queue(), p = q.indexOf(vi);
+    if (q.length) vi = p < 0 ? q[0] : q[Math.min(q.length - 1, Math.max(0, p + delta))];
+  }
+  // the next unlabelled edge in the queue after position p (or the first edge if all are labelled)
+  function gotoOpen(p) {
+    const q = queue(), k = q.find((i, j) => j > p && !labels[V.validation_id[i]]);
+    if (k !== undefined) vi = k;
+    else if (p < 0 && q.length) vi = q[0];
+  }
   function unexportedCount() {
     const exported = store.get(exportKey) || "";
     return Object.entries(labels).filter(([id, r]) => r.labelled_at > exported && r.labelled_at !== fileLabels[id]).length;
@@ -673,11 +697,17 @@ document.addEventListener("DOMContentLoaded", function () {
   }
 
   function drawLabelPanel() {
-    const n = V.validation_id.length, id = V.validation_id[vi], d = V.detection[vi];
+    const q = queue(), id = V.validation_id[vi], d = V.detection[vi];
     const smp = det.sample[d], g = groups[S.group[smp]], rec = labels[id];
-    const nDone = V.validation_id.filter(x => labels[x]).length, nOpen = unexportedCount();
+    const nDone = q.filter(i => labels[V.validation_id[i]]).length, nOpen = unexportedCount();
+    const progress = w => { const iw = V.validation_id.map((x, i) => i).filter(i => waveOf(i) === w);
+      return `${iw.filter(i => labels[V.validation_id[i]]).length}/${iw.length}`; };
+    const waveSelect = waves.length < 2 ? "" : `<label class="fp-sub">wave <select id="fp-wave">
+        <option value=""${state.labelWave === "" ? " selected" : ""}>all waves</option>
+        ${waves.map(w => `<option value="${w}"${String(w) === state.labelWave ? " selected" : ""}>wave ${w} (${progress(w)})</option>`).join("")}
+      </select></label>`;
     $("fp-labelpanel").innerHTML = `
-      <div class="lrow"><b>${esc(id)}</b><span>${vi + 1} of ${n}</span><span>${nDone} labelled</span>
+      <div class="lrow">${waveSelect}<b>${esc(id)}</b><span>${q.indexOf(vi) + 1} of ${q.length}</span><span>${nDone} labelled</span>
         ${nOpen ? `<span class="warn">${nOpen} not exported</span>` : ""}
         <span style="flex:1"></span>
         <button data-v="prev">‹ prev [←]</button><button data-v="next">next [→] ›</button><button data-v="open">next unlabelled »</button></div>
@@ -697,7 +727,7 @@ document.addEventListener("DOMContentLoaded", function () {
     const id = V.validation_id[vi];
     mergeLabel(id, { label, note: ($("fp-note") || {}).value || "", labelled_at: new Date().toISOString() });
     saveLabels();
-    if (vi < V.validation_id.length - 1) vi++;
+    step(1);
     render();
   }
 
@@ -748,10 +778,10 @@ document.addEventListener("DOMContentLoaded", function () {
       const b = e.target.closest("button");
       if (!b) return;
       if (b.dataset.label) return setLabel(b.dataset.label);
-      const v = b.dataset.v, n = V.validation_id.length;
-      if (v === "prev") vi = Math.max(0, vi - 1);
-      else if (v === "next") vi = Math.min(n - 1, vi + 1);
-      else if (v === "open") { const k = V.validation_id.findIndex((id, i) => i > vi && !labels[id]); if (k >= 0) vi = k; }
+      const v = b.dataset.v;
+      if (v === "prev") step(-1);
+      else if (v === "next") step(1);
+      else if (v === "open") gotoOpen(queue().indexOf(vi));
       else if (v === "export") return exportLabels();
       else if (v === "exit") {
         state.labelMode = false;
@@ -760,7 +790,11 @@ document.addEventListener("DOMContentLoaded", function () {
       render();
     });
     $("fp-labelpanel").addEventListener("change", e => {
-      if (e.target.id === "fp-note") {
+      if (e.target.id === "fp-wave") {
+        state.labelWave = e.target.value;
+        gotoOpen(-1);
+        render();
+      } else if (e.target.id === "fp-note") {
         const id = V.validation_id[vi];
         if (labels[id]) { labels[id].note = e.target.value; labels[id].labelled_at = new Date().toISOString(); saveLabels(); }
       } else if (e.target.id === "fp-import" && e.target.files[0]) {
@@ -771,12 +805,11 @@ document.addEventListener("DOMContentLoaded", function () {
     });
     document.addEventListener("keydown", e => {
       if (!state.labelMode || e.target.tagName === "INPUT" || e.metaKey || e.ctrlKey || e.altKey) return;
-      const n = V.validation_id.length;
       if (e.key === "s") setLabel("signal");
       else if (e.key === "c") setLabel("contamination");
       else if (e.key === "u") setLabel("uncertain");
-      else if (e.key === "ArrowLeft") { vi = Math.max(0, vi - 1); render(); }
-      else if (e.key === "ArrowRight") { vi = Math.min(n - 1, vi + 1); render(); }
+      else if (e.key === "ArrowLeft") { step(-1); render(); }
+      else if (e.key === "ArrowRight") { step(1); render(); }
     });
   }
 
@@ -947,8 +980,8 @@ asvs = detections %>%
          known_contaminant, all_of(paste0("status_", study_systems))) %>%
   arrange(desc(total_reads))
 
-# validation sample, as 0-based detection indices in labelling order (split and strata are left out:
-# labelling is blind to them)
+# validation sample, as 0-based detection indices in labelling order, with the draw wave (split and
+# strata are left out: labelling is blind to them)
 validation = NULL
 validation_labels = NULL
 if (file.exists(validation_sample_file)) {
@@ -960,7 +993,7 @@ if (file.exists(validation_sample_file)) {
   }
   validation = validation_sample %>%
     filter(!is.na(detection)) %>%
-    select(validation_id, detection)
+    select(validation_id, detection, any_of("wave"))
   if (file.exists(validation_labels_file)) {
     validation_labels = read_csv(validation_labels_file, col_types = cols(.default = col_character())) %>%
       select(validation_id, label, note, labelled_at)
