@@ -203,7 +203,7 @@ known_contaminants:
 edge_classification:
   # recorded in script 13's outputs; bump it with every model change (see the change log in
   # analysis/README.md)
-  model_version: ladder-1
+  model_version: ladder-3
   # Normal(0, prior_sd) prior on each coefficient of the standardised (z-scored) features: light
   # ridge shrinkage, so a 1-SD change in a feature rarely moves the log-odds by more than ~2 x prior_sd
   prior_sd: 2.5

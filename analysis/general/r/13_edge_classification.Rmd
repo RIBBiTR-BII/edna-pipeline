@@ -19,8 +19,10 @@ This script classifies every **edge** of the sample--ASV network -- a detection 
 - `kit_share` = mu(a, this system) / (mu(a, this system) + mu(a, lab negatives)); lab negatives are extraction and PCR negatives.
 - `human_share`: the share of the rest of the library's reads (the edge's own reads left out) from ASVs of genus *Homo* -- an indicator of low target biomass.
 - `dirty_asv`: the mean `human_share` of the ASV's other edges in the system, minus the mean over all free edges of the system (0 when the ASV has no other edge there).
+- `gbif_local_amphibian`, `gbif_not_local_amphibian`: the GBIF features for amphibian ASVs (script 06 class Amphibia) only, 0 for other ASVs (refinement M2a).
+- `neg_present`: the ASV is in any of the library's linked negatives (field, extraction, PCR); `neg_ratio`: log10 of the edge's x over the ASV's largest x in those negatives, capped at +/- 3, 0 when absent (refinement M2n).
 
-**Models.** Baselines are fixed rules: `all_signal`; `script_08` (removed by step 8 = contamination); `neg_presence` (contamination if the ASV is in any of the library's linked negatives); `neg_subtract` (contamination if the edge's reads minus the ASV's largest read count in a linked negative is <= 0); `legacy` (the v2.1 labels from `13_legacy_edge_classification.Rmd`, when its output exists). The **ladder** rungs B1, M1, M1b, M2, M3, M4, M5 are logistic regressions, each adding one mechanism's features to the rung below, with each coefficient's sign fixed in advance and a Normal(0, `prior_sd`) prior on the coefficients of the standardised features. They are fitted on the **development** labels only (`signal` vs `contamination`; `uncertain` left out), unweighted.
+**Models.** Baselines are fixed rules: `all_signal`; `script_08` (removed by step 8 = contamination); `neg_presence` (contamination if the ASV is in any of the library's linked negatives); `neg_subtract` (contamination if the edge's reads minus the ASV's largest read count in a linked negative is <= 0); `legacy` (the v2.1 labels from `13_legacy_edge_classification.Rmd`, when its output exists). The **ladder** rungs B1, M1, M1b, M2, M3, M4, M5 are logistic regressions, each adding one mechanism's features to the rung below (refinement rungs, e.g. M2a and M2n, branch off a ladder rung: see the change log), with each coefficient's sign fixed in advance and a Normal(0, `prior_sd`) prior on the coefficients of the standardised features. They are fitted on the **development** labels only (`signal` vs `contamination`; `uncertain` left out), unweighted.
 
 **Decisions.** A model's probability of signal p becomes the decision of least expected cost under `validation$costs`: with costs 2 / 1 / 0.25, contamination if p < 0.25, signal if p > 0.875, unassigned in between.
 
@@ -64,14 +66,23 @@ negative_classes = c("field_negative", "extraction_negative", "pcr_negative")
 # the ladder: each rung adds one mechanism's features to the rung below; signs fixed in advance
 # (+1: evidence for signal, -1: evidence for contamination)
 feature_signs = c(log10_x = 1, home_share = 1, pc_component = -1, gbif_local = 1, gbif_not_local = -1,
-                  kit_share = 1, human_share = -1, dirty_asv = -1)
+                  kit_share = 1, human_share = -1, dirty_asv = -1,
+                  gbif_local_amphibian = 1, gbif_not_local_amphibian = -1, neg_present = -1, neg_ratio = 1)
 mechanisms = list(abundance = "log10_x", home = "home_share", positive_control = "pc_component",
                   gbif = c("gbif_local", "gbif_not_local"), kitome = "kit_share", library_human = "human_share",
-                  asv_dirty = "dirty_asv")
-rungs = list(B1 = "abundance", M1 = "home", M1b = "positive_control", M2 = "gbif", M3 = "kitome",
-             M4 = "library_human", M5 = "asv_dirty") %>%
-  accumulate(c) %>%
+                  asv_dirty = "dirty_asv", gbif_amphibian = c("gbif_local_amphibian", "gbif_not_local_amphibian"),
+                  own_negatives = c("neg_present", "neg_ratio"))
+ladder = list(B1 = "abundance", M1 = "home", M1b = "positive_control", M2 = "gbif", M3 = "kitome",
+              M4 = "library_human", M5 = "asv_dirty") %>%
+  accumulate(c)
+# refinement rungs (see the change log in analysis/README.md): branch off a ladder rung
+refinements = list(M2a = c(ladder$M1b, "gbif_amphibian"),
+                   M2n = c(ladder$M1b, "gbif_amphibian", "own_negatives"))
+# rungs in order of complexity, refinements after the ladder rung they parallel
+rungs = c(ladder[c("B1", "M1", "M1b", "M2")], refinements[c("M2a", "M2n")], ladder[c("M3", "M4", "M5")]) %>%
   map(\(m) unname(unlist(mechanisms[m])))
+# drop-one analysis starts from the top of the ladder
+top_rung = "M5"
 baseline_names = c("all_signal", "script_08", "neg_presence", "neg_subtract", "legacy")
 
 # input files
@@ -133,6 +144,7 @@ hard_flagged = asv_classification %>%
   filter(short_sequence_flag %in% TRUE | contaminant_flag %in% TRUE) %>%
   pull(asv_id)
 human_asvs = asv_classification %>% filter(genus %in% "Homo") %>% pull(asv_id)
+amphibian_asvs = asv_classification %>% filter(class %in% "Amphibia") %>% pull(asv_id)
 
 # every detection in a classified library; hard-flagged ASVs are left out of everything
 detections = asv_controlled %>%
@@ -205,6 +217,9 @@ fe = counted %>%
   left_join(gbif, by = c("asv_id", "study_system")) %>%
   left_join(pc_components, by = "asv_id") %>%
   mutate(across(c(gbif_local, gbif_not_local, pc_component), \(v) replace_na(v, 0)),
+         # GBIF for amphibians only (refinement M2a)
+         gbif_local_amphibian = gbif_local * (asv_id %in% amphibian_asvs),
+         gbif_not_local_amphibian = gbif_not_local * (asv_id %in% amphibian_asvs),
          log10_x = log10(x),
          # human share of the rest of the library: the edge's own reads left out, so a human edge
          # does not count itself
@@ -221,18 +236,6 @@ fe = fe %>%
   ungroup() %>%
   select(-own_human, -n_other, -system_mean_human)
 
-stopifnot(!anyNA(fe[names(feature_signs)]))
-
-fe %>%
-  select(all_of(names(feature_signs))) %>%
-  pivot_longer(everything(), names_to = "feature") %>%
-  group_by(feature = factor(feature, names(feature_signs))) %>%
-  summarise(mean = mean(value), sd = sd(value), min = min(value), max = max(value)) %>%
-  knitr::kable(digits = 3, caption = paste(nrow(fe), "free edges"))
-```
-
-# Baselines
-```{r}
 # each library's linked negatives, via the control-group ids shared with them
 link_controls = function(group_col, control_class) {
   groups = sample_map %>%
@@ -252,11 +255,31 @@ control_links = bind_rows(link_controls("field_negative_control_group", "field_n
   distinct()
 
 own_negative_reads = control_links %>%
-  inner_join(counted %>% filter(library_class %in% negative_classes) %>% select(control_id = feature_id, asv_id, reads),
+  inner_join(counted %>% filter(library_class %in% negative_classes) %>% select(control_id = feature_id, asv_id, reads, x),
              by = "control_id", relationship = "many-to-many") %>%
   group_by(feature_id, asv_id) %>%
-  summarise(own_negative_max_reads = max(reads), .groups = "drop")
+  summarise(own_negative_max_reads = max(reads), own_negative_max_x = max(x), .groups = "drop")
 
+# own negatives (refinement M2n): is the ASV in the library's linked negatives, and how far above them
+fe = fe %>%
+  left_join(own_negative_reads, by = c("feature_id", "asv_id")) %>%
+  mutate(own_negative_max_reads = replace_na(own_negative_max_reads, 0),
+         own_negative_max_x = replace_na(own_negative_max_x, 0),
+         neg_present = as.numeric(own_negative_max_x > 0),
+         neg_ratio = if_else(own_negative_max_x > 0, pmin(pmax(log10(x / own_negative_max_x), -3), 3), 0))
+
+stopifnot(!anyNA(fe[names(feature_signs)]))
+
+fe %>%
+  select(all_of(names(feature_signs))) %>%
+  pivot_longer(everything(), names_to = "feature") %>%
+  group_by(feature = factor(feature, names(feature_signs))) %>%
+  summarise(mean = mean(value), sd = sd(value), min = min(value), max = max(value)) %>%
+  knitr::kable(digits = 3, caption = paste(nrow(fe), "free edges"))
+```
+
+# Baselines
+```{r}
 legacy = if (file.exists(legacy_file)) {
   read_csv(legacy_file, show_col_types = FALSE, guess_max = Inf) %>%
     transmute(asv_id, feature_id, legacy = if_else(label == "unstable", "unassigned", label))
@@ -266,9 +289,7 @@ legacy = if (file.exists(legacy_file)) {
 }
 
 fe = fe %>%
-  left_join(own_negative_reads, by = c("feature_id", "asv_id")) %>%
-  mutate(own_negative_max_reads = replace_na(own_negative_max_reads, 0),
-         all_signal = "signal",
+  mutate(all_signal = "signal",
          script_08 = if_else(asv_count_controlled == 0, "contamination", "signal"),
          neg_presence = if_else(own_negative_max_reads > 0, "contamination", "signal"),
          neg_subtract = if_else(reads - own_negative_max_reads <= 0, "contamination", "signal"))
@@ -528,8 +549,9 @@ if (!report_performance) {
     print()
 
   # drop-one: remove each mechanism from the top rung, on the same folds
-  top = names(rungs)[length(rungs)]
-  drop_features = map(set_names(names(mechanisms)), \(m) setdiff(rungs[[top]], mechanisms[[m]]))
+  top = top_rung
+  in_top = keep(names(mechanisms), \(m) any(mechanisms[[m]] %in% rungs[[top]]))
+  drop_features = map(set_names(in_top), \(m) setdiff(rungs[[top]], mechanisms[[m]]))
   drop_features = c(set_names(list(rungs[[top]]), top), drop_features[lengths(drop_features) > 0])
   drop_decisions = cross_validate(scored, drop_features, cv_seed)
   drop_one = imap_dfr(domains, \(in_domain, domain) {

@@ -164,6 +164,13 @@ The top model has about 9 fitted parameters. Labels of neighbouring edges are no
 
 **Refinements**, only if the chosen rung leaves errors they would explain, logged first: run-aware home share (other systems sharing a sequencing run only, separating tag-jumping from lab carryover); within-system trace (log10 of x over the ASV's largest x in the system); field negatives (field or gear carryover); detection rate and abundance as separate features; an amphibian intercept.
 
+**Refinement rungs** (added after the ladder was scored, each logged in the change log before its effect was seen; they branch off the ladder rather than stacking on M5):
+
+| rung | mechanism | features | sign |
+|---|---|---|---|
+| M2a | GBIF locality is reliable only for well-recorded target taxa: a non-amphibian "not local" is often a GBIF gap | M1b + the two GBIF features for amphibian ASVs (step 6 class Amphibia) only, 0 for other ASVs | + / - |
+| M2n | own negatives (the classic eDNA practice of dropping or subtracting what is in the negatives, as a fitted term): an ASV in the library's own linked negatives (field, extraction, PCR) is suspect, unless the edge is far more abundant than in those negatives (real DNA that leaked into a negative) | M2a + `neg_present` (the ASV is in any linked negative) and `neg_ratio` (log10 of the edge's x over the ASV's largest x in those negatives, capped at +/- 3, 0 when absent) | - / + |
+
 ### Model change log
 | version | date | change | rationale | development cost (amphibian / all eDNA) |
 |---|---|---|---|---|
@@ -171,7 +178,9 @@ The top model has about 9 fitted parameters. Labels of neighbouring edges are no
 | v1 | 2026-10-03 | Clamp every detection of PCR positive-control component ASVs; cap U1's evidence for signal at +1 decade. | Gross positive-control contamination (e.g. *Lithobates* at high abundance in Brazil and Sierra Nevada) cannot be told from signal by read structure; absence from a few negatives is weak evidence. | not scored |
 | v2 | before 2026-10-05 | Cap U4's evidence for signal (logit 1); add 2,000 pseudo reads to field-library denominators; make R3 one-sided (sink evidence only). | Absence from negatives is weak evidence; a high x resting on few remaining reads is weak evidence; the library vote was snowballing towards signal. | not scored |
 | v2.1 | 2026-10-07 | Clamp the reviewed `known_contaminants` list instead of the ubiquitous human ASV. | Human DNA may be real signal in field water; lab stocks and positive-control constructs are contamination everywhere. | not scored |
-| ladder-1 | 2026-10-08 | Model ladder B1-M5 fitted on the development labels as planned above (`prior_sd` 2.5); legacy moved to `13_legacy_edge_classification.Rmd`. | Planned before labelling. | not scored |
+| ladder-1 | 2026-10-08 | Model ladder B1-M5 fitted on the development labels as planned above (`prior_sd` 2.5); legacy moved to `13_legacy_edge_classification.Rmd`. | Planned before labelling. | selected M2 for amphibians (0.024 +/- 0.016), M1b for all eDNA (0.100 +/- 0.031); M3-M5 add nothing; GBIF raises all-eDNA false contamination (6% to 14%) |
+| ladder-2 | 2026-10-08 | Add refinement rung M2a: M1b + GBIF features for amphibian ASVs only. | GBIF coverage is reliable for the target taxa and gappy for others, so "not local" outside amphibians often marks real DNA (seen as GBIF raising all-eDNA false contamination in ladder-1). | M2a selected in both domains: amphibian 0.011 +/- 0.007 (M2 0.024), all eDNA 0.048 +/- 0.021 (M1b 0.100); only the amphibian "not local" term is used (local held at 0). Motivated by development results, so optimistic until the test set |
+| ladder-3 | 2026-10-08 | Add refinement rung M2n: M2a + the library's own linked negatives (`neg_present`, `neg_ratio`). | Brings the standard eDNA practice (drop or subtract what is in the negatives) into the model as a fitted term, so its weight is set by the labels rather than imposed; the ratio keeps real DNA that leaked into a negative. Suggested after seeing ladder-1/2 results, where no model term used the library's own negatives. | no gain: M2n 0.011 +/- 0.007 amphibian, 0.049 +/- 0.022 all eDNA (M2a 0.011 / 0.048); `neg_present` -0.14 log-odds per SD, `neg_ratio` held at 0. M2a stays selected |
 
 v0-v2.1 were made before this protocol: they were motivated partly by inspecting individual cases, some judged with GBIF locality. They are kept as the `legacy` baseline. The ladder above replaces them as the main line of development; its rungs are logged here as they are fitted.
 
