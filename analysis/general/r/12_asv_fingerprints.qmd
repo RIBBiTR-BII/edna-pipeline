@@ -21,6 +21,8 @@ An interactive key for visually exploring signal and contamination patterns. Eac
 
 Hovering a point shows the library, and fades every point in the row that is not from the same sequencing run.
 
+**View: by run** redraws each ASV as a timeline, to check whether it behaves consistently between sequencing runs. Each run (in date order, evenly spaced) gets one slot, and three tiers share that axis: field samples, field negatives (one column per study system in the run, coloured by system) and lab controls (one column per control type in the run). In each column the points are the detections on the same log10 scale, the vertical line spans their range and the tick marks their median (shown from 3 detections). The strip below is the column's detection rate (`k/n` under it); a missing column means the run has no such libraries, while an empty strip (`0/n`) means libraries were sequenced but the ASV was not detected. Runs and systems are confounded, so compare the same colour across runs.
+
 Reads are **raw** (the denoised feature table, via script 08's `asv_count_raw`), so the key shows every detection before any filtering.
 
 # Classification
@@ -109,6 +111,10 @@ Patterns to look for:
     <label><input type="checkbox" id="fp-known"> known contaminants only</label>
   </div>
   <div id="fp-sortbar">
+    <label>View <select id="fp-view">
+      <option value="group">by group</option>
+      <option value="run">by run</option>
+    </select></label>
     <label>Sort <select id="fp-sort">
       <option value="reads">total reads</option>
       <option value="detections">detections</option>
@@ -183,6 +189,48 @@ document.addEventListener("DOMContentLoaded", function () {
   const runColor = D.runs.map((r, i) => runPalette[i % runPalette.length]);
   const statusColors = { local: "#2e7d32", local_genus_only: "#7cb342", other_system: "#ef6c00", not_in_run: "#c62828",
                          anthropogenic: "#7b1fa2", unassessable: "#757575" };
+  const systemPalette = ["#4e79a7", "#f28e2b", "#59a14f", "#b07aa1"];
+  const sysColor = D.study_systems.map((s, k) => systemPalette[k % systemPalette.length]);
+  const sysIndex = groups.map(g => g.system == null ? -1 : D.study_systems.indexOf(g.system));
+  const labStyle = { extraction_negative: { color: "#5f6b73", short: "ext" },
+                     pcr_negative: { color: "#9aa5ad", short: "PCR−" },
+                     pcr_positive: { color: "#263238", short: "PCR+" } };
+  const cellColor = g => sysIndex[g] >= 0 ? sysColor[sysIndex[g]] : (labStyle[groups[g].id] || {}).color || "#555";
+
+  // ---- run view geometry: one slot per sequencing run, in three tiers sharing the run axis ----------
+  // field tiers get one column per study system in the run; the lab tier one per control type
+  const labIdx = groupsOfKind("lab_control");
+  const R = (() => {
+    const nRG = D.runs.map(() => new Array(groups.length).fill(0));
+    S.run.forEach((r, s) => { if (r != null) nRG[r][S.group[s]]++; });
+    const L = { left: 54, right: 6, colW: 30, runGap: 10, top: 3, stripGap: 3, stripH: 12, countH: 11, labelH: 10, tierGap: 12 };
+    let yy = L.top;
+    const tiers = [["field_sample", "field", 104], ["field_negative", "field neg", 50], ["lab_control", "lab", 50]]
+      .map(([kind, label, h]) => {
+        const t = { kind, label, h, plotTop: yy, plotBottom: yy + h, stripTop: yy + h + L.stripGap };
+        t.countY = t.stripTop + L.stripH + 9;
+        yy = t.stripTop + L.stripH + L.countH + (kind === "lab_control" ? L.labelH : 0) + L.tierGap;
+        return t;
+      });
+    const slots = [], cells = [];
+    let x = L.left;
+    D.runs.forEach((run, r) => {
+      const sys = D.study_systems.map((s, k) => k).filter(k => groups.some((g, i) => sysIndex[i] === k && nRG[r][i] > 0));
+      const labs = labIdx.filter(i => nRG[r][i] > 0);
+      if (!sys.length && !labs.length) return;
+      // at least two columns wide, so the run date fits
+      const w = Math.max(sys.length, labs.length, 2) * L.colW;
+      const colX = (j, m) => x + (w - m * L.colW) / 2 + (j + 0.5) * L.colW;
+      sys.forEach((k, j) => groups.forEach((g, i) => {
+        if (sysIndex[i] === k) cells.push({ r, g: i, x: colX(j, sys.length), tier: g.kind === "field_sample" ? 0 : 1, n: nRG[r][i] });
+      }));
+      labs.forEach((i, j) => cells.push({ r, g: i, x: colX(j, labs.length), tier: 2, n: nRG[r][i] }));
+      slots.push({ r, x, w, sys: sys.map((k, j) => ({ k, x: colX(j, sys.length) })) });
+      x += w + L.runGap;
+    });
+    return { L, tiers, slots, cells, W: x - L.runGap + L.right, H: yy - L.tierGap + 2 };
+  })();
+  const yT = (t, r) => t.plotTop + 3 + (-Math.log10(r) / -yMinLog) * (t.h - 6);
 
   // ---- per-ASV detections and stats -----------------------------------------------------------
   const asvDet = Array.from({ length: nA }, () => []);
@@ -213,7 +261,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // ---- controls -------------------------------------------------------------------------------
   const state = { q: "", class: "", order: "", family: "", sort: "reads", desc: true, status: "", detIn: "", minDet: 1, knownOnly: false,
-                  page: 0, pageSize: 25 };
+                  page: 0, pageSize: 25, view: "group" };
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -264,6 +312,8 @@ document.addEventListener("DOMContentLoaded", function () {
   bind("fp-mindet", "minDet", "input", t => +t.value || 0);
   bind("fp-known", "knownOnly", "change", t => t.checked);
   bind("fp-pagesize", "pageSize", "change", t => +t.value);
+  // switching views keeps the page, so the same ASVs can be compared both ways
+  $("fp-view").addEventListener("change", e => { state.view = e.target.value; render(); });
 
   // ---- filter / sort --------------------------------------------------------------------------
   // sort keys; the direction comes from the order drop-down, unknown values go last, ties by total reads
@@ -321,19 +371,54 @@ document.addEventListener("DOMContentLoaded", function () {
   }
   let background = panelsBackground();
 
-  function drawHeader() {
-    const h = 40;
+  const tierFill = { field_sample: "#f8f9fa", field_negative: "#f3f5f8", lab_control: "#f7f4ef" };
+  function runBackground() {
+    const { L, tiers, slots, cells } = R;
     let s = "";
-    groups.forEach((g, i) => {
-      const cx = px[i] + G.panelW / 2;
-      const showLabel = i === 0 || groups[i - 1].system !== g.system;
-      if (showLabel) s += `<text x="${px[i]}" y="12" font-size="11" font-weight="600" fill="#333">${esc(g.label)}</text>`;
-      s += `<text x="${cx}" y="25" font-size="10.5" text-anchor="middle" fill="#444">${esc(g.sublabel)}</text>`;
-      s += `<text x="${cx}" y="37" font-size="9.5" text-anchor="middle" fill="#888">n = ${g.n}</text>`;
+    tiers.forEach(t => {
+      slots.forEach(sl => { s += `<rect x="${sl.x}" y="${t.plotTop}" width="${sl.w}" height="${t.h}" fill="${tierFill[t.kind]}"/>`; });
+      const step = t.h >= 80 ? 2 : 3;
+      for (let k = 0; k >= yMinLog; k--) {
+        const yy = yT(t, Math.pow(10, k));
+        slots.forEach(sl => { s += `<line x1="${sl.x}" x2="${sl.x + sl.w}" y1="${yy}" y2="${yy}" stroke="#e2e4e8" stroke-width="0.6"/>`; });
+        if (k % step === 0) s += `<text x="${L.left - 4}" y="${yy + 3}" text-anchor="end" font-size="9" fill="#777">${decLabel(k)}</text>`;
+      }
+      s += `<text transform="translate(11 ${(t.plotTop + t.plotBottom) / 2}) rotate(-90)" text-anchor="middle" font-size="10" font-weight="600" fill="#555">${t.label}</text>`;
+      s += `<text x="${L.left - 4}" y="${t.stripTop + L.stripH - 2}" text-anchor="end" font-size="9" fill="#777">det.</text>`;
     });
-    s += `<text x="${G.left - 4}" y="37" font-size="9" text-anchor="end" fill="#777">rel. ab.</text>`;
+    cells.forEach(c => {
+      if (!c.n) return;
+      const t = tiers[c.tier], bw = L.colW - 12;
+      s += `<rect x="${c.x - bw / 2}" y="${t.stripTop}" width="${bw}" height="${L.stripH}" fill="#e6e6e6"/>`;
+      if (c.tier === 2) s += `<text x="${c.x}" y="${t.countY + L.labelH}" font-size="8" text-anchor="middle" fill="#777">${esc(labStyle[groups[c.g].id]?.short || groups[c.g].sublabel)}</text>`;
+    });
+    return s;
+  }
+  const runBg = runBackground();
+
+  function drawHeader() {
+    const byRun = state.view === "run" && !state.labelMode;
+    let s = "", w, h;
+    if (byRun) {
+      h = 30; w = R.W;
+      R.slots.forEach(sl => {
+        s += `<text x="${sl.x + sl.w / 2}" y="12" font-size="10.5" font-weight="600" text-anchor="middle" fill="#333">${esc(D.runs[sl.r])}</text>`;
+        sl.sys.forEach(c => { s += `<text x="${c.x}" y="25" font-size="9.5" text-anchor="middle" fill="${sysColor[c.k]}">${esc(D.system_codes[D.study_systems[c.k]])}</text>`; });
+      });
+      s += `<text x="${R.L.left - 4}" y="25" font-size="9" text-anchor="end" fill="#777">rel. ab.</text>`;
+    } else {
+      h = 40; w = G.W;
+      groups.forEach((g, i) => {
+        const cx = px[i] + G.panelW / 2;
+        const showLabel = i === 0 || groups[i - 1].system !== g.system;
+        if (showLabel) s += `<text x="${px[i]}" y="12" font-size="11" font-weight="600" fill="#333">${esc(g.label)}</text>`;
+        s += `<text x="${cx}" y="25" font-size="10.5" text-anchor="middle" fill="#444">${esc(g.sublabel)}</text>`;
+        s += `<text x="${cx}" y="37" font-size="9.5" text-anchor="middle" fill="#888">n = ${g.n}</text>`;
+      });
+      s += `<text x="${G.left - 4}" y="37" font-size="9" text-anchor="end" fill="#777">rel. ab.</text>`;
+    }
     const svg = $("fp-header");
-    svg.setAttribute("viewBox", `0 0 ${G.W} ${h}`);
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
     svg.innerHTML = s;
   }
 
@@ -341,9 +426,8 @@ document.addEventListener("DOMContentLoaded", function () {
     return `<span class="fp-badge" style="color:${color};border-color:${color}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)}</span>`;
   }
 
-  // target: a detection index to highlight, for blind labelling (hides model information)
-  function rowHtml(a, st, target) {
-    const s = st[a], blind = target !== undefined;
+  // the taxon line and the status tags above each row's plot
+  function rowMeta(a) {
     let meta = `<span class="fp-taxon">${esc(A.label[a])}</span>`;
     const lineage = [A.class[a], A.order[a], A.family[a]].filter(Boolean).join(" / ");
     const identity = A.p_identical_max[a] != null ? ` · ${(100 * A.p_identical_max[a]).toFixed(1)}% identity` : "";
@@ -361,7 +445,12 @@ document.addEventListener("DOMContentLoaded", function () {
     if (A.contaminant_flag[a]) status += badge("contaminant library" + (A.contaminant_id[a] ? ": " + A.contaminant_id[a] : ""), "#b07aa1");
     if (A.positive_control_component[a]) status += badge("PCR+ component", "#f28e2b");
     if (A.known_contaminant[a]) status += badge("known contaminant", "#000", A.known_contaminant[a]);
+    return `<div class="fp-meta">${meta}</div>${status ? `<div class="fp-meta">${status}</div>` : ""}`;
+  }
 
+  // target: a detection index to highlight, for blind labelling (hides model information)
+  function rowHtml(a, st, target) {
+    const s = st[a], blind = target !== undefined;
     let svg = background;
     groups.forEach((g, i) => {
       const k = s.per[i], rate = g.n ? k / g.n : 0;
@@ -381,8 +470,46 @@ document.addEventListener("DOMContentLoaded", function () {
       svg += `<rect x="${px[g]}" y="${G.plotTop}" width="${G.panelW}" height="${G.plotH}" fill="none" stroke="#000" stroke-width="1"/>`;
       svg += `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="7" fill="none" stroke="#000" stroke-width="1.8" pointer-events="none"/>`;
     }
-    return `<div class="fp-row"><div class="fp-meta">${meta}</div>${status ? `<div class="fp-meta">${status}</div>` : ""}
-      <svg viewBox="0 0 ${G.W} ${G.H}">${svg}</svg></div>`;
+    return `<div class="fp-row">${rowMeta(a)}<svg viewBox="0 0 ${G.W} ${G.H}">${svg}</svg></div>`;
+  }
+
+  // run view: per run x group column, the detections, their range and median, and the detection rate
+  function runRowHtml(a) {
+    const { L, tiers, cells } = R, nG = groups.length, byCell = new Map();
+    for (const d of asvDet[a]) {
+      const smp = det.sample[d];
+      if (S.run[smp] == null) continue;
+      const key = S.run[smp] * nG + S.group[smp];
+      if (!byCell.has(key)) byCell.set(key, []);
+      byCell.get(key).push(d);
+    }
+    let svg = runBg;
+    for (const c of cells) {
+      if (!c.n) continue;
+      const t = tiers[c.tier], color = cellColor(c.g), neg = c.tier === 1;
+      const ds = byCell.get(c.r * nG + c.g) || [], k = ds.length;
+      if (k) {
+        const bw = L.colW - 12, bh = Math.max(1.5, k / c.n * L.stripH);
+        svg += `<rect x="${c.x - bw / 2}" y="${t.stripTop + L.stripH - bh}" width="${bw}" height="${bh}" fill="${color}"${neg ? ` fill-opacity="0.6"` : ""}/>`;
+      }
+      svg += `<text x="${c.x}" y="${t.countY}" font-size="8" text-anchor="middle" fill="${k ? "#333" : "#aaa"}">${k}/${c.n}</text>`;
+      // asvDet is sorted by decreasing relative abundance
+      for (const d of ds) {
+        const cx = c.x + jitter[det.sample[d]] * L.colW * 0.6;
+        svg += `<circle class="pt" data-d="${d}" cx="${cx.toFixed(1)}" cy="${yT(t, det.rel_abund[d]).toFixed(1)}" r="2.2" fill="${color}" ` +
+               (neg ? `fill-opacity="0.15" stroke="${color}" stroke-width="0.9"/>` : `fill-opacity="0.5"/>`);
+      }
+      if (k >= 3) {
+        const hi = det.rel_abund[ds[0]], lo = det.rel_abund[ds[k - 1]];
+        // median on the log scale
+        const mid = k % 2 ? det.rel_abund[ds[(k - 1) / 2]] : Math.sqrt(det.rel_abund[ds[k / 2 - 1]] * det.rel_abund[ds[k / 2]]);
+        const tw = L.colW * 0.36;
+        svg += `<line x1="${c.x}" x2="${c.x}" y1="${yT(t, hi).toFixed(1)}" y2="${yT(t, lo).toFixed(1)}" stroke="${color}" stroke-width="1.4" pointer-events="none"/>`;
+        svg += `<line x1="${c.x - tw}" x2="${c.x + tw}" y1="${yT(t, mid).toFixed(1)}" y2="${yT(t, mid).toFixed(1)}" stroke="#000" stroke-width="3.4" pointer-events="none"/>`;
+        svg += `<line x1="${c.x - tw}" x2="${c.x + tw}" y1="${yT(t, mid).toFixed(1)}" y2="${yT(t, mid).toFixed(1)}" stroke="${color}" stroke-width="2" pointer-events="none"/>`;
+      }
+    }
+    return `<div class="fp-row">${rowMeta(a)}<svg viewBox="0 0 ${R.W} ${R.H}">${svg}</svg></div>`;
   }
 
   function drawLegend() {
@@ -391,6 +518,16 @@ document.addEventListener("DOMContentLoaded", function () {
       s += `<span class="head">Sequencing run</span>`;
       D.runs.forEach((r, i) => { s += `<span class="lk" data-k="run:${i}"><span class="sw" style="background:${runColor[i]}"></span>${esc(r)}</span>`; });
       s += `<span class="head">Symbols</span><span><svg width="16" height="16"><circle cx="8" cy="8" r="6" fill="none" stroke="#000" stroke-width="1.8"/></svg> edge to label</span>`;
+      $("fp-legend").innerHTML = s;
+      return;
+    }
+    if (state.view === "run") {
+      s += `<span class="head">Study system</span>`;
+      D.study_systems.forEach((sys, k) => { s += `<span class="lk" data-k="sys:${k}"><span class="sw" style="background:${sysColor[k]}"></span>${esc(D.system_labels[sys])}</span>`; });
+      s += `<span class="head">Lab controls</span>`;
+      labIdx.forEach(g => { s += `<span class="lk" data-k="grp:${g}"><span class="sw" style="background:${cellColor(g)}"></span>${esc(groups[g].sublabel)}</span>`; });
+      s += `<span class="head">Marks</span><span><svg width="16" height="14"><line x1="8" x2="8" y1="1" y2="13" stroke="#555" stroke-width="1.4"/><line x1="3" x2="13" y1="6" y2="6" stroke="#000" stroke-width="3"/></svg> median, range (≥ 3)</span>`;
+      s += `<span><svg width="16" height="14"><circle cx="8" cy="7" r="3" fill="#555" fill-opacity="0.15" stroke="#555"/></svg> field negative</span>`;
       $("fp-legend").innerHTML = s;
       return;
     }
@@ -419,12 +556,14 @@ document.addEventListener("DOMContentLoaded", function () {
   }));
 
   function render() {
+    drawHeader();
     if (state.labelMode) return renderLabelling();
     const sel = selection(), st = stats();
     drawPager(sel.length);
     drawLegend();
     const page = sel.slice(state.page * state.pageSize, (state.page + 1) * state.pageSize);
-    $("fp-rows").innerHTML = page.length ? page.map(a => rowHtml(a, st)).join("") : `<div id="fp-empty">No ASVs match.</div>`;
+    const row = state.view === "run" ? a => runRowHtml(a) : a => rowHtml(a, st);
+    $("fp-rows").innerHTML = page.length ? page.map(row).join("") : `<div id="fp-empty">No ASVs match.</div>`;
   }
 
   // ---- interaction ----------------------------------------------------------------------------
@@ -457,6 +596,8 @@ document.addEventListener("DOMContentLoaded", function () {
   // hovering a key entry highlights its points in every row on the page
   const legendMatch = {
     run: k => d => S.run[det.sample[d]] === k,
+    sys: k => d => sysIndex[S.group[det.sample[d]]] === k,
+    grp: k => d => S.group[det.sample[d]] === k,
   };
   $("fp-legend").addEventListener("mouseover", e => {
     const item = e.target.closest(".lk");
@@ -639,7 +780,6 @@ document.addEventListener("DOMContentLoaded", function () {
     });
   }
 
-  drawHeader();
   render();
 });
 </script>
