@@ -14,26 +14,32 @@ execute:
 
 # Description
 
-An interactive key for spotting contamination mechanisms by eye. Each ASV gets one row of panels, in a fixed column order: field samples and field negatives for each study system, then the lab controls (extraction negatives, PCR negatives, PCR positives). In each panel:
+An interactive key for visually exploring signal and contamination patterns. Each ASV gets one row of panels, in a fixed column order: field samples and field negatives for each study system, then the lab controls (extraction negatives, PCR negatives, PCR positives). In each panel:
 
-- **points** are the libraries the ASV was detected in, at their within-sample relative abundance (log10 scale, shared by every panel and every ASV). Relative abundance is over all of the sample's raw reads, as in scripts 07 and 11.
+- **points** are the `libraries` the ASV was detected in, at their within-sample relative abundance (log10 scale, shared by every panel and every ASV). Relative abundance is over all of the sample's raw reads.
 - **the bar under the panel** is the share of the group's libraries the ASV was detected in (`k/n` below it), so non-detections can be read too.
 
-Hovering a point shows the library, and fades every point in the row that is not from the same sequencing run: cross-talk shows up as a trace smear sharing a run with a high-abundance source.
+Hovering a point shows the library, and fades every point in the row that is not from the same sequencing run.
 
-Reads are **raw** (the denoised feature table, via script 08's `asv_count_raw`), so the key shows every detection before any filtering. It only displays, it writes nothing. It needs scripts 03, 06, 07 and 08.
+Reads are **raw** (the denoised feature table, via script 08's `asv_count_raw`), so the key shows every detection before any filtering.
 
-**Signal** is DNA that was in the environment at the sampled site when the sample was taken. **Contamination** is DNA introduced by the sampling and lab process -- by the sampler or gear in the field, during extraction or PCR, or by sequencing cross-talk. DNA can be physically in the sample and still be contamination: what counts is whether it came from the environment or from the process. Human DNA is the clearest case: from the environment (e.g. sewage, people upstream) it is signal; from the sampler's hands it is contamination. Field negatives receive the same handling as samples, so DNA at levels comparable to the field negatives is consistent with handling. Use `uncertain` when the pattern cannot tell the sources apart.
+# Classification
+
+**Signal** is DNA that was in the environment at the sampled site when the sample was taken.
+
+**Contamination** is DNA introduced by the sampling and lab process -- by the sampler or gear in the field, during extraction or PCR, or by sequencing cross-talk. DNA can be physically in the sample and still be contamination: what counts is whether it came from the environment or from the process. 
+
+*Example:* Human DNA is the clearest case: from the environment (e.g. sewage, people upstream) it is signal; from the sampler's hands it is contamination. Field negatives receive the same handling as samples, so DNA at levels comparable to the field negatives is consistent with handling. Use `uncertain` when the pattern cannot tell the sources apart.
 
 Patterns to look for:
 
-| pattern | likely mechanism |
+| pattern | likely mechanism | classification |
 |---|---|
-| dense, high cloud in one system; sparse or absent in its field negatives and the lab columns | real local taxon |
-| high in one system, plus a faint smear (~1e-4 and below) in other systems / controls, sharing that run | cross-talk / tag-jumping |
-| thin presence across every column, extraction negatives detected as often as field samples or more | reagent (kitome) contamination |
-| high in PCR positives, trace elsewhere | positive-control leak |
-| concentrated in one system's field negatives and samples, absent in lab controls | field / gear carryover |
+| dense, high cloud in one (local) system, sparse or absent in its field negatives and the lab columns | real local taxon | signal |
+| high in one system, faint smears in other systems & controls, possibly sharing that run | cross-talk | contamination |
+| thin presence across every column, extraction negatives detected as often as field samples | general lab contaminant | contamination |
+| high in PCR positives, trace elsewhere | positive-control leak | contamination |
+| concentrated in one system's samples and field negatives, absent in lab controls | field / gear carryover | uncertain |
 
 # Fingerprints
 
