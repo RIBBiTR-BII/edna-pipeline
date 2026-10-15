@@ -124,12 +124,12 @@ positive_control_remove_local: false
 # Oophaga; amphibian ASVs < 120 bp). The marker's natural amplicon is ~225-267 bp for these taxa, so
 # the 92 and 105 bp construct-like ASVs cannot be wild DNA.
 known_contaminants:
-  - asv_id: 1cfd05fdaa0032684318d9ec69101c9d
-    note: "known presence in lab, not found at eDNA field sites (Oophaga pumilio)"
+  # - asv_id: 1cfd05fdaa0032684318d9ec69101c9d
+  #   note: "known presence in lab, not found at eDNA field sites (Oophaga pumilio); Cori excluded from known contaminants"
   - asv_id: 0ca92cd74aec45312e94be27f0486885
     note: "positive control spike (Lithobates clamitans/sylvaticus)"
-  - asv_id: 06849d9c5734686b2a8c55e30bacf229
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  # - asv_id: 06849d9c5734686b2a8c55e30bacf229
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus); Cori identified as possibly useful signal"
   - asv_id: bea1e8bc9e1f355d1cc093f3e2eb6d64
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
   - asv_id: b26eec7bb2ef557282714a54b0edb45c
@@ -144,14 +144,14 @@ known_contaminants:
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
   - asv_id: 3b33a680f5c609383a070b25bffc0186
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
-  - asv_id: 27b94751cd89bdb88cb2c55cc665cd0f
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  # - asv_id: 27b94751cd89bdb88cb2c55cc665cd0f
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus); Cori identified as possibly useful signal"
   - asv_id: 5c4f993c7972f895724a84945fa2b091
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
   - asv_id: 643f40355832473c5c73ed38f62d3dac
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
-  - asv_id: 2bcab48ccdcdb2911bc71f71d6ef491e
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  # - asv_id: 2bcab48ccdcdb2911bc71f71d6ef491e
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus); Cori identified as possibly useful signal"
   - asv_id: 38000fa789735950c29f518bdbb864cc
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
   - asv_id: 3de2fd091e20497a47f3f9a2765b709c
@@ -174,28 +174,30 @@ known_contaminants:
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
   - asv_id: 9cb5b83f6e9cc543c3a8f1fa28f57bc4
     note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
-  - asv_id: a3e1d255a02ca76ca8422fdd8dbfc1a8
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates maculatus/sylvaticus)"
-  - asv_id: 2a949440a78cb0b31ee8ea18ef10f57b
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Hylidae)"
-  - asv_id: 77a742d6dc2531eb1401052be49cbb2b
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Anura)"
-  - asv_id: e577baaea2315d543ba5407228a639af
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Anura)"
-  - asv_id: eb2c198bb7469a24c11a54bfefa514a7
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris)"
-  - asv_id: cdc21b17ca01799788a0f9444b7c5007
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Dryophytes)"
-  - asv_id: d02be8413dd413414009fbdc54b6dcaf
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris crucifer)"
-  - asv_id: f22472b1bcfa5fa6aa137c05a943431f
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris crucifer)"
-  - asv_id: 864b64a5f89d77d1c73f13c097fe3592
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Odorrana)"
-  - asv_id: 2c9d8826156de5413bfbd6eb6c731133
-    note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Dryophytes chrysoscelis/versicolor)"
-  - asv_id: 35aa52333efd554b3496004143329844
-    note: "Second PC construct: 105 bp, natural amplicon ~265 bp; in all 4 PCR+ (Dryophytes versicolor)"
+  - asv_id: 216c9bf5baf17a94e42e7b7dfb684abd
+    note: "PC construct variant: 115 bp (PC sequence with ~23 bp 5' extension), natural amplicon ~248 bp (Lithobates clamitans/sylvaticus)"
+  # - asv_id: a3e1d255a02ca76ca8422fdd8dbfc1a8
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Lithobates maculatus/sylvaticus); Cori excluded from known contaminants"
+  # - asv_id: 2a949440a78cb0b31ee8ea18ef10f57b
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Hylidae); Cori excluded from known contaminants"
+  # - asv_id: 77a742d6dc2531eb1401052be49cbb2b
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Anura); Cori excluded from known contaminants"
+  # - asv_id: e577baaea2315d543ba5407228a639af
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Anura); Cori excluded from known contaminants"
+  # - asv_id: eb2c198bb7469a24c11a54bfefa514a7
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris); Cori excluded from known contaminants"
+  # - asv_id: cdc21b17ca01799788a0f9444b7c5007
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Dryophytes); Cori excluded from known contaminants"
+  # - asv_id: d02be8413dd413414009fbdc54b6dcaf
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris crucifer); Cori excluded from known contaminants"
+  # - asv_id: f22472b1bcfa5fa6aa137c05a943431f
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Pseudacris crucifer); Cori excluded from known contaminants"
+  # - asv_id: 864b64a5f89d77d1c73f13c097fe3592
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Odorrana); Cori excluded from known contaminants"
+  # - asv_id: 2c9d8826156de5413bfbd6eb6c731133
+  #   note: "PC construct variant: 92 bp, natural amplicon ~248 bp (Dryophytes chrysoscelis/versicolor); Cori excluded from known contaminants"
+  # - asv_id: 35aa52333efd554b3496004143329844
+  #   note: "Second PC construct: 105 bp, natural amplicon ~265 bp; in all 4 PCR+ (Dryophytes versicolor); Cori excluded from known contaminants"
 
 # edge classification (script 13) -- exploratory, nothing downstream reads it. Fits the model ladder
 # in analysis/README.md (sign-constrained logistic regressions on the development labels) and scores
