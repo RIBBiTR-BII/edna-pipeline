@@ -1,0 +1,431 @@
+---
+title: "eDNA detection edge classification"
+subtitle: "Summary for discussion"
+author: "Cob Staines"
+date: last-modified
+format:
+  html:
+    embed-resources: true
+    toc: true
+    toc-depth: 2
+    code-fold: true
+    code-summary: "Code"
+    fig-width: 9
+    fig-height: 5
+execute:
+  warning: false
+  message: false
+  echo: false
+params:
+  # a second labeller's export of the validation labels, shown beside the labels in use in
+  # "Open conflicts" (optional: the column is left out if the file is missing)
+  labels_alt: "/home/cob/Documents/ribbitr/data/edna_results/classification/all_systems_16s_2026-09-17_validation_labels_cob_10-07-2026.csv"
+  labels_alt_name: "Cob"
+---
+
+```{r setup}
+librarian::shelf(tidyverse, yaml, here, knitr)
+
+pipeline_config = read_yaml(here("analysis", "general", "r", "00_pipeline_config.yml"))
+run_dir = here(pipeline_config$run_dir)
+config = read_yaml(here(run_dir, "output", "metadata", "config.yml"))
+run_name = config$run$name
+out = \(suffix) here(run_dir, "output", paste0(run_name, suffix))
+
+vc = pipeline_config$validation
+costs = map_dbl(vc$costs, as.numeric)
+known_contaminants = map_chr(pipeline_config$known_contaminants, "asv_id")
+
+edges = read_csv(out("_13_edge_classification.csv"), show_col_types = FALSE, guess_max = Inf)
+coefficients = read_csv(out("_13_ladder_coefficients.csv"), show_col_types = FALSE)
+asv_classification = read_csv(out("_06_asv_classification.csv"), show_col_types = FALSE)
+amphibian_asvs = asv_classification %>% filter(class %in% "Amphibia") %>% pull(asv_id)
+
+# performance is shown only when the validation gate is open (see analysis/README.md); the sealed
+# test set is never read here
+show_performance = isTRUE(vc$report_performance) && file.exists(out("_13_cv_metrics.csv"))
+if (show_performance) {
+  cv = read_csv(out("_13_cv_metrics.csv"), show_col_types = FALSE)
+  drop_one = read_csv(out("_13_drop_one.csv"), show_col_types = FALSE)
+}
+
+model_version = unique(edges$model_version)
+narrative_version = "ladder-6"
+rung_order = c("B1", "M1", "M1b", "M2", "M2a", "M3", "M4", "M5")
+
+col_signal = "#2F6690"
+col_contamination = "#B85A26"
+col_baseline = "#9AA3A7"
+col_highlight = "#B85A26"
+theme_set(theme_minimal(base_size = 13) + theme(panel.grid.minor = element_blank()))
+
+fmt = \(x, d = 3) formatC(x, format = "f", digits = d)
+pct = \(x, d = 0) paste0(formatC(100 * x, format = "f", digits = d), "%")
+```
+
+::: {.callout-note}
+## Status
+
+Model version **`r model_version`**, run `r run_name`. All results below are **cross-validated on the development set**; the test set is **sealed**. The narrative was written for `r narrative_version` (16 October 2026); the tables and figures are read from script 13's latest outputs.
+:::
+
+```{r version-check, results = "asis"}
+if (!identical(model_version, narrative_version)) {
+  cat("::: {.callout-warning}\nScript 13's outputs are from **", model_version, "**, but the narrative was written for **",
+      narrative_version, "**: check the prose against the figures.\n:::\n", sep = "")
+}
+```
+
+# The sample--ASV network
+
+Each sequenced **library** (corresponding to a sequenced field sample, a PCR positive, or a field, extraction or PCR negative) holds reads from many **ASVs**. Joining every library node to every ASV node constructs a network where each edge is a **detection**. We choose to weigh edges by the share of the library's reads that ASV makes up (ASV relative abundance in library).
+
+```{r network-sketch, fig.height = 4.6}
+# a schematic, not data: a few libraries and ASVs, to show what an edge is
+libs = tibble(node = c("Sierra sample 1", "Sierra sample 2", "Panama sample 1", "extraction negative", "PCR positive control"),
+              kind = c("field sample", "field sample", "field sample", "control library", "control library"),
+              x = 0, y = 5:1)
+asvs = tibble(node = c("Rana sierrae", "Lithobates warszewitschii", "human", "positive-control construct"),
+              kind = "ASV", x = 1, y = c(4.6, 3.4, 2.2, 1))
+nodes = bind_rows(libs, asvs)
+links = tribble(
+  ~from,                  ~to,                          ~share,
+  "Sierra sample 1",      "Rana sierrae",               0.6,
+  "Sierra sample 2",      "Rana sierrae",               0.5,
+  "Panama sample 1",      "Lithobates warszewitschii",  0.6,
+  "Panama sample 1",      "Rana sierrae",               0.02,
+  "Sierra sample 1",      "human",                      0.05,
+  "Sierra sample 2",      "human",                      0.25,
+  "Panama sample 1",      "human",                      0.01,
+  "extraction negative",  "human",                      0.5,
+  "PCR positive control", "human",                      0.02,
+  "PCR positive control", "positive-control construct", 0.9,
+  "Sierra sample 2",      "positive-control construct", 0.02) %>%
+  left_join(nodes %>% select(from = node, x0 = x, y0 = y, from_kind = kind), by = "from") %>%
+  left_join(nodes %>% select(to = node, x1 = x, y1 = y), by = "to") %>%
+  mutate(edge = if_else(from_kind == "field sample", "detection in a field sample (classified)", "detection in a control (context)"))
+notes = tibble(x = 1.05, y = asvs$y - 0.3,
+               label = c("strong in Sierra samples; a faint copy in Panama",
+                         "strong in its home system (Panama)",
+                         "in nearly every library, from strong to faint",
+                         "strong in the positive control; faint in a field sample"))
+
+ggplot() +
+  geom_segment(data = links, aes(x = x0, y = y0, xend = x1, yend = y1, linewidth = share, colour = edge), lineend = "round") +
+  geom_text(data = notes, aes(x, y, label = label), hjust = 0, size = 3.2, fontface = "italic", colour = "grey35") +
+  geom_point(data = nodes, aes(x, y, shape = kind, fill = kind), size = 5, colour = "grey20") +
+  geom_text(data = libs, aes(x - 0.05, y, label = node), hjust = 1, size = 3.8) +
+  geom_text(data = asvs, aes(x + 0.05, y, label = node), hjust = 0, size = 3.8) +
+  scale_linewidth(range = c(0.4, 4), guide = "none") +
+  scale_colour_manual(values = c(`detection in a field sample (classified)` = col_signal, `detection in a control (context)` = col_baseline)) +
+  scale_shape_manual(values = c(`field sample` = 21, `control library` = 21, ASV = 22)) +
+  scale_fill_manual(values = c(`field sample` = "white", `control library` = "grey70", ASV = "grey20")) +
+  scale_x_continuous(limits = c(-0.75, 2.1)) +
+  labs(colour = NULL, shape = NULL, fill = NULL, caption = "Libraries (left) and ASVs (right); line width is the ASV's share of the library's reads.") +
+  theme_void(base_size = 12) +
+  theme(legend.position = "bottom", legend.box = "vertical", plot.caption = element_text(hjust = 0.5, colour = "grey30"))
+```
+
+# Purpose: Signal or Contamination
+
+The purpose of this work is to identity signals in amphibian (and secondarily, other) eDNA across study systems. To do so, we want to classify each **detection** (edges) of an ASV in a field library as:
+
+ - **signal: ** Is this detection DNA that was in the environment at the field site?
+ - **contamination: ** Is this detection DNA introduced procedurally by sampling, the lab or sequencing?
+ 
+The network approach helps us to judge each detection in context. Is the ASV found exclusively in one study system, or does it show up in multiple (and with what relative frequency and weight)? Is it also in the negatives or the positive controls? Is the rest of a sample library mostly human DNA? Here we explore and compare several methods for classifying detections, in the interest of making informed decisions utilizing the richness of this dataset.
+
+```{r counts}
+role_counts = edges %>% count(role)
+n_all = nrow(edges)
+n_hard = sum(edges$role == "hard_flag")
+n_known = sum(edges$role == "known_contaminant")
+n_free = sum(edges$role == "free")
+
+# what the hard flags are in this run (script 06: short sequence and / or contaminant library)
+hard = asv_classification %>% filter(asv_id %in% edges$asv_id[edges$role == "hard_flag"])
+n_hard_asv = nrow(hard)
+n_hard_short = sum(hard$short_sequence_flag %in% TRUE)
+n_hard_contaminant = sum(hard$contaminant_flag %in% TRUE)
+short_cutoff = pipeline_config$short_sequence_length_cutoff
+# from the run config, not the hits file: script 02 writes a placeholder file when the screen is skipped
+contaminant_screened = isTRUE(config$classification$contaminantVsearchBool) &&
+  !is.null(config$classification$contaminantLibDir)
+hard_text = if (n_hard_contaminant == 0) {
+  paste0("Hard-flagged as contamination. ", n_hard_asv, " ASVs shorter than ", short_cutoff,
+         " bp (primer-dimer, adapter read-through), almost all with no taxonomy. ")
+} else {
+  paste0(n_hard_short, " ASVs shorter than ", short_cutoff, " bp and ", n_hard_contaminant,
+         " matching the contaminant library (", n_hard_asv, " ASVs): contamination in every model")
+}
+```
+
+| | edges | |
+|---|---:|---|
+| **field detections (total)** | **`r format(n_all, big.mark = ",")`** | every ASV detection in every field library |
+| short sequences | `r format(n_hard, big.mark = ",")` | `r hard_text` |
+| known contaminants | `r format(n_known, big.mark = ",")` | the `r length(known_contaminants)` reviewed ASVs in `known_contaminants` (positive-control spike and construct variants): contamination in every model |
+| **free edges** | **`r format(n_free, big.mark = ",")`** | what the models decide on |
+
+# The process
+
+1. **Constrain obvious cases**: `r if (n_hard_contaminant == 0) "short-sequence artifacts" else "hard-flagged ASVs"` and known contaminants are set aside.
+2. **Describe free edges** with features computed from the network data + context (e.g. field colllction metadata, GBIF).
+3. **Fit models**: logistic regressions fitted to the training dataset, each rung adding the term(s) for one contamination mechanism, with every coefficient's sign (+ for signal, − for contamination) fixed in advance.
+4. **Score models**: each model is scored for comparison by fixed weights for error costs (false signal, false contamination, unassigned).
+5. **Evaluate models**: compare all models by cross-validated cost on the development set. Models are finally evaluated on a sealed test set for a final score which avoids overfitting (presently left undone).
+
+## The validation sample
+
+```{r validation}
+sample = read_csv(file.path(run_dir, vc$dir, paste0(run_name, "_validation_sample.csv")), show_col_types = FALSE)
+dev_ids = sample %>% filter(split == "development", !(asv_id %in% known_contaminants)) %>% pull(validation_id)
+dev_labels = read_csv(file.path(run_dir, vc$dir, paste0(run_name, "_validation_labels.csv")),
+                      col_types = cols(.default = col_character())) %>%
+  filter(validation_id %in% dev_ids)
+n_dev = length(dev_ids)
+n_dev_signal = sum(dev_labels$label == "signal")
+n_dev_contamination = sum(dev_labels$label == "contamination")
+n_dev_uncertain = sum(dev_labels$label == "uncertain")
+n_dropped = sum(sample$asv_id %in% known_contaminants)
+```
+
+**`r nrow(sample)` detections** were drawn at random from 24 strata: (amphibian vs. other) × (4 study systems) × (3 abundance bands: < 0.1%, 0.1--10%, > 10% of the library's reads); Amphibian detections are sampled 2:1 to other taxa. Labelling was done blind, with no model output shown; the labels in use are a revised set (Cori's), which replaced an earlier one (Cob's). Additional validation samples casn be drawn if needed. 2/3 of the validation data are used for training, 1/3 is used for testing (sealed until one final comparison). Each hand-labelled edge is weighted by its stratum's population, so scores estimate performance over all free edges.
+
+The training set (Cori) currently holds **`r n_dev` edges**: `r n_dev_signal + n_dev_contamination` classified (`r n_dev_signal` signal, `r n_dev_contamination` contamination) and `r n_dev_uncertain` labelled `uncertain` (not used). `r n_dropped` sampled edges of an ASV added to `known_contaminants` after the draw were dropped from the validation sample (they remain in the network, as known contaminants).
+
+## Costs and scoring
+
+Each model's decision on each hand-labelled edge is charged its cost (0 when correct), and the model's score is the **weighted cost per detection** (0 is perfect); leaving every edge unassigned scores `r costs[["unassigned"]]`. Costs are not used to fit the models, but the same costs set each model's decision thresholds (below), so the models are scored by the standard they decide by.
+
+| error | cost |
+|---|---:|
+| false signal (contamination called signal) | **`r costs[["false_signal"]]`** |
+| false contamination (signal called contamination) | **`r costs[["false_contamination"]]`** |
+| unassigned (left for manual review) | **`r costs[["unassigned"]]`** |
+
+```{r thresholds}
+# decision thresholds implied by the costs
+p_low = costs[["unassigned"]] / costs[["false_contamination"]]
+p_high = 1 - costs[["unassigned"]] / costs[["false_signal"]]
+```
+
+# The models
+
+## Terms
+
+Each feature reflects one contamination mechanism. Sign: **+** is evidence for signal, **−** for contamination. Here *x* is the edge's reads over its library's reads (hard-flagged and known-contaminant reads excluded), and mu(a, g) is the mean *x* of ASV *a* over the libraries of group *g*, zeros included.
+
+| mechanism | feature | what it captures | sign |
+|---|---|---|:-:|
+| abundance | `log10_x` | more of the library, more likely real | + |
+| home system | `home_share` = mu(this system) / (mu(this system) + strongest other system) | 1 when the ASV is found only here; near 0 for a faint copy of another system's taxon (cross-talk, lab carryover) | + |
+| positive control | `pc_component` | the ASV is a step 8 PCR positive-control component | − |
+| GBIF locality | `gbif_local`, `gbif_not_local` | recorded in this system / recorded only elsewhere (step 7) | + / − |
+| GBIF, amphibians only | `gbif_local_amphibian`, `gbif_not_local_amphibian` | the same, for amphibians only: GBIF is gappy for non-target taxa | + / − |
+| kitome | `kit_share` = mu(this system) / (mu(this system) + mu(lab negatives)) | as abundant in extraction / PCR negatives as in the field | + |
+| contaminated library | `human_share` | the rest of the library is mostly human DNA (low target biomass) | − |
+| dirty ASV | `dirty_asv` | the ASV turns up mostly in human-heavy libraries | − |
+
+## Model ladder
+
+Each **rung** adds one mechanism to the rung below. The **refinement rung** M2a (dashed) was added after the ladder was first scored, logged before its effect was seen; it branches off M1b rather than stacking on the top. Three further refinement rungs (own negatives, and a pooled control share in two forms) are set aside to keep the model set simple; they are described in `analysis/README.md` for future reconsideration.
+
+```{mermaid}
+flowchart LR
+  B1["B1<br/>abundance"] --> M1["M1<br/>+ home share"] --> M1b["M1b<br/>+ positive control"] --> M2["M2<br/>+ GBIF"] --> M3["M3<br/>+ kit share"] --> M4["M4<br/>+ library human"] --> M5["M5<br/>+ dirty ASV"]
+  M1b -.-> M2a["M2a<br/>GBIF for amphibians only"]
+```
+
+## How a rung combines its terms
+
+1. Each feature is **standardised** (z-scored over the training edges), so coefficients compare as log-odds per standard deviation.
+2. The terms **add on the log-odds scale**: log-odds of signal = intercept + Σ β~i~ z~i~ (no interactions, apart from the amphibian-only GBIF features).
+3. *p* = 1 / (1 + e^−log-odds^).
+4. Each β is **held to its pre-set sign** (a term that "wants" the wrong sign sits at 0), with a light Normal(0, `r pipeline_config$edge_classification$prior_sd`) prior on each β.
+5. Fitted on the **development labels only** (signal vs contamination).
+6. Each edge's *p* becomes a **decision**, the one of least expected cost: **contamination if *p* < `r p_low`**, **signal if *p* > `r p_high`**, unassigned in between (thresholds set by the costs above).
+
+```{r coefficients-models}
+# the rungs to show: the selected amphibian rung and the lowest-cost one (or M2 and M3 when
+# performance is not shown, so nothing here depends on the scores)
+shown_rungs = if (show_performance) {
+  amph = cv %>% filter(domain == "amphibian", model %in% rung_order)
+  unique(c(amph$model[amph$selected], amph$model[which.min(amph$cost)]))
+} else {
+  c("M2", "M3")
+}
+shown_rungs = rung_order[rung_order %in% shown_rungs]
+coef_title = if (show_performance) {
+  if (length(shown_rungs) == 1) paste("Fitted terms of", shown_rungs, "(selected and lowest-cost rung for amphibians)")
+  else paste0("Fitted terms of ", shown_rungs[1], " (selected for amphibians) and ", shown_rungs[2], " (lowest cost)")
+} else {
+  paste("Fitted terms of", paste(shown_rungs, collapse = " and "))
+}
+```
+
+```{r coefficients, fig.height = 4}
+coefficients %>%
+  filter(rung %in% shown_rungs, term != "(intercept)") %>%
+  mutate(rung = factor(rung, shown_rungs)) %>%
+  mutate(term = fct_reorder(term, abs(estimate_standardised), .fun = max),
+         direction = if_else(estimate_standardised >= 0, "toward signal", "toward contamination")) %>%
+  ggplot(aes(estimate_standardised, term, fill = direction)) +
+  geom_col(width = 0.65) +
+  geom_vline(xintercept = 0, colour = "grey40") +
+  facet_wrap(~rung) +
+  scale_fill_manual(values = c(`toward signal` = col_signal, `toward contamination` = col_contamination)) +
+  labs(x = "coefficient (log-odds per SD)", y = NULL, fill = NULL,
+       title = coef_title) +
+  theme(legend.position = "bottom")
+```
+
+# Results (development set)
+
+```{r no-performance, results = "asis"}
+if (!show_performance) {
+  cat("::: {.callout-important}\nPerformance reporting is off (`validation$report_performance: false`), so no results are shown.\n:::\n")
+}
+```
+
+```{r results-prep, eval = show_performance}
+baseline_order = c("all_signal", "neg_presence", "neg_subtract", "script_08", "legacy")
+cv = cv %>%
+  mutate(kind = if_else(model %in% baseline_order, "baseline", "rung"),
+         model = factor(model, rev(c(baseline_order, rung_order))))
+get = \(m, d, col = "cost") cv %>% filter(model == m, domain == d) %>% pull(all_of(col))
+best_rung = \(d) cv %>% filter(domain == d, kind == "rung") %>% slice_min(cost, n = 1) %>% pull(model) %>% as.character()
+selected = \(d) cv %>% filter(domain == d, selected) %>% pull(model) %>% as.character()
+```
+
+`r if (show_performance) paste0("Repeated grouped cross-validation (", pipeline_config$edge_classification$cv_repeats, " × ", pipeline_config$edge_classification$cv_folds, " folds, grouped by ASV × study system). Error bars are ±1 SE. **Amphibians** are the primary domain (the research objective); all eDNA is secondary.")`
+
+```{r results-plot, eval = show_performance, fig.height = 6.5}
+cv %>%
+  mutate(status = case_when(selected ~ "selected (simplest within 1 SE of best)",
+                            kind == "rung" ~ "ladder rung", .default = "baseline (fixed rule)")) %>%
+  ggplot(aes(cost, model, colour = status)) +
+  geom_errorbarh(aes(xmin = pmax(cost - se, 0), xmax = cost + se), height = 0.3) +
+  geom_point(size = 2.6) +
+  facet_wrap(~domain, scales = "free_x") +
+  scale_colour_manual(values = c(`baseline (fixed rule)` = col_baseline, `ladder rung` = col_signal,
+                                 `selected (simplest within 1 SE of best)` = col_highlight)) +
+  labs(x = "weighted cost per detection (lower is better)", y = NULL, colour = NULL) +
+  theme(legend.position = "bottom")
+```
+
+```{r results-table, eval = show_performance}
+cv %>%
+  filter(model %in% c("script_08", "legacy", "M1", "M1b", "M2", "M2a", "M3", "M5")) %>%
+  mutate(model = factor(as.character(model), c("script_08", "legacy", "M1", "M1b", "M2", "M2a", "M3", "M5"))) %>%
+  arrange(domain != "amphibian", model) %>%
+  transmute(domain, model,
+            cost = paste0(fmt(cost), " ± ", fmt(se)),
+            coverage = pct(coverage),
+            `false signal` = pct(false_signal_rate, 1),
+            `false contamination` = pct(false_contamination_rate, 1),
+            selected = if_else(selected, "✔", "")) %>%
+  kable(align = "llrrrrc", caption = "Key models. Coverage: share of edges given a decision. False-signal rate: share of contamination called signal; false-contamination rate: share of signal called contamination (all weighted).")
+```
+
+```{r key-numbers, eval = show_performance}
+a = "amphibian"; e = "all eDNA"
+```
+
+`r if (show_performance) paste0("**What it shows.** Every fitted rung from M1 up beats every fixed rule by a wide margin: for amphibians, the selected model (", selected(a), ") costs ", fmt(get(selected(a), a)), " against ", fmt(get("script_08", a)), " for step 8 (which calls ", pct(get("script_08", a, "false_signal_rate")), " of amphibian contamination signal) and ", fmt(get("legacy", a)), " for the legacy model. The lowest-cost rung is ", best_rung(a), " for amphibians and ", best_rung(e), " for all eDNA; ", selected(e), " is selected for all eDNA.")`
+
+## Which mechanisms matter
+
+```{r drop-one, eval = show_performance, fig.height = 4}
+drop_one %>%
+  filter(dropped != "(none)") %>%
+  mutate(dropped = fct_reorder(dropped, change_vs_top)) %>%
+  ggplot(aes(change_vs_top, dropped, fill = change_vs_top > 0)) +
+  geom_col(width = 0.65) +
+  geom_vline(xintercept = 0, colour = "grey40") +
+  facet_wrap(~domain) +
+  scale_fill_manual(values = c(`TRUE` = col_signal, `FALSE` = col_baseline), guide = "none") +
+  labs(x = "change in cost when the mechanism is dropped from M5 (positive = it helps)", y = NULL)
+```
+
+**Home system and GBIF carry the model.** Kit share helps a little. Abundance adds nothing once home share is known, the two human-DNA terms (M4, M5) add nothing, and the positive-control flag is redundant at the top of the ladder, where home share and GBIF already catch the same edges.
+
+## Early look
+
+::: {.callout-note}
+To be written after the ladder-6 rerun.
+:::
+
+# Open conflicts
+
+```{r conflicts}
+labels_in_use = read_csv(file.path(run_dir, vc$dir, paste0(run_name, "_validation_labels.csv")),
+                         col_types = cols(.default = col_character()))
+have_alt = file.exists(params$labels_alt)
+alt = if (have_alt) {
+  read_csv(params$labels_alt, col_types = cols(.default = col_character())) %>% select(validation_id, alt = label)
+} else {
+  tibble(validation_id = character(), alt = character())
+}
+# Sierra Nevada edges of ASVs classified as Lithobates clamitans (the positive-control species), which
+# is not a Sierra species
+sierra_clamitans = sample %>%
+  filter(study_system == "sierra_nevada") %>%
+  select(validation_id, asv_id, split) %>%
+  inner_join(asv_classification %>% filter(genus %in% "Lithobates", str_detect(species, "clamitans")) %>%
+               select(asv_id, species), by = "asv_id") %>%
+  left_join(labels_in_use %>% select(validation_id, label, note), by = "validation_id") %>%
+  left_join(alt, by = "validation_id")
+tally = \(v) { v = v[!is.na(v)]; t = table(v); paste(paste(t, names(t)), collapse = ", ") }
+conflicts = sierra_clamitans %>%
+  group_by(asv = paste0("`", substr(asv_id, 1, 8), "`"), known = asv_id %in% known_contaminants,
+           classified = paste("*Lithobates*", species)) %>%
+  summarise(edges = n(), in_use = tally(label), alt = tally(alt),
+            notes = paste(unique(na.omit(na_if(note, ""))), collapse = " / "), .groups = "drop") %>%
+  arrange(desc(known), desc(edges)) %>%
+  mutate(known = if_else(known, "yes", ""))
+n_bullfrog_asvs = sum(conflicts$known == "")
+n_bullfrog_edges = sum(conflicts$edges[conflicts$known == ""])
+k216 = conflicts %>% filter(str_detect(asv, "216c9bf5"))
+bullfrog = sierra_clamitans %>% filter(!(asv_id %in% known_contaminants))
+```
+
+Two related conflicts are unresolved. Both concern Sierra Nevada ASVs that classify as *Lithobates clamitans*, the positive-control species, which does not occur in the Sierra.
+
+1. **`216c9bf5`**: on `known_contaminants` (bolded in the review as a positive-control construct variant), but its `r k216$edges` sampled edges are labelled `r k216$in_use` in the labels in use, with notes that it is found only in the Sierra and is probably a ranid. Because it is on the list, its sampled edges have left the sample.
+2. **"Probably bullfrog"**: `r n_bullfrog_edges` sampled edges of `r n_bullfrog_asvs` other *L. clamitans* ASVs in the Sierra are labelled `r tally(bullfrog$label)` in the labels in use, several noted as "probably bullfrog" (*L. catesbeianus*, introduced in the Sierra foothills) misassigned to *L. clamitans*`r if (have_alt) paste0(", but ", tally(bullfrog$alt), " (positive-control spillover) by ", params$labels_alt_name)`.
+
+If these are local ranids, they are signal, `216c9bf5` comes off the list, and the reference database likely lacks a close *L. catesbeianus* (or *Rana sierrae*) sequence. If they are positive-control spillover, they are contamination, and the labels change instead.
+
+```{r conflicts-table}
+conflicts %>%
+  rename(ASV = asv, `on known_contaminants` = known, `classified as` = classified, `sampled edges` = edges,
+         `labels in use` = in_use) %>%
+  rename_with(\(n) if_else(n == "alt", paste(params$labels_alt_name, "labels"), n)) %>%
+  select(-any_of(if (!have_alt) paste(params$labels_alt_name, "labels") else character())) %>%
+  kable(caption = "Sampled Sierra Nevada edges of ASVs classified as *Lithobates clamitans* (development and test)")
+```
+
+# Decisions for discussion
+
+**Data**
+
+1. **Sierra *L. clamitans* ASVs** (above): local ranids misassigned (signal), or positive-control spillover (contamination)? One answer settles both conflicts.
+2. **`216c9bf5`**: stay on `known_contaminants`, or come off as a Sierra ranid? It changes the list, the population and the sample.
+3. **Wave 2**: a targeted draw of the ASVs taken off the list, which are free edges but were never sampled. How many edges per stratum, and who labels?
+
+**Models**
+
+4. **Final candidates for the sealed test** (1--3 rungs, e.g. M2a and M3)?
+5. **Freeze the ladder after wave 2?** Each further change on the same labels makes the development scores more optimistic; the test set is the only unbiased check.
+6. **Are the costs right?** False signal `r costs[["false_signal"]]`, false contamination `r costs[["false_contamination"]]`, unassigned `r costs[["unassigned"]]` set the thresholds (`r p_low` / `r p_high`) and every score.
+
+# Proposed next steps
+
+| step | what | outcome |
+|:-:|---|---|
+| 1 | Resolve the Sierra *L. clamitans* ASVs and `216c9bf5` (labels, list, and a check of the reference database for *L. catesbeianus* / *R. sierrae*) | one agreed label set and list |
+| 2 | Draw and label wave 2 for the ASVs taken off the list | the sample covers today's population |
+| 3 | Rerun the ladder on the full labels | rung costs on representative labels |
+| 4 | Freeze the ladder; name 1--3 final candidates | `validation$final_candidates` |
+| 5 | Unseal the test set once; record it in the change log | an unbiased estimate for the chosen model |
