@@ -8,7 +8,7 @@ output: html_document
 
 This script classifies every **edge** of the sample--ASV network -- a detection of an ASV in a field library -- as `signal` or `contamination`, by the **model ladder** and **validation protocol** in `analysis/README.md`. It **only classifies, it drops nothing**, and nothing downstream reads its outputs.
 
-**Edges.** Hard-flagged ASVs (script 06) are left out. ASVs in `known_contaminants` are contamination in every model (role `known_contaminant`). Every other field detection is a **free** edge, scored by each model.
+**Edges.** Hard-flagged ASVs (script 06: shorter than `short_sequence_length_cutoff`, or matching the local contaminant library when that screen is run) are left out. ASVs in `known_contaminants` are contamination in every model (role `known_contaminant`). Every other field detection is a **free** edge, scored by each model.
 
 **Features** (one row per free edge; data only, never labels):
 
@@ -20,9 +20,10 @@ This script classifies every **edge** of the sample--ASV network -- a detection 
 - `human_share`: the share of the rest of the library's reads (the edge's own reads left out) from ASVs of genus *Homo* -- an indicator of low target biomass.
 - `dirty_asv`: the mean `human_share` of the ASV's other edges in the system, minus the mean over all free edges of the system (0 when the ASV has no other edge there).
 - `gbif_local_amphibian`, `gbif_not_local_amphibian`: the GBIF features for amphibian ASVs (script 06 class Amphibia) only, 0 for other ASVs (refinement M2a).
-- `neg_present`: the ASV is in any of the library's linked negatives (field, extraction, PCR); `neg_ratio`: log10 of the edge's x over the ASV's largest x in those negatives, capped at +/- 3, 0 when absent (refinement M2n).
 
-**Models.** Baselines are fixed rules: `all_signal`; `script_08` (removed by step 8 = contamination); `neg_presence` (contamination if the ASV is in any of the library's linked negatives); `neg_subtract` (contamination if the edge's reads minus the ASV's largest read count in a linked negative is <= 0); `legacy` (the v2.1 labels from `13_legacy_edge_classification.Rmd`, when its output exists). The **ladder** rungs B1, M1, M1b, M2, M3, M4, M5 are logistic regressions, each adding one mechanism's features to the rung below (refinement rungs, e.g. M2a and M2n, branch off a ladder rung: see the change log), with each coefficient's sign fixed in advance and a Normal(0, `prior_sd`) prior on the coefficients of the standardised features. They are fitted on the **development** labels only (`signal` vs `contamination`; `uncertain` left out), unweighted.
+**Models.** Baselines are fixed rules: `all_signal`; `script_08` (removed by step 8 = contamination); `neg_presence` (contamination if the ASV is in any of the library's linked negatives); `neg_subtract` (contamination if the edge's reads minus the ASV's largest read count in a linked negative is <= 0); `legacy` (the v2.1 labels from `13_legacy_edge_classification.Rmd`, when its output exists). The **ladder** rungs B1, M1, M1b, M2, M3, M4, M5 are logistic regressions, each adding one mechanism's features to the rung below, plus the refinement rung M2a, which branches off M1b (see the change log; the deferred refinement rungs M2n, M2c and M3c are described in `analysis/README.md`), with each coefficient's sign fixed in advance and a Normal(0, `prior_sd`) prior on the coefficients of the standardised features. They are fitted on the **development** labels only (`signal` vs `contamination`; `uncertain` left out), unweighted.
+
+**Population changes.** If `known_contaminants` has changed since script 14 drew the sample, sampled edges of ASVs now in the list leave the sample, and each stratum's population `N_h` (used for the weights) is recounted over today's free edges. ASVs taken off the list since the draw are in the population but were never sampled, so they are not represented in the scores until a further wave draws them.
 
 **Decisions.** A model's probability of signal p becomes the decision of least expected cost under `validation$costs`: with costs 2 / 1 / 0.25, contamination if p < 0.25, signal if p > 0.875, unassigned in between.
 
@@ -67,19 +68,15 @@ negative_classes = c("field_negative", "extraction_negative", "pcr_negative")
 # (+1: evidence for signal, -1: evidence for contamination)
 feature_signs = c(log10_x = 1, home_share = 1, pc_component = -1, gbif_local = 1, gbif_not_local = -1,
                   kit_share = 1, human_share = -1, dirty_asv = -1,
-                  gbif_local_amphibian = 1, gbif_not_local_amphibian = -1, neg_present = -1, neg_ratio = 1)
+                  gbif_local_amphibian = 1, gbif_not_local_amphibian = -1)
 mechanisms = list(abundance = "log10_x", home = "home_share", positive_control = "pc_component",
                   gbif = c("gbif_local", "gbif_not_local"), kitome = "kit_share", library_human = "human_share",
-                  asv_dirty = "dirty_asv", gbif_amphibian = c("gbif_local_amphibian", "gbif_not_local_amphibian"),
-                  own_negatives = c("neg_present", "neg_ratio"))
+                  asv_dirty = "dirty_asv", gbif_amphibian = c("gbif_local_amphibian", "gbif_not_local_amphibian"))
 ladder = list(B1 = "abundance", M1 = "home", M1b = "positive_control", M2 = "gbif", M3 = "kitome",
               M4 = "library_human", M5 = "asv_dirty") %>%
   accumulate(c)
-# refinement rungs (see the change log in analysis/README.md): branch off a ladder rung
-refinements = list(M2a = c(ladder$M1b, "gbif_amphibian"),
-                   M2n = c(ladder$M1b, "gbif_amphibian", "own_negatives"))
-# rungs in order of complexity, refinements after the ladder rung they parallel
-rungs = c(ladder[c("B1", "M1", "M1b", "M2")], refinements[c("M2a", "M2n")], ladder[c("M3", "M4", "M5")]) %>%
+# refinement rung (see the change log in analysis/README.md): branches off M1b, after M2 in rung order
+rungs = c(ladder[c("B1", "M1", "M1b", "M2")], list(M2a = c(ladder$M1b, "gbif_amphibian")), ladder[c("M3", "M4", "M5")]) %>%
   map(\(m) unname(unlist(mechanisms[m])))
 # drop-one analysis starts from the top of the ladder
 top_rung = "M5"
@@ -143,6 +140,11 @@ libraries = libraries %>% filter(!is.na(library_class))
 hard_flagged = asv_classification %>%
   filter(short_sequence_flag %in% TRUE | contaminant_flag %in% TRUE) %>%
   pull(asv_id)
+asv_classification %>%
+  filter(asv_id %in% hard_flagged) %>%
+  count(short_sequence_flag = short_sequence_flag %in% TRUE, contaminant_flag = contaminant_flag %in% TRUE,
+        name = "hard_flagged_asvs") %>%
+  knitr::kable()
 human_asvs = asv_classification %>% filter(genus %in% "Homo") %>% pull(asv_id)
 amphibian_asvs = asv_classification %>% filter(class %in% "Amphibia") %>% pull(asv_id)
 
@@ -236,7 +238,7 @@ fe = fe %>%
   ungroup() %>%
   select(-own_human, -n_other, -system_mean_human)
 
-# each library's linked negatives, via the control-group ids shared with them
+# each library's linked negatives (for the neg_presence and neg_subtract baselines), via the control-group ids shared with them
 link_controls = function(group_col, control_class) {
   groups = sample_map %>%
     select(feature_id, group = all_of(group_col)) %>%
@@ -255,18 +257,14 @@ control_links = bind_rows(link_controls("field_negative_control_group", "field_n
   distinct()
 
 own_negative_reads = control_links %>%
-  inner_join(counted %>% filter(library_class %in% negative_classes) %>% select(control_id = feature_id, asv_id, reads, x),
+  inner_join(counted %>% filter(library_class %in% negative_classes) %>% select(control_id = feature_id, asv_id, reads),
              by = "control_id", relationship = "many-to-many") %>%
   group_by(feature_id, asv_id) %>%
-  summarise(own_negative_max_reads = max(reads), own_negative_max_x = max(x), .groups = "drop")
+  summarise(own_negative_max_reads = max(reads), .groups = "drop")
 
-# own negatives (refinement M2n): is the ASV in the library's linked negatives, and how far above them
 fe = fe %>%
   left_join(own_negative_reads, by = c("feature_id", "asv_id")) %>%
-  mutate(own_negative_max_reads = replace_na(own_negative_max_reads, 0),
-         own_negative_max_x = replace_na(own_negative_max_x, 0),
-         neg_present = as.numeric(own_negative_max_x > 0),
-         neg_ratio = if_else(own_negative_max_x > 0, pmin(pmax(log10(x / own_negative_max_x), -3), 3), 0))
+  mutate(own_negative_max_reads = replace_na(own_negative_max_reads, 0))
 
 stopifnot(!anyNA(fe[names(feature_signs)]))
 
@@ -351,6 +349,44 @@ if (!file.exists(validation_sample_file) || !file.exists(validation_labels_file)
   stop("No validation sample / labels in ", validation_dir, ": draw (script 14) and label (script 12) first")
 }
 validation_sample = read_csv(validation_sample_file, show_col_types = FALSE)
+
+# the population may have moved since script 14 drew the sample (a change to known_contaminants):
+# sampled edges of ASVs now in the list leave the sample, and each stratum's N_h is recounted over
+# today's free edges, with script 14's strata (x over library reads excluding hard-flagged ASVs only,
+# so an edge's band does not depend on the list)
+now_known = validation_sample %>% filter(asv_id %in% known_contaminants)
+if (nrow(now_known) > 0) {
+  cat(nrow(now_known), "sampled edge(s) of ASVs now in known_contaminants leave the sample:",
+      paste(now_known$validation_id, collapse = ", "), "\n")
+}
+abundance_breaks = as.numeric(unlist(vc$abundance_breaks))
+band_labels = c(paste0("<", abundance_breaks[1]),
+                paste0(abundance_breaks[-length(abundance_breaks)], "-", abundance_breaks[-1]),
+                paste0(">=", abundance_breaks[length(abundance_breaks)]))
+stratum_reads = detections %>%
+  filter(role != "hard_flag") %>%
+  group_by(feature_id) %>%
+  summarise(stratum_reads = sum(reads), .groups = "drop")
+population_strata = fe %>%
+  left_join(stratum_reads, by = "feature_id") %>%
+  transmute(group = if_else(asv_id %in% amphibian_asvs, "amphibian", "other"),
+            band = as.character(cut(reads / stratum_reads, c(0, abundance_breaks, Inf), right = FALSE, labels = band_labels)),
+            stratum = paste(group, study_system, band, sep = " | ")) %>%
+  count(stratum, name = "N_h")
+validation_sample = validation_sample %>%
+  filter(!(asv_id %in% known_contaminants)) %>%
+  rename(N_h_drawn = N_h) %>%
+  left_join(population_strata, by = "stratum") %>%
+  mutate(N_h = replace_na(N_h, 0L))
+
+population_strata %>%
+  full_join(validation_sample %>% distinct(stratum, N_h_drawn), by = "stratum") %>%
+  left_join(validation_sample %>% count(stratum, split) %>% pivot_wider(names_from = split, values_from = n, names_prefix = "sampled_"),
+            by = "stratum") %>%
+  mutate(across(where(is.numeric), \(v) replace_na(v, 0))) %>%
+  arrange(stratum) %>%
+  knitr::kable(caption = "free edges per stratum now (N_h) and when drawn (N_h_drawn); strata with no sampled edges are not represented in the scores")
+
 development = validation_sample %>% filter(split == "development")
 development_labels = read_csv(validation_labels_file, col_types = cols(.default = col_character())) %>%
   filter(validation_id %in% development$validation_id) %>%
