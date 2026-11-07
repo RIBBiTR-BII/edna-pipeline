@@ -6,7 +6,7 @@ output: html_document
 
 # load data
 ```{r include=FALSE}
-librarian::shelf(tidyverse, here, yaml, lme4, lmerTest, emmeans, MASS, glmmTMB, DHARMa, ggrepel)
+librarian::shelf(tidyverse, here, yaml, lme4, lmerTest, emmeans, MASS, glmmTMB, DHARMa, ggrepel, performance)
 
 run_dir_methods = here("16S_sequence_processing", "runs", "methods_2026-03-13")
 
@@ -17,6 +17,85 @@ config_12s = read_yaml(here(run_dir_methods, "12S", "output", "metadata", "confi
 config_16s = read_yaml(here(run_dir_methods, "16S", "output", "metadata", "config.yml"))
 
 data_combined = read.csv(here(run_dir_methods, "12S", "output", paste0(config_12s$run$name, "_08_asv_controlled_joined.csv")))
+```
+
+# plotting helpers
+```{r}
+# Data + estimates plot for read proportions, used in the extraction kit and gene sections.
+#   var:        grouping column on the x axis (string)
+#   em_*:       emmeans on the response scale, one row per level of `var`
+#   or_*:       pairs() of those emmeans (odds ratios, or ratios of means)
+#   obs:        long per-sample data with columns taxon, prop, prop_plot and `var`
+#   fill_observed: if TRUE, samples with reads observed (0% < prop < 100%) get a light
+#               fill, and 0% / 100% samples stay as open circles
+# Same layout as the ASV data + estimates plot: open circles for observed samples
+# drawn over the model estimate, Dark2 colours by group, sample sizes on top.
+# Proportions are continuous, so samples are jittered horizontally rather than
+# stacked. The odds ratio for each taxon goes in its facet strip.
+plot_marginal_data = function(var, em_amph, em_sapiens, or_amph, or_sapiens, title, xlab, colour_lab,
+                              obs,
+                              note = "Estimates averaged with equal weight over the other factor; 0% / 100% samples plotted at 0.5 reads.",
+                              fill_observed = FALSE) {
+  obs = obs %>% mutate(in_range = prop > 0 & prop < 1)
+  jitter = position_jitter(width = 0.12, height = 0, seed = 42)
+  # estimates may come as `prob` (conditional mean) or `response` (overall mean
+  # including zero-inflation); contrasts as odds ratios or ratios of means
+  tidy_est = \(x, taxon) as.data.frame(x) %>% rename(any_of(c(prob = "response"))) %>% mutate(taxon = taxon)
+  est = bind_rows(tidy_est(em_amph, "Amphibia"), tidy_est(em_sapiens, "Homo sapiens"))
+  tidy_ratio = \(x, taxon) {
+    d = as.data.frame(summary(x, infer = TRUE)) %>% mutate(taxon = taxon)
+    if ("odds.ratio" %in% names(d)) mutate(d, stat = "OR", est = odds.ratio)
+    else mutate(d, stat = "Ratio of means", est = ratio)
+  }
+  or = bind_rows(tidy_ratio(or_amph, "Amphibia"), tidy_ratio(or_sapiens, "Homo sapiens")) %>%
+    mutate(p_txt = format.pval(p.value, digits = 2, eps = 0.001),
+           p_txt = if_else(startsWith(p_txt, "<"), paste("p <", substring(p_txt, 2)), paste("p =", p_txt)),
+           strip = sprintf("%s\n%s (%s) = %.2f\n95%% CI %.2f–%.2f, %s",
+                           taxon, stat, str_replace_all(contrast, " - ", " / "),
+                           est, asymp.LCL, asymp.UCL, p_txt))
+  strip_labels = setNames(or$strip, or$taxon)
+  # y = Inf is undefined on a logit axis, so place n= a fixed logit step above
+  # the highest point (data or CI) in each panel
+  n_ex = obs %>% count(taxon, .data[[var]], name = "n_samples") %>%
+    left_join(bind_rows(obs %>% dplyr::select(taxon, y = prop_plot),
+                        est %>% dplyr::select(taxon, y = asymp.UCL)) %>%
+                group_by(taxon) %>% summarise(y_n = plogis(qlogis(max(y)) + 0.8)),
+              by = "taxon")
+
+  ggplot(obs, aes(x = .data[[var]], colour = .data[[var]])) +
+    geom_pointrange(data = est,
+                    aes(y = prob, ymin = asymp.LCL, ymax = asymp.UCL),
+                    position = position_nudge(x = 0.03),
+                    size = 0.5, linewidth = 1) +
+    # open circles: all samples, or only 0% / 100% samples when fill_observed
+    geom_point(data = if (fill_observed) filter(obs, !in_range) else obs,
+               aes(y = prop_plot),
+               shape = 21, size = 1.3, alpha = 0.5, position = jitter) +
+    # lightly filled circles: samples with reads observed (fill_observed only)
+    geom_point(data = if (fill_observed) filter(obs, in_range) else obs[0, ],
+               aes(y = prop_plot,
+                   colour = stage(.data[[var]], after_scale = alpha(colour, 0.5)),
+                   fill = after_scale(alpha(colour, 0.25))),
+               shape = 21, size = 1.3, position = jitter) +
+    geom_text(data = n_ex, aes(y = y_n, label = paste0("n=", n_samples)),
+              size = 3, show.legend = FALSE) +
+    facet_wrap(~ taxon, scales = "free_y", labeller = as_labeller(strip_labels)) +
+    scale_y_continuous(transform = "logit",
+                       breaks = c(1e-6, 1e-5, 1e-4, 1e-3, 0.01, 0.1, 0.5, 0.9, 0.99, 0.999, 0.9999),
+                       labels = \(x) paste0(sapply(signif(100 * x, 4), format, scientific = FALSE,
+                                                   drop0trailing = TRUE), "%"),
+                       expand = expansion(mult = c(0.05, 0.05))) +
+    scale_color_brewer(palette = "Dark2") +
+    labs(title = title,
+         caption = paste("Model estimate ± 95% CI as solid colors, observed samples as circles.",
+                         note,
+                         sep = "\n"),
+         x = xlab,
+         y = "Proportion of reads (logit scale)",
+         colour = colour_lab) +
+    theme_bw() +
+    theme(panel.grid.minor.x = element_blank())
+}
 ```
 
 # aggregate ASV reads
@@ -159,7 +238,7 @@ ggplot(sample_read_count_bk, aes(x = n_reads_class_chord_amph_ctrl / n_reads, fi
 
 # no zero inflation
 m0_amph_bk = glmmTMB(
-  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block + (1 | site),
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block * crispr + (1 | site),
   ziformula  = ~0,          # no zero-inflation probability
   family     = betabinomial(link = "logit"),
   data       = sample_read_count_bk
@@ -181,8 +260,29 @@ m1_amph_bk = glmmTMB(
   data       = sample_read_count_bk
 )
 
+m1a_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block * crispr + (1 | site),
+  ziformula  = ~block,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
+
+m1b_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block * crispr + (1 | site),
+  ziformula  = ~crispr,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
+
+m1c_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block * crispr + (1 | site),
+  ziformula  = ~ block + crispr,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
+
 m1_sapiens_bk = glmmTMB(
-  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block + (1 | site),
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block * crispr + (1 | site),
   ziformula  = ~1,          # constant zero-inflation probability
   family     = betabinomial(link = "logit"),
   data       = sample_read_count_bk
@@ -193,27 +293,33 @@ m1_sapiens_bk = glmmTMB(
 # You can also model zero-inflation as a function of covariates,
 # e.g. sequencing depth driving structural non-detection:
 m2_amph_bk = glmmTMB(
-  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block + (1 | site),
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block * crispr + (1 | site),
   ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
+m2a_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block * crispr + (1 | site),
+  ziformula  = ~log(n_reads) + block,     # lower-depth samples more likely structural zero
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_bk
+)
+m2b_amph_bk = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ block * crispr + (1 | site),
+  ziformula  = ~log(n_reads) + crispr,     # lower-depth samples more likely structural zero
   family     = betabinomial(link = "logit"),
   data       = sample_read_count_bk
 )
 
 m2_sapiens_bk = glmmTMB(
-  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block + (1 | site),
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block * crispr + (1 | site),
   ziformula  = ~log(n_reads),     # lower-depth samples more likely structural zero
   family     = betabinomial(link = "logit"),
   data       = sample_read_count_bk
 )
 
-m3_sapiens_bk <- glmmTMB(
-  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ block + (1 | site),
-  dispformula = ~block,      # phi varies by group
-  ziformula   = ~0,
-  family      = betabinomial(link = "logit"),
-  data        = sample_read_count_bk
-)
 
+summary(m2_amph_bk)
 ```
 
 ### model comparison
@@ -223,12 +329,16 @@ m3_sapiens_bk <- glmmTMB(
 
 (aic_comp_amph = AIC(m0_amph_bk,
                      m1_amph_bk,
-                     m2_amph_bk))
+                     m1a_amph_bk,
+                     m1b_amph_bk,
+                     m1c_amph_bk,
+                     m2_amph_bk,
+                     m2a_amph_bk,
+                     m2b_amph_bk))
 
 (aic_comp_sapiens = AIC(m0_sapiens_bk,
                         m1_sapiens_bk,
-                        m2_sapiens_bk,
-                        m3_sapiens_bk))
+                        m2_sapiens_bk))
 
 ```
 
@@ -236,7 +346,6 @@ m3_sapiens_bk <- glmmTMB(
 ```{r}
 # Simulate residuals -- use more simulations for stable results
 sim_res <- simulateResiduals(m1_amph_bk, n = 1000, seed = 42)
-sim_res <- simulateResiduals(m0_sapiens_bk, n = 1000, seed = 42)
 
 # Omnibus plot: QQ plot + residuals vs fitted
 # Look for: S-shaped QQ = distributional misfit
@@ -256,12 +365,27 @@ plotResiduals(sim_res, form = sample_read_count_bk$n_reads)   # sequencing depth
 ```
 ### hypothesis testing
 ```{r}
-em_amph_bk = emmeans(m1_amph_bk, ~ block * crispr)
-em_sapiens_bk = emmeans(m0_sapiens_bk, ~ block * crispr)
+summary(m1_amph_bk)
+summary(m0_sapiens_bk)
+
+em_amph_bk = emmeans(m1_amph_bk, ~ crispr| block)
+em_sapiens_bk = emmeans(m0_sapiens_bk, ~ crispr | block)
 
 # response scale
 em_amph_bk_resp = emmeans(m1_amph_bk, ~ block * crispr, type = "response")
 em_sapiens_bk_resp = emmeans(m0_sapiens_bk, ~ block * crispr, type = "response")
+
+# odds ratios
+or_amph_bk <- pairs(em_amph_bk, type = "response", reverse = TRUE)
+or_sapiens_bk <- pairs(em_sapiens_bk, type = "response", reverse = TRUE)
+
+# marginalized over crispr
+em_amph_bk_group = emmeans(m1_amph_bk, ~ block, type = "response")
+or_amph_bk_group <- pairs(em_amph_bk_group, type = "response", reverse = TRUE)
+
+em_sapiens_bk_group = emmeans(m0_sapiens_bk, ~ block, type = "response")
+or_sapiens_bk_group <- pairs(em_sapiens_bk_group, type = "response", reverse = TRUE)
+
 ```
 
 #### amphibians
@@ -446,12 +570,20 @@ plotResiduals(sim_res, form = sample_read_count_nb$n_reads)   # sequencing depth
 ```
 ### hypothesis testing
 ```{r}
-em_amph = emmeans(m1_amph, ~ crispr)
+em_amph = emmeans(m0_amph, ~ crispr)
 em_sapiens = emmeans(m0_sapiens, ~ crispr)
 
 # response scale
-em_amph_resp = emmeans(m1_amph, ~ crispr, type = "response")
+em_amph_resp = emmeans(m0_amph, ~ crispr, type = "response")
 em_sapiens_resp = emmeans(m0_sapiens, ~ crispr, type = "response")
+
+# ratios
+or_amph <- pairs(em_amph, type = "response", reverse = TRUE)
+or_sapiens <- pairs(em_sapiens, type = "response", reverse = TRUE)
+
+# summary
+summary(m0_amph)
+summary(m0_sapiens)
 ```
 
 #### amphibians
@@ -583,6 +715,8 @@ m3_sapiens_ex <- glmmTMB(
   data        = sample_read_count_ex
 )
 
+summary(m1_amph_ex)
+
 ```
 
 ### model comparison
@@ -599,10 +733,11 @@ m3_sapiens_ex <- glmmTMB(
                         m2_sapiens_ex,
                         m3_sapiens_ex))
 ```
+
 ### model checks
 ```{r}
 # Simulate residuals -- use more simulations for stable results
-sim_res <- simulateResiduals(m1_amph_ex, n = 1000, seed = 42)
+sim_res <- simulateResiduals(m0_amph_ex, n = 1000, seed = 42)
 
 # Omnibus plot: QQ plot + residuals vs fitted
 # Look for: S-shaped QQ = distributional misfit
@@ -624,21 +759,39 @@ plotResiduals(sim_res, form = sample_read_count_ex$n_reads)   # sequencing depth
 
 ### hypothesis testing
 ```{r}
-em_amph_ex = emmeans(m1_amph_ex, ~ extraction_type * passive_active_rz)
+em_amph_ex = emmeans(m0_amph_ex, ~ extraction_type * passive_active_rz)
 em_sapiens_ex = emmeans(m0_sapiens_ex, ~ extraction_type * passive_active_rz)
 
 # response scale
-em_amph_ex_resp = emmeans(m1_amph_ex, ~ extraction_type * passive_active_rz, type = "response")
+em_amph_ex_resp = emmeans(m0_amph_ex, ~ extraction_type * passive_active_rz, type = "response")
 em_sapiens_ex_resp = emmeans(m0_sapiens_ex, ~ extraction_type * passive_active_rz, type = "response")
+
+# ratios
+or_em_amph_ex = pairs(em_amph_ex_resp, type = "response", reverse = TRUE)
+or_em_sapiens_ex = pairs(em_sapiens_ex_resp, type = "response", reverse = TRUE)
+
+# marginalized
+em_amph_ex_resp_ext = emmeans(m0_amph_ex, ~ extraction_type, type = "response")
+em_sapiens_ex_resp_ext = emmeans(m0_sapiens_ex, ~  extraction_type, type = "response")
+or_em_amph_ex_ext = pairs(em_amph_ex_resp_ext, type = "response")
+or_em_sapiens_ex_ext = pairs(em_sapiens_ex_resp_ext, type = "response")
+
+em_amph_ex_resp_pas = emmeans(m0_amph_ex, ~ passive_active_rz, type = "response")
+em_sapiens_ex_resp_pas = emmeans(m0_sapiens_ex, ~  passive_active_rz, type = "response")
+or_em_amph_ex_pas = pairs(em_amph_ex_resp_pas, type = "response", reverse = TRUE)
+or_em_sapiens_ex_pas = pairs(em_sapiens_ex_resp_pas, type = "response", reverse = TRUE)
+
+summary(m0_amph_ex)
+summary(m0_sapiens_ex)
 ```
 
 #### amphibians
 ```{r}
-car::Anova(m1_amph_ex,
+car::Anova(m0_amph_ex,
            type = "III")
 # effect of extraction type within filtration group
-summary(emmeans(m1_amph_ex, ~ passive_active_rz, type = "response"))
-summary(emmeans(m1_amph_ex, ~ extraction_type, type = "response"))
+summary(emmeans(m0_amph_ex, ~ passive_active_rz, type = "response"))
+summary(emmeans(m0_amph_ex, ~ extraction_type, type = "response"))
 contrast(em_amph_ex, "pairwise", by = "passive_active_rz")
 
 contrast(em_amph_ex, "pairwise", by = "extraction_type")
@@ -683,7 +836,7 @@ p_ex_filt_sapiens = as.data.frame(em_sapiens_ex_resp) %>%
              ymin = asymp.LCL, ymax = asymp.UCL)) +
   geom_pointrange(position = position_dodge(width = 0.3)) +
   scale_y_continuous(labels = scales::percent) +
-  labs(y = "Estimated proportion of amphibian reads",
+  labs(y = "Estimated proportion of human reads",
        x = "Extraction type", color = "Filtration type",
        title = "Proportion of 16S human reads vs. Extraction & Filtration") +
   theme_bw()
@@ -693,6 +846,44 @@ ggsave(here("analysis", "methods", "output", "figures", "contrast_16s_ex_filt_sa
        width = 6, height = 8)
 
 p_ex_filt_sapiens
+```
+
+#### data + estimates
+```{r}
+# One plot per factor, each using the marginal (averaged) estimates from the
+# selected models (m0_amph_ex, m0_sapiens_ex). emmeans averages over the levels
+# of the other factor with equal weight, so with the interaction in the model
+# these are "average effects" across the other factor's levels.
+# Observed points are all samples in each level, pooled over the other factor.
+# Zeros (and all-reads samples) are plotted at 0.5 / n_reads, as in the 12S plot.
+obs_ex = sample_read_count_ex %>%
+  transmute(site, extraction_type, passive_active_rz, n_reads,
+            Amphibia       = n_reads_class_chord_amph_ctrl,
+            `Homo sapiens` = n_reads_class_chord_sapien) %>%
+  pivot_longer(c(Amphibia, `Homo sapiens`), names_to = "taxon", values_to = "n_taxon") %>%
+  mutate(prop = n_taxon / n_reads,
+         prop_plot = pmin(pmax(prop, 0.5 / n_reads), 1 - 0.5 / n_reads))
+
+p_ex_ext_data = plot_marginal_data("extraction_type",
+                                   em_amph_ex_resp_ext, em_sapiens_ex_resp_ext,
+                                   or_em_amph_ex_ext, or_em_sapiens_ex_ext,
+                                   title = "16S reads by extraction type",
+                                   xlab = "Extraction type", colour_lab = "Extraction\ntype",
+                                   obs = obs_ex)
+p_ex_pas_data = plot_marginal_data("passive_active_rz",
+                                   em_amph_ex_resp_pas, em_sapiens_ex_resp_pas,
+                                   or_em_amph_ex_pas, or_em_sapiens_ex_pas,
+                                   title = "16S reads by filtration type",
+                                   xlab = "Filtration type", colour_lab = "Filtration\ntype",
+                                   obs = obs_ex)
+
+ggsave(here("analysis", "methods", "output", "figures", "data_contrast_16s_ex_extraction.png"),
+       p_ex_ext_data, width = 8, height = 6)
+ggsave(here("analysis", "methods", "output", "figures", "data_contrast_16s_ex_filtration.png"),
+       p_ex_pas_data, width = 8, height = 6)
+
+p_ex_ext_data
+p_ex_pas_data
 ```
 
 ## gene
@@ -747,6 +938,22 @@ m1_sapiens_g = glmmTMB(
   data       = sample_read_count_g
 )
 
+# zero inflation by gene
+m1a_amph_g = glmmTMB(
+  cbind(n_reads_class_chord_amph_ctrl, n_reads - n_reads_class_chord_amph_ctrl) ~ gene + (1 | site),
+  ziformula  = ~ gene,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_g
+)
+
+m1a_sapiens_g = glmmTMB(
+  cbind(n_reads_class_chord_sapien, n_reads - n_reads_class_chord_sapien) ~ gene + (1 | site),
+  ziformula  = ~ gene,          # constant zero-inflation probability
+  family     = betabinomial(link = "logit"),
+  data       = sample_read_count_g
+)
+
+
 
 
 # You can also model zero-inflation as a function of covariates,
@@ -782,10 +989,12 @@ m3_sapiens_g <- glmmTMB(
 
 (aic_comp_amph = AIC(m0_amph_g,
                      m1_amph_g,
+                     m1a_amph_g,
                      m2_amph_g))
 
 (aic_comp_sapiens = AIC(m0_sapiens_g,
                         m1_sapiens_g,
+                        m1a_sapiens_g,
                         m2_sapiens_g,
                         m3_sapiens_g))
 
@@ -794,7 +1003,7 @@ m3_sapiens_g <- glmmTMB(
 ### model checks
 ```{r}
 # Simulate residuals -- use more simulations for stable results
-sim_res <- simulateResiduals(m0_sapiens_g, n = 1000, seed = 42)
+sim_res <- simulateResiduals(m0_amph_g, n = 1000, seed = 42)
 
 # Omnibus plot: QQ plot + residuals vs fitted
 # Look for: S-shaped QQ = distributional misfit
@@ -812,6 +1021,7 @@ plotResiduals(sim_res, form = sample_read_count_g$gene)
 plotResiduals(sim_res, form = sample_read_count_g$n_reads)   # sequencing depth
 
 ```
+
 ### hypothesis testing
 ```{r}
 em_amph_g = emmeans(m1_amph_g, ~ gene)
@@ -820,6 +1030,13 @@ em_sapiens_g = emmeans(m0_sapiens_g, ~ gene)
 # response scale
 em_amph_g_resp = emmeans(m1_amph_g, ~ gene, type = "response")
 em_sapiens_g_resp = emmeans(m0_sapiens_g, ~ gene, type = "response")
+
+# ratio
+or_amph_g_resp = pairs(em_amph_g_resp, type = "response", reverse = TRUE)
+or_sapiens_g_resp = pairs(em_sapiens_g_resp, type = "response", reverse = TRUE)
+
+summary(m1_amph_g)
+summary(m0_sapiens_g)
 ```
 
 #### amphibians
@@ -872,7 +1089,148 @@ p_gene_sapiens
 
 ```
 
+#### data + estimates
+```{r}
+# Same layout as the extraction kit data + estimates plots (plot_marginal_data, defined under "plotting helpers"),
+# using the selected models (m1_amph_g, m0_sapiens_g).
+obs_g = sample_read_count_g %>%
+  transmute(site, gene, n_reads,
+            Amphibia       = n_reads_class_chord_amph_ctrl,
+            `Homo sapiens` = n_reads_class_chord_sapien) %>%
+  pivot_longer(c(Amphibia, `Homo sapiens`), names_to = "taxon", values_to = "n_taxon") %>%
+  mutate(prop = n_taxon / n_reads,
+         prop_plot = pmin(pmax(prop, 0.5 / n_reads), 1 - 0.5 / n_reads))
 
+# m1_amph_g is zero-inflated, so its default emmeans (em_amph_g_resp) are the
+# conditional mean, which leaves out the structural zeros. Plot the overall mean,
+# (1 - p_zero) * conditional mean, instead. CIs are built on the logit scale so
+# they stay within 0-100%; the contrast becomes a ratio of mean proportions.
+em_amph_g_all = regrid(emmeans(m1_amph_g, ~ gene, component = "response"), transform = "logit")
+em_amph_g_all_resp = summary(em_amph_g_all, type = "response")
+ratio_amph_g_all = pairs(regrid(em_amph_g_all, transform = "log"), reverse = TRUE, type = "response")
+
+p_gene_data = plot_marginal_data("gene",
+                                 em_amph_g_all_resp, em_sapiens_g_resp,
+                                 ratio_amph_g_all, or_sapiens_g_resp,
+                                 title = "Reads by gene",
+                                 xlab = "Gene", colour_lab = "Gene",
+                                 obs = obs_g,
+                                 fill_observed = TRUE,
+                                 note = paste("Amphibian estimate is the overall mean from m1_amph_g, including structural zeros.",
+                                              "Filled circles: reads observed. Open circles: 0% / 100% samples, plotted at 0.5 reads.", sep = "\n"))
+
+ggsave(here("analysis", "methods", "output", "figures", "data_contrast_gene.png"),
+       p_gene_data, width = 8, height = 6)
+
+p_gene_data
+```
+
+
+
+### detection probability
+```{r}
+# Probability that a sample yields at least one amphibian read, from m1_amph_g:
+#   P(detect) = P(not structural zero) x P(detect | not structural zero)
+#             = (1 - pi) x (1 - P_bb(0 | n, mu, phi))
+# pi:  zero-inflation probability (constant across genes, ziformula = ~1)
+# mu:  conditional mean proportion for the gene
+# phi: beta-binomial dispersion (sigma(m1_amph_g))
+# P_bb(0) = B(mu*phi, (1 - mu)*phi + n) / B(mu*phi, (1 - mu)*phi) for a sample of n reads.
+#
+# Uncertainty from both terms: the conditional, zero-inflation and dispersion
+# parameters are drawn jointly from their estimated sampling distribution
+# (multivariate normal on the link scale, using the full covariance, so their
+# correlations are kept), and the 2.5% / 97.5% quantiles of each quantity are taken.
+# Estimates are the plug-in values at the fitted parameters, at a typical site
+# (random effect = 0).
+#
+# Detection depends on read depth, and depth differs by gene, so two versions:
+#   observed depths: averaged over each gene's own samples (comparable to the
+#                    observed detection rate)
+#   common depth:    both genes at the overall median depth (gene effect alone)
+
+set.seed(42)
+n_draws = 4000
+par_hat = m1_amph_g$fit$par
+par_draws = MASS::mvrnorm(n_draws, mu = par_hat, Sigma = m1_amph_g$sdr$cov.fixed)
+i_beta = which(names(par_hat) == "beta")
+i_zi   = which(names(par_hat) == "betazi")
+i_disp = which(names(par_hat) == "betadisp")
+
+genes = sort(unique(sample_read_count_g$gene))
+X_gene = model.matrix(~ gene, data.frame(gene = genes))   # one row per gene
+
+# beta-binomial probability of zero successes in n trials
+p0_bb = \(n, mu, phi) exp(lbeta(mu * phi, (1 - mu) * phi + n) - lbeta(mu * phi, (1 - mu) * phi))
+
+# par: one row per parameter draw; depths: named list of read depths by gene
+detect_probs = function(par, depths) {
+  mu  = plogis(par[, i_beta, drop = FALSE] %*% t(X_gene))   # draws x genes
+  phi = exp(par[, i_disp])
+  p_present = 1 - plogis(par[, i_zi])
+  map_dfr(seq_along(genes), \(g) {
+    p_det_cond = rowMeans(matrix(sapply(depths[[genes[g]]], \(n) 1 - p0_bb(n, mu[, g], phi)),
+                                 nrow = nrow(par)))
+    tibble(draw = seq_len(nrow(par)), gene = genes[g],
+           `P(not structural zero)`          = p_present,
+           `P(detect | not structural zero)` = p_det_cond,
+           `P(detect)`                       = p_present * p_det_cond)
+  })
+}
+
+detection_summary = function(depths, depth_label) {
+  est = detect_probs(matrix(par_hat, nrow = 1), depths) %>%
+    dplyr::select(-draw) %>%
+    pivot_longer(-gene, names_to = "quantity", values_to = "estimate")
+  draws = detect_probs(par_draws, depths)
+  ci = draws %>%
+    dplyr::select(-draw) %>%
+    pivot_longer(-gene, names_to = "quantity") %>%
+    group_by(gene, quantity) %>%
+    summarise(lcl = quantile(value, 0.025), ucl = quantile(value, 0.975), .groups = "drop")
+  by_gene = left_join(est, ci, by = c("gene", "quantity")) %>%
+    mutate(depth = depth_label,
+           quantity = factor(quantity, levels = c("P(not structural zero)",
+                                                  "P(detect | not structural zero)",
+                                                  "P(detect)"))) %>%
+    arrange(quantity, gene)
+
+  # 16S vs 12S contrasts on P(detect)
+  wide = \(d) d %>% dplyr::select(draw, gene, p = `P(detect)`) %>% pivot_wider(names_from = gene, values_from = p)
+  w_est = wide(detect_probs(matrix(par_hat, nrow = 1), depths))
+  w_draw = wide(draws)
+  contrast = tibble(depth = depth_label,
+                    contrast = c(paste(genes[2], "-", genes[1]), paste(genes[2], "/", genes[1])),
+                    estimate = c(w_est[[genes[2]]] - w_est[[genes[1]]], w_est[[genes[2]]] / w_est[[genes[1]]]),
+                    lcl = c(quantile(w_draw[[genes[2]]] - w_draw[[genes[1]]], 0.025),
+                            quantile(w_draw[[genes[2]]] / w_draw[[genes[1]]], 0.025)),
+                    ucl = c(quantile(w_draw[[genes[2]]] - w_draw[[genes[1]]], 0.975),
+                            quantile(w_draw[[genes[2]]] / w_draw[[genes[1]]], 0.975)))
+  list(by_gene = by_gene, contrast = contrast)
+}
+
+depths_obs = split(sample_read_count_g$n_reads, sample_read_count_g$gene)
+depth_common = median(sample_read_count_g$n_reads)
+depths_common = setNames(rep(list(depth_common), length(genes)), genes)
+
+det_obs = detection_summary(depths_obs, "observed depths")
+det_common = detection_summary(depths_common, paste0("common depth (", format(depth_common, big.mark = ","), " reads)"))
+
+# observed share of samples with any amphibian reads, for comparison
+det_observed = sample_read_count_g %>%
+  group_by(gene) %>%
+  summarise(n_samples = n(),
+            n_detected = sum(n_reads_class_chord_amph_ctrl > 0),
+            observed_detection = n_detected / n_samples,
+            median_depth = median(n_reads))
+
+(det_amph_g = bind_rows(det_obs$by_gene, det_common$by_gene) %>%
+    relocate(depth) %>%
+    mutate(across(c(estimate, lcl, ucl), \(x) round(x, 3))))
+(det_amph_g_contrast = bind_rows(det_obs$contrast, det_common$contrast) %>%
+    mutate(across(c(estimate, lcl, ucl), \(x) round(x, 3))))
+det_observed
+```
 
 ## filter size
 ### model fitting
@@ -996,8 +1354,29 @@ em_amph_fii = emmeans(m1_amph_fii, ~ gene_filt * filter_size_um_rz)
 em_sapiens_fii = emmeans(m0_sapiens_fii, ~ gene_filt * filter_size_um_rz)
 
 # response scale
-em_amph_fii_resp = emmeans(m1_amph_fii, ~ gene_filt * filter_size_um_rz, type = "response")
+em_amph_fii_resp = emmeans(m1_amph_fii, ~ filter_size_um_rz | gene_filt, type = "response")
 em_sapiens_fii_resp = emmeans(m0_sapiens_fii, ~ gene_filt * filter_size_um_rz, type = "response")
+
+# emmeans
+emmeans(m1_amph_fii, ~ filter_size_um_rz, type = "response")
+
+# ratios
+or_amph_fii_resp = pairs(em_amph_fii_resp, type = "response", by = "gene_filt")
+
+or_df <- as.data.frame(
+  summary(or_amph_fii_resp, infer = TRUE),
+  destroy.annotations = TRUE
+)
+
+or_df_report <- subset(
+  or_df,
+  !(gene_filt == "12S.Active" & grepl("rz5", contrast))
+)
+
+print(or_df_report, digits = 4)
+
+# summary
+summary(m1_amph_fii)
 ```
 
 #### amphibians
@@ -1136,9 +1515,39 @@ sample_asv_count_nb %>%
   print(n = Inf)
 
 em_amph_asv = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt)
+emm_link = emmeans(m_asv_nb, ~ gene_filt | filter_size_um_rz)
 
 # response scale
 em_amph_asv_resp = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt, type = "response")
+
+em_df <- as.data.frame(
+  em_amph_asv_resp,
+  destroy.annotations = TRUE
+)
+
+print(em_df, digits = 4)
+
+# ratios
+ratio_filter <- pairs(
+  em_amph_asv,
+  by = "filter_size_um_rz",
+  type = "response",
+  reverse = TRUE
+)
+
+ratio_filter_df <- as.data.frame(
+  summary(ratio_filter, infer = TRUE),
+  destroy.annotations = TRUE
+)
+
+ratio_filter_report <- subset(
+  ratio_filter_df,
+  !(filter_size_um_rz == "5" & grepl("12S", contrast, fixed = TRUE))
+)
+
+print(ratio_filter_report, digits = 4)
+
+summary(m_asv_nb)
 ```
 
 ```{r}
@@ -1178,6 +1587,188 @@ ggsave(here("analysis", "methods", "output", "figures", "contrast_gene_filtratio
        p_gene_filt_pore,
        width = 6, height = 8)
 
+```
+
+#### data + estimates
+```{r}
+# observed counts as a centred beeswarm, computed by hand: within each
+# gene_filt x filter size slot, samples sharing a count sit side by side in a row,
+# so row width shows how many samples share that count (y stays exact).
+# Spacing shrinks for long rows so every row stays inside its own slot.
+# Within each slot the data sit left of centre and the estimate to the right,
+# so error bars never cover observations.
+slot_width = 0.75                                   # total width shared by the 3 filter sizes
+filter_levels = sort(unique(sample_asv_count_nb$filter_size_um_rz))
+slot_offset = (seq_along(filter_levels) - (length(filter_levels) + 1) / 2) *
+  slot_width / length(filter_levels)
+names(slot_offset) = filter_levels
+slot_share = slot_width / length(filter_levels)     # width of one filter-size slot
+row_max = 0.8 * slot_share                          # max width of a data row
+data_shift = 0 * slot_share                     # data rows: left of slot centre
+est_shift = 0.1 * slot_share                       # estimates: right of the data
+
+slot_x = \(gene_filt, filter_size) as.numeric(gene_filt) + slot_offset[filter_size]
+
+obs_asv = sample_asv_count_nb %>%
+  group_by(gene_filt, filter_size_um_rz, n_asv_controlled_class_xamph) %>%
+  mutate(k = n(), i = row_number(),
+         spacing = pmin(0.02, row_max / k),
+         x = slot_x(gene_filt, filter_size_um_rz) + data_shift + (i - (k + 1) / 2) * spacing) %>%
+  ungroup()
+
+est_asv = plot_data %>% mutate(x = slot_x(gene_filt, filter_size_um_rz) + est_shift)
+
+n_asv = sample_asv_count_nb %>%
+  count(gene_filt, filter_size_um_rz, name = "n_samples") %>%
+  mutate(x = slot_x(gene_filt, filter_size_um_rz))
+
+p_asv_data = ggplot(obs_asv, aes(x = x, color = filter_size_um_rz)) +
+  geom_pointrange(data = est_asv,
+                  aes(y = response, ymin = asymp.LCL, ymax = asymp.UCL),
+                  size = 0.5, linewidth = 1) +
+  geom_point(aes(y = n_asv_controlled_class_xamph, color = filter_size_um_rz),
+             shape = 21, size = 1.3, alpha = 0.5) +
+  geom_text(data = n_asv, aes(y = 8, label = paste0("n=", n_samples)),
+            size = 3, show.legend = FALSE) +
+  scale_x_continuous(breaks = seq_along(levels(sample_asv_count_nb$gene_filt)),
+                     labels = levels(sample_asv_count_nb$gene_filt)) +
+  scale_y_sqrt(breaks = c(0, 0.25, 1, 2, 4, 7), labels = as.character) +
+  scale_color_brewer(palette = "Dark2") +
+  labs(title = "Amphibian ASVs by gene & filtration",
+       caption = "Model estimate ± 95% CI as solid colors, observed samples as circles.",
+       x = "Gene & filtration method",
+       y = "# of controlled amphibian ASVs per sample",
+       colour = "Filter pore\nsize [um]") +
+  theme_bw() +
+  theme(panel.grid.minor.x = element_blank())
+
+ggsave(here("analysis", "methods", "output", "figures", "data_contrast_gene_filtration_pore.png"),
+       p_asv_data,
+       width = 8, height = 6)
+
+p_asv_data
+```
+
+# effect size summary
+```{r}
+# One row per contrast, each taken from the model selected for that hypothesis.
+# pairs(..., reverse = TRUE) gives later level / earlier level (e.g. TRUE / FALSE).
+# The ratio is an odds ratio for read proportions, a rate ratio for ASV counts.
+#   label: optional replacement for the contrast text (e.g. "CRISPR / none" instead of "TRUE / FALSE")
+# display names for the conditioning ("by") variables in row labels
+by_names = c(block = "block", crispr = "CRISPR", passive_active_rz = "filtration", gene_filt = "")
+
+tidy_pairs = function(emm, by = NULL, taxon, hypothesis, model, label = NULL) {
+  d = as_tibble(as.data.frame(summary(pairs(emm, by = by, reverse = TRUE), infer = TRUE)))
+  d$condition = if (is.null(by)) "" else
+    apply(d[by], 1, \(r) {
+      v = recode(trimws(r), "TRUE" = "yes", "FALSE" = "no")
+      v = str_replace(v, "^(1[26]S)\\.", "\\1, ")           # gene_filt: "16S.Active" -> "16S, Active"
+      paste(str_trim(paste(by_names[by], v)), collapse = ", ")
+    })
+  d %>%
+    rename(any_of(c(lcl = "asymp.LCL", ucl = "asymp.UCL", lcl = "lower.CL", ucl = "upper.CL"))) %>%
+    mutate(contrast = as.character(contrast) %>%
+             str_remove_all("filter_size_um_rz") %>%
+             str_replace_all(" - ", " / "),
+           contrast = if (is.null(label)) contrast else label,
+           contrast = if_else(str_detect(contrast, "^[0-9.]+ / [0-9.]+$"),
+                              paste(contrast, "µm"), contrast)) %>%
+    transmute(hypothesis, taxon, model, contrast, condition,
+              log_ratio = estimate, SE, lcl, ucl, p.value)
+}
+
+effects_all = bind_rows(
+  # 16S block & CRISPR
+  tidy_pairs(emmeans(m1_amph_bk, ~ crispr | block), "block",
+             "Amphibia", "16S: CRISPR", "m1_amph_bk", label = "CRISPR / none"),
+  tidy_pairs(emmeans(m0_sapiens_bk, ~ crispr | block), "block",
+             "Homo sapiens", "16S: CRISPR", "m0_sapiens_bk", label = "CRISPR / none"),
+  tidy_pairs(emmeans(m1_amph_bk, ~ block | crispr), "crispr",
+             "Amphibia", "16S: block", "m1_amph_bk", label = "block / none"),
+  tidy_pairs(emmeans(m0_sapiens_bk, ~ block | crispr), "crispr",
+             "Homo sapiens", "16S: block", "m0_sapiens_bk", label = "block / none"),
+  # 12S CRISPR
+  tidy_pairs(emmeans(m0_amph, ~ crispr), NULL,
+             "Amphibia", "12S: CRISPR", "m0_amph", label = "CRISPR / none"),
+  tidy_pairs(emmeans(m0_sapiens, ~ crispr), NULL,
+             "Homo sapiens", "12S: CRISPR", "m0_sapiens", label = "CRISPR / none"),
+  # extraction kit (within filtration type)
+  tidy_pairs(emmeans(m1_amph_ex, ~ extraction_type | passive_active_rz), "passive_active_rz",
+             "Amphibia", "16S: extraction kit", "m1_amph_ex"),
+  tidy_pairs(emmeans(m0_sapiens_ex, ~ extraction_type | passive_active_rz), "passive_active_rz",
+             "Homo sapiens", "16S: extraction kit", "m0_sapiens_ex"),
+  # gene
+  tidy_pairs(emmeans(m1_amph_g, ~ gene), NULL,
+             "Amphibia", "Gene", "m1_amph_g"),
+  tidy_pairs(emmeans(m0_sapiens_g, ~ gene), NULL,
+             "Homo sapiens", "Gene", "m0_sapiens_g"),
+  # filter size (within gene x filtration type)
+  tidy_pairs(emmeans(m1_amph_fii, ~ filter_size_um_rz | gene_filt), "gene_filt",
+             "Amphibia", "Filter size", "m1_amph_fii"),
+  tidy_pairs(emmeans(m0_sapiens_fii, ~ filter_size_um_rz | gene_filt), "gene_filt",
+             "Homo sapiens", "Filter size", "m0_sapiens_fii"),
+  # ASV richness (rate ratio)
+  tidy_pairs(emmeans(m_asv_nb, ~ filter_size_um_rz | gene_filt), "gene_filt",
+             "Amphibia", "Filter size", "m_asv_nb")
+) %>%
+  mutate(metric = if_else(model == "m_asv_nb", "ASV count", "Read proportion"),
+         ratio = exp(log_ratio), ratio_lcl = exp(lcl), ratio_ucl = exp(ucl),
+         significant = p.value < 0.05,
+         row_label = if_else(condition == "", contrast, paste0(contrast, "  [", condition, "]")),
+         hypothesis = fct_inorder(hypothesis),
+         condition = fct_inorder(condition))
+
+# contrasts with a cell of all zeros have unbounded SEs and would swamp the axis
+(effects_dropped = effects_all %>% filter(!is.finite(SE) | SE > 10))
+effects_plot = effects_all %>% filter(is.finite(SE), SE <= 10)
+
+effects_plot %>%
+  dplyr::select(metric, hypothesis, taxon, row_label, ratio, ratio_lcl, ratio_ucl, p.value, model) %>%
+  print(n = Inf)
+
+# shared forest-plot layout: one row per contrast, one facet row per `facet`
+plot_effects = function(d, y, facet, title, xlab) {
+  ggplot(d, aes(x = ratio, xmin = ratio_lcl, xmax = ratio_ucl,
+                y = .data[[y]], colour = taxon)) +
+    geom_vline(xintercept = 1, linetype = 2, colour = "grey40") +
+    geom_pointrange(aes(shape = significant), fill = "white",
+                    position = position_dodge(width = 0.6), size = 0.4) +
+    facet_grid(rows = vars(.data[[facet]]), scales = "free_y", space = "free_y") +
+    scale_x_log10(labels = \(x) signif(x, 2)) +
+    scale_shape_manual(values = c(`TRUE` = 16, `FALSE` = 21),
+                       labels = c(`TRUE` = "p < 0.05", `FALSE` = "p ≥ 0.05")) +
+    scale_colour_manual(values = c(Amphibia = "#1b9e77", `Homo sapiens` = "#7570b3")) +
+    labs(title = title, x = xlab, y = NULL, colour = "Taxon", shape = NULL) +
+    theme_bw() +
+    theme(strip.text.y = element_text(angle = 0, hjust = 0),
+          legend.position = "bottom")
+}
+
+# read proportions (odds ratios)
+p_effects_reads = plot_effects(effects_plot %>% filter(metric == "Read proportion"),
+                               y = "row_label", facet = "hypothesis",
+                               title = "Effect sizes: proportion of reads",
+                               xlab = "Odds ratio (log scale) with 95% CI")
+
+ggsave(here("analysis", "methods", "output", "figures", "effect_size_summary_reads.png"),
+       p_effects_reads,
+       width = 9, height = 8)
+
+p_effects_reads
+
+# amphibian ASV counts (rate ratios), faceted by gene & filtration type
+p_effects_asv = plot_effects(effects_plot %>% filter(metric == "ASV count"),
+                             y = "contrast", facet = "condition",
+                             title = "Effect sizes: amphibian ASVs per sample (filter size)",
+                             xlab = "Rate ratio (log scale) with 95% CI") +
+  guides(colour = "none")
+
+ggsave(here("analysis", "methods", "output", "figures", "effect_size_summary_asv.png"),
+       p_effects_asv,
+       width = 7, height = 4)
+
+p_effects_asv
 ```
 
 # Descriptive read proportions
@@ -1325,7 +1916,7 @@ p_taxa_gene_ctrl_prop
 # p_taxa_gene_ctrl_count
 
 ```
-# now by study system
+## by study system
 ```{r}
 # 1. proportions per replicate
 replicate_props_co = sample_taxa_group |>
@@ -1430,7 +2021,7 @@ ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_pr
 p_taxa_gene_ctrl_prop_co
 
 ```
-# now by pore size
+## by pore size
 ```{r}
 # 1. proportions per replicate
 replicate_props_fi = sample_taxa_group |>
@@ -1533,7 +2124,7 @@ ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_pr
 p_taxa_gene_ctrl_prop_fi
 
 ```
-# now by active passive
+## by active passive
 ```{r}
 # 1. proportions per replicate
 replicate_props_ap = sample_taxa_group |>
@@ -1633,155 +2224,5 @@ ggsave(here("analysis", "methods", "output", "figures", "reads_taxa_gene_ctrl_pr
 
 
 p_taxa_gene_ctrl_prop_ap
-
-```
-
-# lolipop
-```{r}
-p_slope <- ggplot(taxa_long,
-                  aes(x = control_status, y = proportion,
-                      color = taxa_group, group = taxa_group)) +
-  geom_line(linewidth = 0.8, alpha = 0.8) +
-  geom_point(size = 2.5) +
-  facet_wrap(~ gene, nrow = 1) +
-  scale_y_continuous(labels = scales::percent) +
-  # scale_color_brewer(palette = "Paired") +
-  labs(
-    title = "Shift in taxonomic group proportions after control, by gene",
-    x     = NULL,
-    y     = "Proportion of reads",
-    color = "Taxonomic group"
-  ) +
-  theme_bw() +
-  theme(
-    strip.text      = element_text(face = "bold", size = 11),
-    axis.text.x     = element_text(size = 10),
-    legend.position = "bottom"
-  )
-
-# ggsave(
-#   here("analysis", "methods", "output", "figures", "taxa_slope.png"),
-#   p_slope,
-#   width = 10, height = 6
-# )
-
-p_slope
-
-```
-
-```{r}
-# Reshape to long format with a control_status column
-taxa_long <- sample_taxa_group_agg %>%
-  dplyr::select(gene, taxa_group,
-         Before = group_read_proportion,
-         After  = group_read_ctrl_proportion) %>%
-  pivot_longer(
-    cols      = c(Before, After),
-    names_to  = "control_status",
-    values_to = "proportion"
-  ) %>%
-  mutate(
-    control_status = factor(control_status, levels = c("Before", "After")),
-    taxa_group     = reorder(taxa_group, proportion, FUN = sum)
-  )
-
-p_facet_bars <- ggplot(taxa_long,
-                       aes(x = control_status, y = proportion, fill = taxa_group)) +
-  geom_bar(stat = "identity", position = "fill") +
-  facet_wrap(~ gene, nrow = 1) +          # one panel per gene, side by side
-  scale_y_continuous(labels = scales::percent) +
-  # scale_fill_brewer(palette = "Paired") +
-  labs(
-    title = "Taxonomic group proportions before and after control, by gene",
-    x     = NULL,
-    y     = "Proportion of reads",
-    fill  = "Taxonomic group"
-  ) +
-  theme_bw() +
-  theme(
-    strip.text   = element_text(face = "bold", size = 11),
-    axis.text.x  = element_text(size = 10),
-    legend.position = "bottom"
-  )
-
-# ggsave(
-#   here("analysis", "methods", "output", "figures", "taxa_facet_bars.png"),
-#   p_facet_bars,
-#   width = 10, height = 7
-# )
-
-p_facet_bars
-
-
-```
-
-#sankey
-```{r}
-library(ggalluvial)
-library(tidyr)
-
-# --- Reshape data for 3-axis alluvial ---
-# Gene → Taxa Group → Control Status (Retained / Filtered)
-sankey_data <- sample_taxa_group_agg %>%
-  mutate(reads_filtered = group_reads - group_reads_ctrl) %>%
-  dplyr::select(gene, taxa_group,
-         Retained = group_reads_ctrl,
-         Filtered = reads_filtered) %>%
-  pivot_longer(
-    cols      = c(Retained, Filtered),
-    names_to  = "control_status",
-    values_to = "reads"
-  ) %>%
-  filter(reads > 0) %>%
-  # Optional: order taxa so the largest groups sit at the top of each stratum
-  mutate(taxa_group = reorder(taxa_group, reads, FUN = sum))
-
-# --- Plot ---
-p_sankey <- ggplot(
-  sankey_data,
-  aes(
-    # axis1 = gene,
-      axis1 = taxa_group,
-      axis2 = control_status,
-      y     = reads)
-) +
-  geom_alluvium(
-    aes(fill = taxa_group),
-    alpha = 0.7,
-    width = 1/4,
-    knot.pos = 0.4       # controls curve tension between axes
-  ) +
-  geom_stratum(width = 1/4, fill = "grey90", color = "grey40") +
-  geom_text(
-    stat  = "stratum",
-    aes(label = after_stat(stratum)),
-    size  = 3,
-    fontface = "bold"
-  ) +
-  scale_x_discrete(
-    limits = c("Gene", "Taxonomic Group", "Control Status"),
-    expand = c(0.12, 0.05)
-  ) +
-  # scale_fill_brewer(palette = "Paired") +   # swap for your preferred palette
-  labs(
-    title   = "Read flow by Gene, Taxonomic Group, and Control Status",
-    y       = "Reads",
-    fill    = "Taxonomic Group"
-  ) +
-  theme_bw() +
-  theme(
-    axis.text.x  = element_text(size = 11, face = "bold"),
-    axis.text.y  = element_text(size = 9),
-    panel.grid   = element_blank()
-  ) +
-  facet_wrap("gene")
-
-# ggsave(
-#   here("analysis", "methods", "output", "figures", "sankey_taxa_gene.png"),
-#   p_sankey,
-#   width = 10, height = 8
-# )
-
-p_sankey
 
 ```
