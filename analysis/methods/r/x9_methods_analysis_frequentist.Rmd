@@ -1355,7 +1355,7 @@ em_sapiens_fii = emmeans(m0_sapiens_fii, ~ gene_filt * filter_size_um_rz)
 
 # response scale
 em_amph_fii_resp = emmeans(m1_amph_fii, ~ filter_size_um_rz | gene_filt, type = "response")
-em_sapiens_fii_resp = emmeans(m0_sapiens_fii, ~ gene_filt * filter_size_um_rz, type = "response")
+em_sapiens_fii_resp = emmeans(m0_sapiens_fii, ~ filter_size_um_rz | gene_filt, type = "response")
 
 # emmeans
 emmeans(m1_amph_fii, ~ filter_size_um_rz, type = "response")
@@ -1363,20 +1363,23 @@ emmeans(m1_amph_fii, ~ filter_size_um_rz, type = "response")
 # ratios
 or_amph_fii_resp = pairs(em_amph_fii_resp, type = "response", by = "gene_filt")
 
-or_df <- as.data.frame(
+or_df_amph_fii <- as.data.frame(
   summary(or_amph_fii_resp, infer = TRUE),
   destroy.annotations = TRUE
 )
 
-or_df_report <- subset(
-  or_df,
+or_df_amph_fii_report <- subset(
+  or_df_amph_fii,
   !(gene_filt == "12S.Active" & grepl("rz5", contrast))
 )
 
-print(or_df_report, digits = 4)
+print(or_df_amph_fii_report, digits = 4)
+
+or_sapiens_fii_resp = pairs(em_sapiens_fii_resp, type = "response", by = "gene_filt")
 
 # summary
 summary(m1_amph_fii)
+summary(m0_sapiens_fii)
 ```
 
 #### amphibians
@@ -1518,7 +1521,7 @@ em_amph_asv = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt)
 emm_link = emmeans(m_asv_nb, ~ gene_filt | filter_size_um_rz)
 
 # response scale
-em_amph_asv_resp = emmeans(m_asv_nb, ~ filter_size_um_rz * gene_filt, type = "response")
+em_amph_asv_resp = emmeans(m_asv_nb, ~ filter_size_um_rz | gene_filt, type = "response")
 
 em_df <- as.data.frame(
   em_amph_asv_resp,
@@ -1530,9 +1533,8 @@ print(em_df, digits = 4)
 # ratios
 ratio_filter <- pairs(
   em_amph_asv,
-  by = "filter_size_um_rz",
-  type = "response",
-  reverse = TRUE
+  by = "gene_filt",
+  type = "response"
 )
 
 ratio_filter_df <- as.data.frame(
@@ -1542,7 +1544,7 @@ ratio_filter_df <- as.data.frame(
 
 ratio_filter_report <- subset(
   ratio_filter_df,
-  !(filter_size_um_rz == "5" & grepl("12S", contrast, fixed = TRUE))
+  !(gene_filt == "12S.Active" & grepl("filter_size_um_rz5", contrast, fixed = TRUE))
 )
 
 print(ratio_filter_report, digits = 4)
